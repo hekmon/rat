@@ -43,7 +43,8 @@ type Controller struct {
 
 // New returns a controller for tenant, which can be empty (default socket) or
 // only contain letters, digits, '_' and '-' (up to nameMaxLen characters).
-func New(ctx context.Context, tenant string) (c *Controller, err error) {
+// It does not start the server: see StartServer.
+func New(tenant string) (c *Controller, err error) {
 	if tenant != "" && !validName(tenant) {
 		return nil, fmt.Errorf("%w %q: only letters, digits, '_' and '-' are allowed (up to %d characters)",
 			ErrInvalidTenant, tenant, nameMaxLen)
