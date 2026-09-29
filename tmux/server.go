@@ -161,6 +161,11 @@ readiness:
 		// macOS bash prints a "default shell is now zsh" notice at each start, which would be the
 		// first thing agents read in every new terminal
 		{"BASH_SILENCE_DEPRECATION_WARNING", "1"},
+		// the same neutral UTF-8 locale everywhere, whatever rat's own (a service often has none).
+		// UTF-8: without it, bash reads non ASCII input (é, ✓) as meta keys and mangles it, and
+		// models read and write UTF-8. C: English messages and stable formats (decimal point,
+		// dates), the easiest for models to read. LC_ALL overrides any other locale variable.
+		{"LC_ALL", "C.UTF-8"},
 		// no pager: when an output does not fit the screen, tools (man, git, systemctl, psql…) would
 		// open less, and agents would have to notice it and quit it. Instead the output goes to the
 		// terminal, where the scrollback keeps it for extra lines captures.

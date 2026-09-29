@@ -204,6 +204,7 @@ func TestServerOptions(t *testing.T) {
 	}
 	for variable, expected := range map[string]string{
 		"BASH_SILENCE_DEPRECATION_WARNING": "1",
+		"LC_ALL":                           "C.UTF-8",
 		"PAGER":                            "cat",
 		"GIT_PAGER":                        "cat",
 		"MANPAGER":                         "cat",
