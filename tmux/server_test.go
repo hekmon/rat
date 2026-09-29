@@ -176,7 +176,8 @@ func TestServerIgnoresUserConfig(t *testing.T) {
 	}
 }
 
-// TestServerOptions guards the options rat relies on, set on top of the tmux defaults.
+// TestServerOptions guards the options and terminal environment rat relies on, set on top of
+// the tmux defaults.
 func TestServerOptions(t *testing.T) {
 	c := newTestController(t, "options")
 	if err := c.StartServer(context.Background()); err != nil {
@@ -199,6 +200,21 @@ func TestServerOptions(t *testing.T) {
 		}
 		if got := strings.TrimSpace(string(out)); got != expected {
 			t.Errorf("%s = %q, expected %q", option, got, expected)
+		}
+	}
+	for variable, expected := range map[string]string{
+		"BASH_SILENCE_DEPRECATION_WARNING": "1",
+		"PAGER":                            "cat",
+		"GIT_PAGER":                        "cat",
+		"MANPAGER":                         "cat",
+		"SYSTEMD_PAGER":                    "cat",
+	} {
+		out, err := c.cmd(context.Background(), []string{"show-environment", "-g", variable}).Output()
+		if err != nil {
+			t.Fatalf("%s: %v", variable, err)
+		}
+		if got := strings.TrimSpace(string(out)); got != variable+"="+expected {
+			t.Errorf("got %q, expected %s=%s", got, variable, expected)
 		}
 	}
 }

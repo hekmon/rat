@@ -156,13 +156,29 @@ readiness:
 		// programs must not be able to rename them (escape sequences)
 		{"allow-rename", "off"},
 	}
-	var args []string
-	for i, option := range options {
-		if i > 0 {
-			args = append(args, ";")
-		}
-		args = append(args, "set-option", "-g", option[0], option[1])
+	// Terminals inherit the server environment (rat's own) plus these variables
+	environment := [][2]string{
+		// macOS bash prints a "default shell is now zsh" notice at each start, which would be the
+		// first thing agents read in every new terminal
+		{"BASH_SILENCE_DEPRECATION_WARNING", "1"},
+		// no pager: when an output does not fit the screen, tools (man, git, systemctl, psql…) would
+		// open less, and agents would have to notice it and quit it. Instead the output goes to the
+		// terminal, where the scrollback keeps it for extra lines captures.
+		{"PAGER", "cat"},
+		// tool specific pagers take precedence over PAGER and users often set them (MANPAGER in a
+		// shell profile, inherited by terminals). GIT_PAGER also overrides core.pager in gitconfig.
+		{"GIT_PAGER", "cat"},
+		{"MANPAGER", "cat"},
+		{"SYSTEMD_PAGER", "cat"},
 	}
+	var args []string
+	for _, option := range options {
+		args = append(args, "set-option", "-g", option[0], option[1], ";")
+	}
+	for _, variable := range environment {
+		args = append(args, "set-environment", "-g", variable[0], variable[1], ";")
+	}
+	args = args[:len(args)-1] // no trailing command separator
 	if out, err := c.cmd(optsCtx, args).CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to configure server: %w: %s", err, strings.TrimSpace(string(out)))
 	}

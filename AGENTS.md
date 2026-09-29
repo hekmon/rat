@@ -53,6 +53,21 @@ container) per tenant.
   which are global to the server and would cross sessions. Window names are unique per session.
 - Literal input is sent with `send-keys -l --`, special keys (Enter, C-c, …) separately.
 
+## Open questions
+
+- **rat's own secrets** (e.g. the MCP endpoint auth token). Never as flags: command lines are
+  visible to every user (`ps`, `top`). The likely way is a systemd unit reading an environment
+  file readable by root only, which hides them from other users. Not from the agents: rat and
+  its terminals run as the same user, so its environment is readable (`/proc/<pid>/environ`,
+  which keeps the startup environment even after an unset) and terminals inherit it. The token
+  only grants a shell as that user, which agents already have; still, rat should keep its
+  secrets out of the terminals environment so that a plain `env` does not print them. Hiding
+  them from agents for real requires running rat and its terminals as different users.
+- **Output redaction** (MCP layer): configured words or patterns masked in captures before they
+  are sent. Agents keep using the secrets on the machine (they have a shell to do things), but
+  their values do not travel back to the model, its logs or transcripts. Best effort only: it
+  matches the literal output, not an encoded or split value.
+
 ## Working on rat
 
 rat is built with agents, and every agent session starts from scratch: it sees what the code
