@@ -21,6 +21,11 @@ const inContainerEnv = "RAT_TEST_IN_CONTAINER"
 // TestMinimumTmux guards that rat works with the oldest tmux it supports, on Linux, whatever the
 // machine running the tests: it runs the package tests in a Docker container with that tmux.
 // Docker is required: -short skips it, as an explicit choice to test less.
+//
+// It does not cover the oldest bash (bashMinVersion, 4.4): no image has Go, tmux 3.3 or later
+// and bash 4.4, whose distributions shipped an older tmux. StartServer refuses older ones, and
+// bracketed paste is enforced the same way from 4.4 on (checked in the bash:4.4 and bash:5.0
+// images when it was introduced).
 func TestMinimumTmux(t *testing.T) {
 	if os.Getenv(inContainerEnv) != "" {
 		t.Skip("already running in the minimum tmux container")
