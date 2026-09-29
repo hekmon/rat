@@ -52,13 +52,16 @@ container) per tenant.
 
 - **rat owns its tmux server**: it starts it (`-D`, never daemonized), watches it and stops it.
   It refuses a socket already served by another server. Stopping rat stops its terminals.
-- The server ignores the user tmux configuration: rat sets the options it relies on itself.
-- Terminals run `bash`: always available, and the shell agents know best.
-- Tenant, session and window names are validated (plain names only): they end up in socket
-  paths and tmux targets.
-- tmux targets are always exact (`=session:=window`), never tmux IDs (`%pane`, `@window`),
-  which are global to the server and would cross sessions. Window names are unique per session.
-- Literal input is sent with `send-keys -l --`, special keys (Enter, C-c, …) separately.
+- **Terminals are the same on every machine**, whatever the user configuration and rat's own
+  environment: bash, starting at home, a neutral UTF-8 locale, no pager, a fixed size.
+- **Terminals are found by name**: tenant, session and window names are plain names, validated
+  before reaching tmux, and targeted exactly. A window name is unique in its session; tmux IDs
+  are never used nor stored.
+- **Agent input reaches the terminal as is**: text is typed literally, never interpreted by tmux,
+  and Enter is only pressed when asked.
+
+How the tmux controller keeps them, and the tmux pitfalls behind each of them, are described in
+[`tmux/README.md`](tmux/README.md).
 
 ## Open questions
 
