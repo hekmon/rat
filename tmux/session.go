@@ -42,7 +42,9 @@ func (c *Controller) NewSession(ctx context.Context, session string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create session %s: %w", session, err)
 	}
-	if _, err = c.run(ctx, "new-session", "-d", "-s", session, "-n", FirstWindow, "-c", home); err != nil {
+	args := append([]string{"new-session", "-d", "-s", session, "-n", FirstWindow, "-c", home, ";"},
+		fixedSize(target(session, FirstWindow))...)
+	if _, err = c.run(ctx, args...); err != nil {
 		if sessions, listErr := c.ListSessions(ctx); listErr == nil && slices.Contains(sessions, session) {
 			return fmt.Errorf("%w: %s", ErrSessionExists, session)
 		}

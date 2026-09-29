@@ -55,6 +55,15 @@ const serverStopGracePeriod = 5 * time.Second
 // (context cancellation) before being sent SIGKILL.
 const serverKillDelay = 2 * time.Second
 
+// fixedSize returns the tmux command keeping the size of the window target (serverDefaultSize)
+// whoever attaches, to chain in the invocation creating the window. With the default size policy
+// (latest), a human attaching to inspect resizes the windows to their terminal, and they keep
+// that size once the human detaches. It is a window option set on each window rather than a
+// global one, which crashes tmux 3.3 to 3.6 (see StartServer).
+func fixedSize(target string) []string {
+	return []string{"set-option", "-w", "-t", target, "window-size", "manual"}
+}
+
 // StartServer starts the tmux server and returns once it is ready and configured.
 // ctx should be the application context, as an exit safe guard (kill).
 // The server does not load any tmux configuration and its terminals run bash, which must be
@@ -154,9 +163,10 @@ readiness:
 		{"default-shell", bashPath},
 		{"history-limit", strconv.Itoa(serverHistoryLimit)},
 		{"default-size", serverDefaultSize},
-		// keep that size whoever attaches: with the default (latest), a human attaching to inspect
-		// resizes the windows to their terminal, and they keep that size once the human detaches
-		{"window-size", "manual"},
+		// Not global: set on each window as it is created instead (see fixedSize). tmux 3.3 to 3.6
+		// crash (segfault, killing every terminal) when a session is created while the global
+		// window-size is manual: fixed in 3.7 (commit 7d41761e, GitHub issue 4849).
+		// {"window-size", "manual"},
 		// already tmux default, but window names are how agents find their terminals back:
 		// programs must not be able to rename them (escape sequences)
 		{"allow-rename", "off"},

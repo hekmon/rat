@@ -191,8 +191,9 @@ func TestServerOptions(t *testing.T) {
 		"default-shell": bashPath,
 		"history-limit": strconv.Itoa(serverHistoryLimit),
 		"default-size":  serverDefaultSize,
-		"window-size":   "manual",
-		"allow-rename":  "off",
+		// tmux default: a global manual crashes tmux 3.3 to 3.6, windows get it one by one
+		"window-size":  "latest",
+		"allow-rename": "off",
 	} {
 		out, err := c.cmd(context.Background(), []string{"show-options", "-gv", option}).Output()
 		if err != nil {
@@ -235,23 +236,26 @@ func TestServerRequiresBash(t *testing.T) {
 }
 
 // TestServerWindowSizeFixed guards that a client attaching, such as a human inspecting the
-// terminals, does not resize them: neither while attached, nor once detached.
+// terminals, does not resize them: neither while attached, nor once detached. This holds for the
+// first window of a session as for the ones created after it.
 func TestServerWindowSizeFixed(t *testing.T) {
-	c := newTestController(t, "windowsize")
-	if err := c.StartServer(context.Background()); err != nil {
+	c := startTestServer(t, "windowsize")
+	ctx := context.Background()
+	if err := c.NewSession(ctx, "s"); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := c.cmd(context.Background(), []string{"new-session", "-d", "-s", "s"}).CombinedOutput(); err != nil {
-		t.Fatalf("%v: %s", err, out)
+	if err := c.NewWindow(ctx, "s", "w"); err != nil {
+		t.Fatal(err)
 	}
 	checkSize := func(when string) {
 		t.Helper()
-		out, err := c.cmd(context.Background(), []string{"display-message", "-p", "-t", "=s:", "#{window_width}x#{window_height}"}).Output()
+		out, err := c.run(ctx, "list-windows", "-t", "=s", "-F", "#{window_name} #{window_width}x#{window_height}")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := strings.TrimSpace(string(out)); got != serverDefaultSize {
-			t.Errorf("%s: size is %s, expected %s", when, got, serverDefaultSize)
+		expected := FirstWindow + " " + serverDefaultSize + "\nw " + serverDefaultSize
+		if got := strings.TrimSpace(out); got != expected {
+			t.Errorf("%s: sizes are %q, expected %q", when, got, expected)
 		}
 	}
 	checkSize("before attach")

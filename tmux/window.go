@@ -165,7 +165,9 @@ func (c *Controller) NewWindow(ctx context.Context, session, window string) erro
 		return fmt.Errorf("failed to create window %s:%s: %w", session, window, err)
 	}
 	// "session:" targets the next free index of the session, -d keeps the selected window as is
-	if _, err = c.run(ctx, "new-window", "-d", "-t", "="+session+":", "-n", window, "-c", home); err != nil {
+	args := append([]string{"new-window", "-d", "-t", "=" + session + ":", "-n", window, "-c", home, ";"},
+		fixedSize(target(session, window))...)
+	if _, err = c.run(ctx, args...); err != nil {
 		return c.sessionError(ctx, fmt.Errorf("failed to create window %s:%s: %w", session, window, err), session)
 	}
 	return nil
