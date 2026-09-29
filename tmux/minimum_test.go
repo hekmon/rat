@@ -38,8 +38,10 @@ func TestMinimumTmux(t *testing.T) {
 	}
 	// the same Go as the one running the tests: go1.27.1 runs in golang:1.27.1-<distribution>
 	image := "golang:" + strings.TrimPrefix(runtime.Version(), "go") + "-" + minimumTmuxDistribution
-	// The module is mounted read-only and copied: the tests must not write into it. less is the
-	// real one, which the full-screen capture test relies on.
+	// The module is mounted read-only and copied: the tests must not write into it.
+	// The packages installed are what the tests need beyond Go, and this test is responsible for
+	// them: removing one breaks the tests relying on it, in the container only. tmux, and the
+	// real less for TestCaptureFullScreen (the image has none, BusyBox's would not do).
 	script := `set -e
 apt-get update -qq >/dev/null
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux less >/dev/null

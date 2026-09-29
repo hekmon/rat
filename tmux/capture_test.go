@@ -83,6 +83,7 @@ func TestCapture(t *testing.T) {
 
 // TestCaptureFullScreen guards that the scrollback is never included under a full-screen program:
 // it belongs to the terminal before the program started, and would be mistaken for its output.
+// It needs the real less: BusyBox's does not use the alternate screen (TestMinimumTmux installs it).
 func TestCaptureFullScreen(t *testing.T) {
 	c := startTestServer(t, "capturefullscreen")
 	ctx := context.Background()
