@@ -16,7 +16,7 @@ var (
 	// ErrInvalidTenant is returned by New for a tenant name that is not a plain name.
 	ErrInvalidTenant = errors.New("invalid tenant name")
 	// ErrInvalidName is returned for a session or window name that is not a plain name, before
-	// anything reaches tmux.
+	// anything reaches tmux (see CheckName).
 	ErrInvalidName = errors.New("invalid name")
 )
 
@@ -73,12 +73,22 @@ func validName(name string) bool {
 	return len(name) <= nameMaxLen && nameFormat.MatchString(name)
 }
 
+// CheckName returns an error wrapping ErrInvalidName if name can not be a session or window
+// name: only letters, digits, '_' and '-' are allowed, up to 32 characters. It is the rule every
+// method applies, for callers to reject a name without asking tmux.
+func CheckName(name string) error {
+	if !validName(name) {
+		return fmt.Errorf("%w %q: only letters, digits, '_' and '-' are allowed (up to %d characters)",
+			ErrInvalidName, name, nameMaxLen)
+	}
+	return nil
+}
+
 // checkNames returns an error wrapping ErrInvalidName if one of the session or window names is invalid.
 func checkNames(names ...string) error {
 	for _, name := range names {
-		if !validName(name) {
-			return fmt.Errorf("%w %q: only letters, digits, '_' and '-' are allowed (up to %d characters)",
-				ErrInvalidName, name, nameMaxLen)
+		if err := CheckName(name); err != nil {
+			return err
 		}
 	}
 	return nil

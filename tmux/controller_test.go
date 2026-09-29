@@ -46,6 +46,21 @@ func TestNewInvalidTenants(t *testing.T) {
 	}
 }
 
+// TestCheckName guards the rule for session and window names, which callers apply without tmux:
+// plain names only, as ':', '.' and '=' change what a tmux target reaches.
+func TestCheckName(t *testing.T) {
+	for _, name := range []string{"main", "build_1", "-x", strings.Repeat("a", nameMaxLen)} {
+		if err := CheckName(name); err != nil {
+			t.Errorf("name %q: %v", name, err)
+		}
+	}
+	for _, name := range []string{"", "a:b", "s.1", "=s", "a b", "é", strings.Repeat("a", nameMaxLen+1)} {
+		if err := CheckName(name); !errors.Is(err, ErrInvalidName) {
+			t.Errorf("name %q: expected ErrInvalidName, got %v", name, err)
+		}
+	}
+}
+
 // TestTmuxArg guards the protection of arguments ending with ';', which tmux would otherwise read
 // as the end of its command.
 func TestTmuxArg(t *testing.T) {
