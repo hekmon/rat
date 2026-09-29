@@ -45,3 +45,15 @@ func TestNewInvalidTenants(t *testing.T) {
 		}
 	}
 }
+
+// TestTmuxArg guards the protection of arguments ending with ';', which tmux would otherwise read
+// as the end of its command.
+func TestTmuxArg(t *testing.T) {
+	for arg, expected := range map[string]string{
+		"plain": "plain", "a;b": "a;b", ";": `\;`, ";;": `;\;`, "echo a;": `echo a\;`, `a\;`: `a\\;`,
+	} {
+		if got := tmuxArg(arg); got != expected {
+			t.Errorf("tmuxArg(%q) = %q, expected %q", arg, got, expected)
+		}
+	}
+}

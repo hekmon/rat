@@ -82,6 +82,16 @@ func (c *Controller) cmd(ctx context.Context, args []string) (cmd *exec.Cmd) {
 	return exec.CommandContext(ctx, "tmux", append([]string{"-L", socketName, "-f", "/dev/null", "-u"}, args...)...)
 }
 
+// tmuxArg protects an argument ending with ';': tmux reads it as the end of the command (the ';'
+// is dropped), even in arguments passed without a shell, unless the ';' is preceded by a
+// backslash, which tmux then removes. Arguments coming from agents (text, keys) must go through it.
+func tmuxArg(arg string) string {
+	if strings.HasSuffix(arg, ";") {
+		return arg[:len(arg)-1] + `\;`
+	}
+	return arg
+}
+
 // run executes a tmux command on the server and returns its standard output. It fails with
 // ErrServerNotRunning if the server is not started or has exited, and a tmux failure includes
 // the tmux message.
