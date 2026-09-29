@@ -210,6 +210,7 @@ func TestServerOptions(t *testing.T) {
 		"GIT_PAGER":                        "cat",
 		"MANPAGER":                         "cat",
 		"SYSTEMD_PAGER":                    "cat",
+		"PROMPT_COMMAND":                   `bind "set enable-bracketed-paste on"`,
 	} {
 		out, err := c.cmd(context.Background(), []string{"show-environment", "-g", variable}).Output()
 		if err != nil {
@@ -233,6 +234,41 @@ func TestServerRequiresBash(t *testing.T) {
 	if c.server != nil {
 		t.Error("server started without bash")
 	}
+}
+
+// TestServerRequiresRecentBash guards that a bash older than bashMinVersion (such as the 3.2 of
+// macOS) is reported by StartServer, before any server is started: pasted text would run line by
+// line in its terminals.
+func TestServerRequiresRecentBash(t *testing.T) {
+	c := newTestController(t, "oldbash")
+	t.Setenv("PATH", fakeBash(t, "3.2.57(1)-release (arm64-apple-darwin25)"))
+	err := c.StartServer(context.Background())
+	if !errors.Is(err, ErrUnsupportedBash) || !strings.Contains(err.Error(), "3.2") {
+		t.Fatalf("expected ErrUnsupportedBash, got %v", err)
+	}
+	if c.server != nil {
+		t.Error("server started with an unsupported bash")
+	}
+	for version, supported := range map[string]bool{
+		"4.3.48(1)-release": false, "4.4.23(1)-release": true, "5.0.18(1)-release": true,
+		"5.3.20(1)-release": true, "10.0.0(1)-release": true,
+	} {
+		dir := fakeBash(t, version)
+		if err := checkBashVersion(context.Background(), filepath.Join(dir, "bash")); (err == nil) != supported {
+			t.Errorf("bash %s: supported %v, got %v", version, supported, err)
+		}
+	}
+}
+
+// fakeBash returns a directory holding a bash that only prints version as bash --version does.
+func fakeBash(t *testing.T, version string) string {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\necho 'GNU bash, version " + version + "'\necho 'Copyright (C) 2007 Free Software Foundation, Inc.'\n"
+	if err := os.WriteFile(filepath.Join(dir, "bash"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 // TestServerWindowSizeFixed guards that a client attaching, such as a human inspecting the

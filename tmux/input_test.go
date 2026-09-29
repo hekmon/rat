@@ -50,6 +50,25 @@ func TestSendText(t *testing.T) {
 // runs every line.
 func TestSendTextPasted(t *testing.T) {
 	c := startTestServer(t, "sendpasted")
+	checkPasted(t, c)
+}
+
+// TestSendTextPastedInputrcOff guards that bracketed paste is enforced even when an inputrc turns
+// it off (as bash 4.4 and 5.0 do by default): terminals inherit INPUTRC from rat's environment.
+func TestSendTextPastedInputrcOff(t *testing.T) {
+	inputrc := filepath.Join(t.TempDir(), "inputrc")
+	if err := os.WriteFile(inputrc, []byte("set enable-bracketed-paste off\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("INPUTRC", inputrc)
+	c := startTestServer(t, "sendpastedoff")
+	checkPasted(t, c)
+}
+
+// checkPasted checks that a multi-line text pasted at a bash prompt runs nothing until Enter,
+// which then runs every line.
+func checkPasted(t *testing.T, c *Controller) {
+	t.Helper()
 	ctx := context.Background()
 	if err := c.NewSession(ctx, "s"); err != nil {
 		t.Fatal(err)

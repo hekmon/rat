@@ -114,6 +114,12 @@ always available, and the shell agents know best (zsh differs just enough to mis
 bash starts as a login shell: it reads `~/.bash_profile` or `~/.profile`, not `~/.bashrc` unless
 the profile sources it.
 
+bash 4.4 or later is required, and `StartServer` refuses an older one: pasted text relies on
+bracketed paste (see Input), which bash has since 4.4. macOS ships bash 3.2 (the last version
+under GPLv2) as `/bin/bash`: a recent one must be installed (Homebrew) and come first in PATH.
+The version is read from `bash --version` rather than from a script printing `BASH_VERSINFO`,
+which would run the file named by `BASH_ENV`.
+
 Sessions and windows start in the home directory of the user running rat, as a terminal does:
 with a dedicated user for agents, it is their own. tmux would otherwise start them in the
 working directory of the client creating them, rat's (`/` for a systemd service). This holds for
@@ -134,6 +140,13 @@ Terminals inherit rat's environment, plus variables enforced at `StartServer`:
   precedence over `PAGER` and users often set them (`GIT_PAGER` also overrides `core.pager`).
 - `BASH_SILENCE_DEPRECATION_WARNING=1`: on macOS, bash prints a "the default shell is now zsh"
   notice at each start, the first thing agents would read in every new terminal.
+- `PROMPT_COMMAND='bind "set enable-bracketed-paste on"'`: pasted text relies on bracketed
+  paste (see Input), which bash 4.4 and 5.0 do not enable by default, and an inputrc can disable.
+  bash runs `PROMPT_COMMAND` before each prompt, after its startup files, so the setting holds
+  whatever they say. Rejected: an inputrc of rat's (`INPUTRC`), a file to maintain; typing the
+  `bind` command in each new terminal, which shows on the screen and in the history, and holds
+  only until something changes the setting. Limit: a startup file assigning `PROMPT_COMMAND`
+  (rather than adding to it, as most do) replaces it, and the inputrc or bash default applies.
 
 `TMUX` is kept, on purpose. tmux sets it in every terminal (it can not be removed with
 `set-environment`, only by the command starting the terminal), and a `tmux` command typed in a
@@ -287,9 +300,9 @@ know:
   prompt, and off before running a command. A text pasted while bash starts (a window just
   created) or runs a command waits in the terminal, marked for nobody, and bash reads it later as
   typed.
-- bash before 5.1 does not ask by default (the setting exists since 4.4, off until 5.1), nor
-  bash whose inputrc turns it off; bash 3.2, shipped by macOS, can not. Their pasted text is read
-  as typed.
+- bash before 5.1 does not ask by default (the setting exists since 4.4, off until 5.1), and an
+  inputrc can turn it off: rat enforces it with `PROMPT_COMMAND` (see Terminal environment).
+  bash 3.2, shipped by macOS, can not ask: rat refuses it.
 
 Verified with bash 3.2 to 5.3 (tmux 3.5a and 3.7c), for the default setting, an inputrc turning
 it off, and with and without `-p`. `TestSendTextPasted` guards the behavior at a bash prompt.

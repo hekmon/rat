@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -22,7 +24,43 @@ var (
 	ErrServerTerminated = errors.New("server did not stop gracefully and has been terminated (SIGTERM)")
 	// ErrServerKilled is returned by StopServer when the server had to be sent SIGKILL.
 	ErrServerKilled = errors.New("server did not stop gracefully and has been killed (SIGKILL)")
+	// ErrUnsupportedBash is returned by StartServer when the bash found in PATH is older than
+	// bashMinVersion, before any server is started.
+	ErrUnsupportedBash = errors.New("unsupported bash version")
 )
+
+// bashMinVersion is the oldest bash terminals can run: pasted text relies on bracketed paste,
+// which bash has since 4.4 (readline 7.0).
+var bashMinVersion = [2]int{4, 4}
+
+// bashVersionFormat reads the major and minor version in the first line of bash --version, such
+// as "GNU bash, version 5.2.15(1)-release (aarch64-unknown-linux-gnu)".
+var bashVersionFormat = regexp.MustCompile(`version (\d+)\.(\d+)`)
+
+// checkBashVersion returns an error wrapping ErrUnsupportedBash if the bash at path is older than
+// bashMinVersion.
+func checkBashVersion(ctx context.Context, path string) error {
+	// --version rather than running a script printing BASH_VERSINFO: bash reads no startup file
+	// then (a script would run BASH_ENV). LC_ALL=C: the message is not translated.
+	cmd := exec.CommandContext(ctx, path, "--version")
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to get the version of %s: %w", path, err)
+	}
+	firstLine, _, _ := strings.Cut(string(out), "\n")
+	match := bashVersionFormat.FindStringSubmatch(firstLine)
+	if match == nil {
+		return fmt.Errorf("failed to read the version of %s in %q", path, firstLine)
+	}
+	major, _ := strconv.Atoi(match[1])
+	minor, _ := strconv.Atoi(match[2])
+	if major < bashMinVersion[0] || major == bashMinVersion[0] && minor < bashMinVersion[1] {
+		return fmt.Errorf("%w: %s is bash %d.%d, terminals need %d.%d or later (macOS ships 3.2: install a recent bash, with Homebrew for instance, first in PATH)",
+			ErrUnsupportedBash, path, major, minor, bashMinVersion[0], bashMinVersion[1])
+	}
+	return nil
+}
 
 // serverStartTimeout is how long StartServer waits for the server to answer probes.
 const serverStartTimeout = time.Second
@@ -67,7 +105,8 @@ func fixedSize(target string) []string {
 // StartServer starts the tmux server and returns once it is ready and configured.
 // ctx should be the application context, as an exit safe guard (kill).
 // The server does not load any tmux configuration and its terminals run bash, which must be
-// installed (the returned error then wraps exec.ErrNotFound).
+// installed (the returned error then wraps exec.ErrNotFound) in version bashMinVersion or later
+// (the error then wraps ErrUnsupportedBash).
 func (c *Controller) StartServer(ctx context.Context) (err error) {
 	defer c.serverAction.Unlock()
 	c.serverAction.Lock()
@@ -84,6 +123,9 @@ func (c *Controller) StartServer(ctx context.Context) (err error) {
 	bashPath, err := exec.LookPath("bash")
 	if err != nil {
 		return fmt.Errorf("bash is required to run terminals: %w", err)
+	}
+	if err = checkBashVersion(ctx, bashPath); err != nil {
+		return err
 	}
 	// Cleanup on error
 	defer func() {
@@ -190,6 +232,10 @@ readiness:
 		{"GIT_PAGER", "cat"},
 		{"MANPAGER", "cat"},
 		{"SYSTEMD_PAGER", "cat"},
+		// pasted text relies on bracketed paste, which bash 4.4 and 5.0 do not enable by default,
+		// and an inputrc can disable. bash runs PROMPT_COMMAND before each prompt, after its startup
+		// files: the setting is enforced whatever they say, with no file of rat's to maintain.
+		{"PROMPT_COMMAND", `bind "set enable-bracketed-paste on"`},
 	}
 	var args []string
 	for _, option := range options {
