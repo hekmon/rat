@@ -37,7 +37,9 @@ func TestCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	typeCommand(t, c, "s", FirstWindow, "clear; seq 1 100; printf 'trailing   \\n'")
-	eventually(t, "output displayed", screenContains(c, "s", FirstWindow, "trailing"))
+	// "\ntrailing": the output, at the start of a line, not the command line typed, which also
+	// contains "trailing"
+	eventually(t, "output displayed", screenContains(c, "s", FirstWindow, "\ntrailing"))
 	snapshot, err := c.Capture(ctx, "s", FirstWindow, 0)
 	if err != nil {
 		t.Fatal(err)
