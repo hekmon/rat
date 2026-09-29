@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +13,7 @@ import (
 
 var (
 	ErrWindowNotFound = errors.New("window not found")
+	ErrWindowExists   = errors.New("window already exists")
 )
 
 // Window describes a terminal, as tmux sees it when asked.
@@ -117,4 +120,60 @@ func (c *Controller) Window(ctx context.Context, session, window string) (Window
 		}
 	}
 	return Window{}, fmt.Errorf("%w: %s:%s", ErrWindowNotFound, session, window)
+}
+
+// NewWindow creates window in session, a terminal running bash in the home directory of the user
+// running rat, and leaves the window a human may be looking at selected. The error wraps ErrSessionNotFound if the session does not exist,
+// or ErrWindowExists if a window already has that name in the session: names are how windows are
+// found back.
+func (c *Controller) NewWindow(ctx context.Context, session, window string) error {
+	if err := checkNames(session, window); err != nil {
+		return err
+	}
+	c.windowCreation.Lock()
+	defer c.windowCreation.Unlock()
+	windows, err := c.ListWindows(ctx, session)
+	if err != nil {
+		return err
+	}
+	if slices.ContainsFunc(windows, func(w Window) bool { return w.Name == window }) {
+		return fmt.Errorf("%w: %s:%s", ErrWindowExists, session, window)
+	}
+	// Like the session, the window starts at home: without -c, tmux would not use the session
+	// directory but the one of the client creating the window, which is rat's.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to create window %s:%s: %w", session, window, err)
+	}
+	// "session:" targets the next free index of the session, -d keeps the selected window as is
+	if _, err = c.run(ctx, "new-window", "-d", "-t", "="+session+":", "-n", window, "-c", home); err != nil {
+		return c.sessionError(ctx, fmt.Errorf("failed to create window %s:%s: %w", session, window, err), session)
+	}
+	return nil
+}
+
+// KillWindow destroys window in session, terminating the processes running in it. Destroying
+// the last window of a session destroys the session too.
+// The error wraps ErrSessionNotFound or ErrWindowNotFound if they do not exist.
+func (c *Controller) KillWindow(ctx context.Context, session, window string) error {
+	if err := checkNames(session, window); err != nil {
+		return err
+	}
+	if _, err := c.run(ctx, "kill-window", "-t", target(session, window)); err != nil {
+		return c.windowError(ctx, fmt.Errorf("failed to kill window %s:%s: %w", session, window, err), session, window)
+	}
+	return nil
+}
+
+// windowError explains why a command on window of session failed, as sessionError does.
+// It returns an error wrapping ErrSessionNotFound or ErrWindowNotFound, or err as is.
+func (c *Controller) windowError(ctx context.Context, err error, session, window string) error {
+	if err = c.sessionError(ctx, err, session); errors.Is(err, ErrSessionNotFound) || errors.Is(err, ErrServerNotRunning) {
+		return err
+	}
+	windows, listErr := c.ListWindows(ctx, session)
+	if listErr == nil && !slices.ContainsFunc(windows, func(w Window) bool { return w.Name == window }) {
+		return fmt.Errorf("%w: %s:%s", ErrWindowNotFound, session, window)
+	}
+	return err
 }

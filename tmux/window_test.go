@@ -100,3 +100,63 @@ func TestListWindows(t *testing.T) {
 	}
 	eventually(t, "sleep in the foreground", foregroundIs(c, "s", FirstWindow, "sleep"))
 }
+
+// TestWindows guards the windows lifecycle and its errors: unique names, exact targets, windows
+// starting at home, and the session disappearing with its last window.
+func TestWindows(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	c := startTestServer(t, "windows")
+	ctx := context.Background()
+	if err = c.NewWindow(ctx, "s", "w"); !errors.Is(err, ErrSessionNotFound) {
+		t.Errorf("expected ErrSessionNotFound, got %v", err)
+	}
+	if err = c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	// the session starts at home, and so do its new windows
+	if _, err = c.run(ctx, "send-keys", "-t", "=s:="+FirstWindow, "cd /", "Enter"); err != nil {
+		t.Fatal(err)
+	}
+	if err = c.NewWindow(ctx, "s", "window"); err != nil {
+		t.Fatal(err)
+	}
+	if err = c.NewWindow(ctx, "s", "window"); !errors.Is(err, ErrWindowExists) {
+		t.Errorf("expected ErrWindowExists, got %v", err)
+	}
+	if w, err := c.Window(ctx, "s", "window"); err != nil || w.Path != home {
+		t.Errorf("expected a new window at %s, got %+v, %v", home, w, err)
+	}
+	// exact targets: "win" is only a prefix of "window"
+	if err = c.KillWindow(ctx, "s", "win"); !errors.Is(err, ErrWindowNotFound) {
+		t.Errorf("window prefix: expected ErrWindowNotFound, got %v", err)
+	}
+	if err = c.NewSession(ctx, "session"); err != nil {
+		t.Fatal(err)
+	}
+	if err = c.NewWindow(ctx, "sess", "w"); !errors.Is(err, ErrSessionNotFound) {
+		t.Errorf("session prefix: expected ErrSessionNotFound, got %v", err)
+	}
+	windows, err := c.ListWindows(ctx, "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(windows) != 2 || windows[0].Name != FirstWindow || windows[1].Name != "window" {
+		t.Fatalf("expected windows %s and window, got %+v", FirstWindow, windows)
+	}
+	// the session disappears with its last window
+	for _, window := range []string{FirstWindow, "window"} {
+		if err = c.KillWindow(ctx, "s", window); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = c.ListWindows(ctx, "s"); !errors.Is(err, ErrSessionNotFound) {
+		t.Errorf("expected ErrSessionNotFound, got %v", err)
+	}
+	if err = c.KillWindow(ctx, "s", FirstWindow); !errors.Is(err, ErrSessionNotFound) {
+		t.Errorf("expected ErrSessionNotFound, got %v", err)
+	}
+}
