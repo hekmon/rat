@@ -93,6 +93,34 @@ const serverStopGracePeriod = 5 * time.Second
 // (context cancellation) before being sent SIGKILL.
 const serverKillDelay = 2 * time.Second
 
+// bracketedPasteCommand turns bracketed paste on in bash, run before each prompt through
+// PROMPT_COMMAND (see terminalEnvironment).
+const bracketedPasteCommand = `bind "set enable-bracketed-paste on"`
+
+// terminalEnvironment is what StartServer adds to the environment terminals inherit, which is
+// otherwise rat's own.
+var terminalEnvironment = [][2]string{
+	// the same neutral UTF-8 locale everywhere, whatever rat's own (a service often has none).
+	// UTF-8: without it, bash reads non ASCII input (é, ✓) as meta keys and mangles it, and
+	// models read and write UTF-8. C: English messages and stable formats (decimal point,
+	// dates), the easiest for models to read. LC_ALL overrides any other locale variable.
+	{"LC_ALL", "C.UTF-8"},
+	// no pager: when an output does not fit the screen, tools (man, git, systemctl, psql…) would
+	// open less, and agents would have to notice it and quit it. Instead the output goes to the
+	// terminal, where the scrollback keeps it for extra lines captures.
+	{"PAGER", "cat"},
+	// tool specific pagers take precedence over PAGER and users often set them (MANPAGER in a
+	// shell profile, inherited by terminals). GIT_PAGER also overrides core.pager in gitconfig.
+	{"GIT_PAGER", "cat"},
+	{"MANPAGER", "cat"},
+	{"SYSTEMD_PAGER", "cat"},
+	// pasted text relies on bracketed paste, which bash 4.4 and 5.0 do not enable by default,
+	// and an inputrc can disable. bash runs PROMPT_COMMAND before each prompt, after its startup
+	// files: the setting is enforced whatever they say, with no file of rat's to maintain.
+	// Startup files assigning PROMPT_COMMAND defeat it: see CheckBracketedPaste.
+	{"PROMPT_COMMAND", bracketedPasteCommand},
+}
+
 // fixedSize returns the tmux command keeping the size of the window target (serverDefaultSize)
 // whoever attaches, to chain in the invocation creating the window. With the default size policy
 // (latest), a human attaching to inspect resizes the windows to their terminal, and they keep
@@ -213,32 +241,11 @@ readiness:
 		// programs must not be able to rename them (escape sequences)
 		{"allow-rename", "off"},
 	}
-	// Terminals inherit the server environment (rat's own) plus these variables
-	environment := [][2]string{
-		// the same neutral UTF-8 locale everywhere, whatever rat's own (a service often has none).
-		// UTF-8: without it, bash reads non ASCII input (é, ✓) as meta keys and mangles it, and
-		// models read and write UTF-8. C: English messages and stable formats (decimal point,
-		// dates), the easiest for models to read. LC_ALL overrides any other locale variable.
-		{"LC_ALL", "C.UTF-8"},
-		// no pager: when an output does not fit the screen, tools (man, git, systemctl, psql…) would
-		// open less, and agents would have to notice it and quit it. Instead the output goes to the
-		// terminal, where the scrollback keeps it for extra lines captures.
-		{"PAGER", "cat"},
-		// tool specific pagers take precedence over PAGER and users often set them (MANPAGER in a
-		// shell profile, inherited by terminals). GIT_PAGER also overrides core.pager in gitconfig.
-		{"GIT_PAGER", "cat"},
-		{"MANPAGER", "cat"},
-		{"SYSTEMD_PAGER", "cat"},
-		// pasted text relies on bracketed paste, which bash 4.4 and 5.0 do not enable by default,
-		// and an inputrc can disable. bash runs PROMPT_COMMAND before each prompt, after its startup
-		// files: the setting is enforced whatever they say, with no file of rat's to maintain.
-		{"PROMPT_COMMAND", `bind "set enable-bracketed-paste on"`},
-	}
 	var args []string
 	for _, option := range options {
 		args = append(args, "set-option", "-g", option[0], option[1], ";")
 	}
-	for _, variable := range environment {
+	for _, variable := range terminalEnvironment {
 		args = append(args, "set-environment", "-g", variable[0], variable[1], ";")
 	}
 	args = args[:len(args)-1] // no trailing command separator

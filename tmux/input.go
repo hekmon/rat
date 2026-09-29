@@ -5,14 +5,20 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var (
 	// ErrInvalidKey is returned by SendKeys for a name that is not a known tmux key name.
 	ErrInvalidKey = errors.New("invalid key name")
+	// ErrBracketedPasteOverridden is returned by CheckBracketedPaste when bash startup files
+	// replace the enforcement of bracketed paste.
+	ErrBracketedPasteOverridden = errors.New("bash startup files override bracketed paste")
 )
 
 // keyFormat matches the tmux key names SendKeys accepts: a printable ASCII character or a named
@@ -99,6 +105,51 @@ func (c *Controller) SendKeys(ctx context.Context, session, window string, keys 
 	}
 	if _, err := c.run(ctx, args...); err != nil {
 		return c.windowError(ctx, fmt.Errorf("failed to send keys to %s:%s: %w", session, window, err), session, window)
+	}
+	return nil
+}
+
+// CheckBracketedPaste checks that bash startup files keep bracketed paste enforced in terminals.
+// rat enforces it through PROMPT_COMMAND, which a startup file assigning it (rather than adding
+// to it) replaces: bracketed paste then depends on bash defaults and inputrc, and pasted text may
+// run line by line (see SendText). The error then wraps ErrBracketedPasteOverridden, with what
+// PROMPT_COMMAND became. It is a warning for the caller to relay, terminals keep working.
+// It runs bash once as terminals start it (login, interactive, their environment): startup files
+// may block, so ctx should bound it. It fails with ErrServerNotRunning if the server is not started.
+func (c *Controller) CheckBracketedPaste(ctx context.Context) error {
+	// What tmux adds for terminals, on top of their environment: the shell, TERM, and TMUX. TMUX
+	// matters: a common startup file runs tmux when it is empty.
+	out, err := c.run(ctx, "show-options", "-gv", "default-shell", ";",
+		"show-options", "-gv", "default-terminal", ";",
+		"display-message", "-p", "#{socket_path},#{pid},0")
+	if err != nil {
+		return fmt.Errorf("failed to read the terminals settings: %w", err)
+	}
+	settings := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	if len(settings) != 3 {
+		return fmt.Errorf("unexpected terminals settings %q", out)
+	}
+	shell, term, tmux := settings[0], settings[1], settings[2]
+	// Not through tmux (run-shell): tmux 3.3 does not return its output to the client.
+	// Stdin and stderr are the null device: bash complains it has no terminal for job control.
+	cmd := exec.CommandContext(ctx, shell, "-l", "-i", "-c", `printf '%s\n' "${PROMPT_COMMAND[@]}"`)
+	cmd.Env = os.Environ() // the server environment, which it copied from rat's when started
+	for _, variable := range terminalEnvironment {
+		cmd.Env = append(cmd.Env, variable[0]+"="+variable[1])
+	}
+	cmd.Env = append(cmd.Env, "TERM="+term, "TMUX="+tmux)
+	if cmd.Dir, err = os.UserHomeDir(); err != nil {
+		return fmt.Errorf("failed to run bash as terminals do: %w", err)
+	}
+	// a startup file starting a daemon would keep the output open after bash exits
+	cmd.WaitDelay = time.Second
+	promptCommand, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to run bash as terminals do: %w", err)
+	}
+	if !strings.Contains(string(promptCommand), bracketedPasteCommand) {
+		return fmt.Errorf("%w: PROMPT_COMMAND is %q, pasted text may run line by line",
+			ErrBracketedPasteOverridden, strings.TrimSpace(string(promptCommand)))
 	}
 	return nil
 }

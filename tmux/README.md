@@ -145,6 +145,12 @@ Terminals inherit rat's environment, plus variables enforced at `StartServer`:
   `bind` command in each new terminal, which shows on the screen and in the history, and holds
   only until something changes the setting. Limit: a startup file assigning `PROMPT_COMMAND`
   (rather than adding to it, as most do) replaces it, and the inputrc or bash default applies.
+  rat does not refuse to run then (single line inputs still work), but `CheckBracketedPaste`
+  detects it, for the caller to warn: it runs bash once as terminals start it (login,
+  interactive, their environment, `TERM` and `TMUX` included, as startup files often run tmux
+  when `TMUX` is empty) and reads what `PROMPT_COMMAND` became. It runs bash directly: tmux 3.3
+  does not return the output of `run-shell` to the client asking for it. It is a snapshot: a
+  startup file changed afterwards goes unnoticed until the next check.
 
 `TMUX` is kept, on purpose. tmux sets it in every terminal (it can not be removed with
 `set-environment`, only by the command starting the terminal), and a `tmux` command typed in a

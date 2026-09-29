@@ -88,7 +88,10 @@ func checkPasted(t *testing.T, c *Controller) {
 		t.Fatal(err)
 	}
 	if slices.Contains(strings.Split(snapshot.Content, "\n"), "one") {
-		t.Fatalf("pasted text ran without Enter:\n%s", snapshot.Content)
+		// rat enforces bracketed paste with PROMPT_COMMAND, which a startup file of the machine
+		// running the tests can replace: terminals read the real ones (~/.bash_profile…)
+		t.Fatalf("pasted text ran without Enter: bash did not ask for bracketed paste. Does a bash "+
+			"startup file assign PROMPT_COMMAND (rather than adding to it)? Current screen:\n%s", snapshot.Content)
 	}
 	if err := c.SendText(ctx, "s", FirstWindow, "", true); err != nil {
 		t.Fatal(err)
@@ -256,5 +259,34 @@ func TestSendTextMissingTarget(t *testing.T) {
 	// an empty input to an existing window is not an error
 	if err := c.SendText(ctx, "s", FirstWindow, "", false); err != nil {
 		t.Error(err)
+	}
+}
+
+// TestCheckBracketedPaste guards that a bash startup file replacing PROMPT_COMMAND, which rat
+// enforces bracketed paste with, is reported, while one adding to it is not.
+func TestCheckBracketedPaste(t *testing.T) {
+	c := newTestController(t, "checkpaste")
+	if err := c.CheckBracketedPaste(context.Background()); !errors.Is(err, ErrServerNotRunning) {
+		t.Fatalf("expected ErrServerNotRunning, got %v", err)
+	}
+	if err := c.StartServer(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for profile, overridden := range map[string]bool{
+		"true":                        false,
+		`PROMPT_COMMAND="history -a"`: true,
+		`PROMPT_COMMAND="history -a;$PROMPT_COMMAND"`: false,
+		// as terminals, bash runs within tmux: startup files often run tmux when TMUX is empty
+		`[ -z "$TMUX" ] && PROMPT_COMMAND="outside tmux"`: false,
+	} {
+		home := t.TempDir()
+		if err := os.WriteFile(filepath.Join(home, ".bash_profile"), []byte(profile+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("HOME", home)
+		err := c.CheckBracketedPaste(context.Background())
+		if got := errors.Is(err, ErrBracketedPasteOverridden); got != overridden || !got && err != nil {
+			t.Errorf("profile %s: expected overridden %v, got %v", profile, overridden, err)
+		}
 	}
 }
