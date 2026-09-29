@@ -99,7 +99,11 @@ else being tmux defaults:
   24 though, the classic height full-screen programs are designed for: below it some refuse to
   run or cut their menus, `top` shows few processes, and pagers kick in more often.
 - `window-size manual`: with the default (`latest`), a human attaching to inspect the terminals
-  resizes them to their own terminal, and they keep that size once the human detaches.
+  resizes them to their own terminal, and they keep that size once the human detaches. It is set
+  on each window, in the invocation creating it, not globally: tmux 3.3 to 3.6 crash (segfault,
+  killing every terminal) when a session is created while the global value is `manual`. Fixed in
+  tmux 3.7 (commit `7d41761e`, GitHub issue 4849), without a changelog entry. The global value
+  stays at the default, and a test guards it.
 - `allow-rename off`: already the default, but window names are how agents find their
   terminals: programs must not rename them (escape sequences).
 
@@ -212,25 +216,77 @@ Agents type into a terminal, they do not run commands: the input may answer a pr
 to confirm") as well as start a command. rat does not know when a command finishes, only which
 process is in the foreground.
 
-### Text as is
+### One input, one tmux invocation
 
-Text is sent with `send-keys -l --`:
+An input is a text with its optional Enter, or a series of keys, and each is a single tmux
+invocation. tmux runs an invocation whole, so no other input can interleave with it, and rat
+needs no lock on windows. This comes from the tmux source (3.7c):
 
-- `-l` makes it literal: without it, words such as `Enter` or `C-c` in the text would be sent as
-  keys;
-- `--` ends the flags: a text starting with `-` (such as `-y`) would be parsed as one.
+- the client sends all its arguments, `;` separators included, in a single message
+  (`client.c`);
+- the server turns that message into commands appended together to the queue of that client
+  (`server-client.c`, `cmdq_get_command` in `cmd-queue.c`);
+- the server is single threaded, and drains a client queue in one go, stopping only on a
+  command that waits (`server_loop` in `server.c`, `cmdq_next` in `cmd-queue.c`);
+- `send-keys` and `paste-buffer` never wait. `load-buffer -` does, while reading its stdin, but
+  before anything is typed: other clients may run then, not in the middle of the text.
+
+Two agents typing in the same window are like two persons sharing a keyboard: each input is one
+hand on it, and the inputs come one after the other, never mixed. A text and keys are separate
+inputs on purpose: which keys to press usually depends on what the text caused on the screen.
+
+### Text is pasted, not typed with send-keys
+
+The obvious way, `send-keys -l -- text`, fails agents twice:
+
+- **Size.** The client sends its arguments in a single message of 16 KiB at most
+  (`MAX_IMSGSIZE`), and fails with `command too long` beyond: a text of about 16,300 characters.
+  Agents paste files, scripts and heredocs, as a human would, and must be able to.
+- **Parsing.** Arguments go through tmux parsing: words such as `Enter` would be sent as keys
+  (needing `-l`), a leading `-` read as a flag (needing `--`), and a trailing `;` read as the end
+  of the command and dropped (see below).
+
+Text is therefore loaded into a tmux buffer from stdin, then pasted, in the same invocation:
+
+```
+load-buffer -b rat-input-N - ; paste-buffer -d -r -b rat-input-N -t =session:=window ; send-keys -t =session:=window Enter
+```
+
+- stdin is not subject to the message limit (115 KB went through unchanged in a manual test,
+  64 KiB in `TestSendLargeText`), and never goes through argument parsing.
+- `paste-buffer` writes the buffer to the terminal as is. `-r` keeps new lines, which tmux
+  would otherwise replace by carriage returns. Without `-p`, no bracketed paste markers are
+  added, even when the program asks for them (`cmd-paste-buffer.c`). With them, what a text does
+  would depend on the program: bash 5.1 and later ask for them, and insert pasted new lines into
+  the command line rather than running it (readline documentation, not tested: the bash of the
+  development machine, 3.2, has no bracketed paste). Without them, programs read the text as typed.
+- Buffers are global to the server: each input uses its own name (a counter), so concurrent
+  inputs do not paste each other's text. `-d` deletes the buffer once pasted; a failed paste
+  (missing window) leaves it, holding the text of an agent, so rat deletes it.
+- `load-buffer` creates no buffer from an empty input, and the paste would then fail: an empty
+  text only presses Enter, if asked.
 
 Nothing is added nor removed. Enter is only pressed when asked, as a separate key: a new line
 in the text is typed as a new line character, which bash (like most programs) reads as Enter,
 but rat does not decide it for the agent.
+
+Rejected:
+
+- `send-keys -l` for short texts and the buffer for long ones: two paths and two sets of
+  pitfalls, for no gain.
+- Splitting long texts over several invocations: each part becomes an input of its own, which
+  others could interleave with, bringing back a lock on windows.
+- Limiting the size of texts: an agent must be able to do what a human does, and a big paste is
+  valid.
 
 ### Trailing semicolons
 
 tmux reads an argument ending with `;` as the end of its command, and drops that `;`, even
 when the argument is passed without a shell: `echo a;` would be typed as `echo a`, and the `;`
 key would not be pressed at all. A `;` preceded by a backslash is kept instead (tmux removes the
-backslash), so every argument coming from agents goes through `tmuxArg`, which escapes a
-trailing `;` that way. A `;` elsewhere in an argument is not affected.
+backslash). Text escapes this by not being an argument, but key names are (`;` is a key), so they
+go through `tmuxArg`, which escapes a trailing `;` that way. A `;` elsewhere in an argument is
+not affected.
 
 ### Keys by name
 

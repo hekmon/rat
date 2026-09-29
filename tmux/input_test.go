@@ -3,6 +3,7 @@ package tmux
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -140,5 +141,68 @@ func promptEndsWith(c *Controller, session, window, text string) func() (bool, s
 		lines := strings.Split(snapshot.Content, "\n")
 		last := lines[len(lines)-1]
 		return strings.HasSuffix(last, text), last
+	}
+}
+
+// TestSendLargeText guards that a text larger than what a tmux invocation accepts as arguments
+// (16 KiB, "command too long") reaches the terminal whole and byte for byte, key names, leading
+// '-', trailing ';', tabs and UTF-8 included.
+func TestSendLargeText(t *testing.T) {
+	c := startTestServer(t, "largetext")
+	ctx := context.Background()
+	if err := c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	// cat writes what the terminal receives to a file; echo is off so the screen stays short.
+	// Lines stay short: in canonical mode, the terminal truncates lines longer than its line
+	// buffer (1024 bytes on macOS), whatever tmux sends.
+	out := filepath.Join(t.TempDir(), "out")
+	typeCommand(t, c, "s", FirstWindow, "stty -echo; cat > '"+out+"'")
+	eventually(t, "cat in the foreground", foregroundIs(c, "s", FirstWindow, "cat"))
+	var text strings.Builder
+	for i := 0; text.Len() < 64*1024; i++ {
+		fmt.Fprintf(&text, "-line %d\tEnter C-c café ✓ echo a;\n", i)
+	}
+	if err := c.SendText(ctx, "s", FirstWindow, text.String(), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SendKeys(ctx, "s", FirstWindow, "C-d"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "cat done", foregroundIs(c, "s", FirstWindow, "bash"))
+	received, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(received) != text.String() {
+		t.Fatalf("sent %d bytes, received %d bytes differing from them", text.Len(), len(received))
+	}
+}
+
+// TestSendTextMissingTarget guards that input to a missing window or session reports it, with
+// or without text and Enter, and that a failed paste leaves no buffer holding the text in tmux.
+func TestSendTextMissingTarget(t *testing.T) {
+	c := startTestServer(t, "sendmissing")
+	ctx := context.Background()
+	if err := c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []struct {
+		text  string
+		enter bool
+	}{{"secret", true}, {"secret", false}, {"", true}, {"", false}} {
+		if err := c.SendText(ctx, "s", "nope", input.text, input.enter); !errors.Is(err, ErrWindowNotFound) {
+			t.Errorf("text %q, enter %v: expected ErrWindowNotFound, got %v", input.text, input.enter, err)
+		}
+		if err := c.SendText(ctx, "nope", FirstWindow, input.text, input.enter); !errors.Is(err, ErrSessionNotFound) {
+			t.Errorf("text %q, enter %v: expected ErrSessionNotFound, got %v", input.text, input.enter, err)
+		}
+	}
+	if buffers, err := c.run(ctx, "list-buffers", "-F", "#{buffer_name}"); err != nil || buffers != "" {
+		t.Errorf("buffers left: %q (%v)", buffers, err)
+	}
+	// an empty input to an existing window is not an error
+	if err := c.SendText(ctx, "s", FirstWindow, "", false); err != nil {
+		t.Error(err)
 	}
 }

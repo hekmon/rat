@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 var (
@@ -48,6 +50,9 @@ type Controller struct {
 	// windowCreation makes checking a window name is free and creating it atomic: tmux itself
 	// accepts duplicate names
 	windowCreation sync.Mutex
+	// inputBuffers numbers the tmux buffers SendText pastes from: buffers are global to the
+	// server, so concurrent inputs need distinct names
+	inputBuffers atomic.Uint64
 }
 
 // New returns a controller for tenant, which can be empty (default socket) or
@@ -94,7 +99,7 @@ func (c *Controller) cmd(ctx context.Context, args []string) (cmd *exec.Cmd) {
 
 // tmuxArg protects an argument ending with ';': tmux reads it as the end of the command (the ';'
 // is dropped), even in arguments passed without a shell, unless the ';' is preceded by a
-// backslash, which tmux then removes. Arguments coming from agents (text, keys) must go through it.
+// backslash, which tmux then removes. Arguments coming from agents (key names) must go through it.
 func tmuxArg(arg string) string {
 	if strings.HasSuffix(arg, ";") {
 		return arg[:len(arg)-1] + `\;`
@@ -106,6 +111,20 @@ func tmuxArg(arg string) string {
 // ErrServerNotRunning if the server is not started or has exited, and a tmux failure includes
 // the tmux message.
 func (c *Controller) run(ctx context.Context, args ...string) (string, error) {
+	return c.runWithStdin(ctx, nil, args...)
+}
+
+// serverContext returns the context of the running server, canceled once it is stopped, or nil
+// if no server was started. Commands that must run whatever their caller context (cleanups) use
+// it: they are only pointless once the server, and what they clean up with it, is gone.
+func (c *Controller) serverContext() context.Context {
+	c.serverAction.RLock()
+	defer c.serverAction.RUnlock()
+	return c.serverCtx
+}
+
+// runWithStdin is run, feeding stdin to the tmux client (nil for none).
+func (c *Controller) runWithStdin(ctx context.Context, stdin io.Reader, args ...string) (string, error) {
 	// Holding the lock keeps the server from being stopped while the command runs: some commands
 	// (new-session) start a server when none is running, as a daemon rat would not watch.
 	// Only a server crashing in the meantime can still lead to that.
@@ -119,7 +138,9 @@ func (c *Controller) run(ctx context.Context, args ...string) (string, error) {
 		return "", fmt.Errorf("%w: server exited on its own", ErrServerNotRunning)
 	default:
 	}
-	out, err := c.cmd(ctx, args).Output()
+	cmd := c.cmd(ctx, args)
+	cmd.Stdin = stdin
+	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
