@@ -4,6 +4,9 @@ RAT is an MCP server giving agents persistent terminals on a remote machine. Age
 several long running commands in parallel without being blocked, and find them back after a
 restart or a context compaction.
 
+In effect, rat hands agents persistent remote shells: a human operator must be able to cut them
+at once, and to know what they leave behind.
+
 ## Architecture
 
 - **`tmux` package (controller)**: low level Go API over tmux, explicit (sessions are created
@@ -52,10 +55,16 @@ container) per tenant.
 ## Invariants
 
 - **rat owns its tmux server**: it starts it (`-D`, never daemonized), watches it and stops it.
-  It refuses a socket already served by another server. Stopping rat stops its terminals. A
-  server dying on its own (crash, `tmux kill-server` typed in a terminal) is restarted by the
-  MCP server, the controller only reporting the exit: its terminals and their commands are lost,
-  as when rat stops. Repeated deaths make the MCP server exit, for its supervisor to notice.
+  It refuses a socket already served by another server. Stopping rat stops its terminals: an
+  admin stopping the service is sure that no terminal and no way in is left, without hunting for
+  tmux sockets. Commands detached from their terminal (`nohup`, `setsid`) survive tmux: only a
+  service manager stops them, systemd killing every process left in the service's control group.
+  Running rat as a service is what makes this kill switch complete. What an agent makes
+  persistent outside rat on purpose (crontab, user services) is beyond it: a dedicated Unix user
+  lets the admin stop all of it at once. A server dying on its own (crash, `tmux
+  kill-server` typed in a terminal) is restarted by the MCP server, the controller only
+  reporting the exit: its terminals and their commands are lost, as when rat stops. Repeated
+  deaths make the MCP server exit, for its supervisor to notice.
 - **Terminals are the same on every machine**, whatever the user configuration and rat's own
   environment: bash, starting at home, a neutral UTF-8 locale, no pager, bracketed paste, a
   fixed size.

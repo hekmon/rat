@@ -31,10 +31,10 @@ server since `TMUX` is kept (see Terminal environment).
 A foreground server also survives its last session: tmux turns `exit-empty` off for it
 (`server.c`). Otherwise an agent closing its last window would stop every terminal of the tenant.
 
-The consequence is that stopping rat stops its terminals, and their running commands.
-Rejected for now: adopting a server already running on the socket at startup, which would let
-terminals survive a rat restart but loses the ability to wait for the server (it is not rat's
-child anymore).
+The consequence is that stopping rat stops its terminals, and their running commands: what an
+admin stopping the service counts on (see AGENTS.md). Rejected: adopting a server already
+running on the socket at startup, which would let terminals survive a rat restart, but loses
+that guarantee, and the ability to wait for the server (it is not rat's child anymore).
 
 ### One socket per tenant
 
