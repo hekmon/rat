@@ -1,6 +1,6 @@
-# rat: Remote Agent Terminal
+# RAT: Remote Agent Terminal
 
-rat is an MCP server giving agents persistent terminals on a remote machine. Agents can run
+RAT is an MCP server giving agents persistent terminals on a remote machine. Agents can run
 several long running commands in parallel without being blocked, and find them back after a
 restart or a context compaction.
 

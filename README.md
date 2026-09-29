@@ -1,2 +1,2 @@
-# rat
+# RAT
 Remote Agent Terminal
