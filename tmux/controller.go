@@ -51,5 +51,8 @@ func (c *Controller) cmd(ctx context.Context, args []string) (cmd *exec.Cmd) {
 	if c.tenant != "" {
 		socketName += "-" + c.tenant
 	}
-	return exec.CommandContext(ctx, "tmux", append([]string{"-L", socketName}, args...)...)
+	// -f /dev/null: never load the user (nor system) configuration, rat must behave the same
+	// everywhere. It only matters when the command starts a server, but is harmless otherwise
+	// and ensures a server started by any command is configuration free.
+	return exec.CommandContext(ctx, "tmux", append([]string{"-L", socketName, "-f", "/dev/null"}, args...)...)
 }

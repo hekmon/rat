@@ -3,7 +3,11 @@ package tmux
 import (
 	"context"
 	"errors"
+	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -123,9 +127,7 @@ func TestServerStopKilled(t *testing.T) {
 }
 
 func TestServerStartFailureStderr(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not installed")
-	}
+	requireTmux(t)
 	// bypass New validation to make tmux fail creating its socket
 	c := &Controller{tenant: "test/no/such/dir"}
 	err := c.StartServer(context.Background())
@@ -147,4 +149,113 @@ func TestLimitedBuffer(t *testing.T) {
 	if got := lb.String(); got != "abcde" {
 		t.Errorf("got %q, expected %q", got, "abcde")
 	}
+}
+
+// TestServerIgnoresUserConfig guards that the server never loads the user tmux configuration,
+// which could change its behavior (prefix, base-index, hooks, plugins...).
+func TestServerIgnoresUserConfig(t *testing.T) {
+	c := newTestController(t, "userconfig")
+	home := t.TempDir()
+	config := "set -g @rat-test loaded\nset -g history-limit 42\n"
+	if err := os.WriteFile(filepath.Join(home, ".tmux.conf"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".config", "tmux"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".config", "tmux", "tmux.conf"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	if err := c.StartServer(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := c.cmd(context.Background(), []string{"show-options", "-gv", "@rat-test"}).CombinedOutput(); err == nil {
+		t.Errorf("user configuration loaded: @rat-test=%s", strings.TrimSpace(string(out)))
+	}
+}
+
+// TestServerOptions guards the options rat relies on, set on top of the tmux defaults.
+func TestServerOptions(t *testing.T) {
+	c := newTestController(t, "options")
+	if err := c.StartServer(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	bashPath, err := exec.LookPath("bash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for option, expected := range map[string]string{
+		"default-shell": bashPath,
+		"history-limit": strconv.Itoa(serverHistoryLimit),
+		"default-size":  serverDefaultSize,
+		"window-size":   "manual",
+		"allow-rename":  "off",
+	} {
+		out, err := c.cmd(context.Background(), []string{"show-options", "-gv", option}).Output()
+		if err != nil {
+			t.Fatalf("%s: %v", option, err)
+		}
+		if got := strings.TrimSpace(string(out)); got != expected {
+			t.Errorf("%s = %q, expected %q", option, got, expected)
+		}
+	}
+}
+
+// TestServerRequiresBash guards that a missing bash is reported by StartServer,
+// before any server is started, instead of failing on each new terminal.
+func TestServerRequiresBash(t *testing.T) {
+	c := newTestController(t, "nobash")
+	t.Setenv("PATH", t.TempDir())
+	err := c.StartServer(context.Background())
+	if !errors.Is(err, exec.ErrNotFound) || !strings.Contains(err.Error(), "bash") {
+		t.Fatalf("expected a missing bash error, got %v", err)
+	}
+	if c.server != nil {
+		t.Error("server started without bash")
+	}
+}
+
+// TestServerWindowSizeFixed guards that a client attaching, such as a human inspecting the
+// terminals, does not resize them: neither while attached, nor once detached.
+func TestServerWindowSizeFixed(t *testing.T) {
+	c := newTestController(t, "windowsize")
+	if err := c.StartServer(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := c.cmd(context.Background(), []string{"new-session", "-d", "-s", "s"}).CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	checkSize := func(when string) {
+		t.Helper()
+		out, err := c.cmd(context.Background(), []string{"display-message", "-p", "-t", "=s:", "#{window_width}x#{window_height}"}).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.TrimSpace(string(out)); got != serverDefaultSize {
+			t.Errorf("%s: size is %s, expected %s", when, got, serverDefaultSize)
+		}
+	}
+	checkSize("before attach")
+	// a control mode client acting as a human terminal of 100x30
+	client := c.cmd(context.Background(), []string{"-C", "attach-session", "-t", "=s"})
+	stdin, err := client.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = client.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = io.WriteString(stdin, "refresh-client -C 100x30\n"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	checkSize("client attached")
+	if _, err = io.WriteString(stdin, "detach-client\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = stdin.Close()
+	_ = client.Wait()
+	checkSize("client detached")
 }

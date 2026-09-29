@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
@@ -28,6 +29,19 @@ const serverReadyProbeInterval = 50 * time.Millisecond
 // there when failing at startup (before becoming a server), a line is enough.
 const serverStderrMaxLen = 1024
 
+// serverHistoryLimit is the scrollback kept per pane, bounding how many extra lines above the
+// visible screen can be captured (tmux default: 2000).
+const serverHistoryLimit = 10000
+
+// serverDefaultSize is the fixed size of the terminals (tmux default: 80x24).
+// Wide, because programs lay out their output for the terminal width: some truncate lines to it
+// (ps, docker, tables), and joining wrapped lines at capture can not recover what they cut.
+// Short, because the height is what a full screen capture returns by default: more lines are
+// available on demand from the scrollback. But not shorter than 24, the classic terminal height
+// full-screen programs are designed for: below it some refuse to run or cut their menus (dialog,
+// whiptail), top shows few processes, and pagers (less via git, journalctl…) kick in more often.
+const serverDefaultSize = "200x24"
+
 // serverStopGracePeriod is how long StopServer waits for the server to exit
 // after a successful kill-server before terminating it (SIGTERM).
 const serverStopGracePeriod = 5 * time.Second
@@ -36,8 +50,10 @@ const serverStopGracePeriod = 5 * time.Second
 // (context cancellation) before being sent SIGKILL.
 const serverKillDelay = 2 * time.Second
 
-// StartServer actually start the tmux server.
-// ctx should be the application context, as an exit safe guard (kill)
+// StartServer starts the tmux server and returns once it is ready and configured.
+// ctx should be the application context, as an exit safe guard (kill).
+// The server does not load any tmux configuration and its terminals run bash, which must be
+// installed (the returned error then wraps exec.ErrNotFound).
 func (c *Controller) StartServer(ctx context.Context) (err error) {
 	defer c.serverAction.Unlock()
 	c.serverAction.Lock()
@@ -49,6 +65,11 @@ func (c *Controller) StartServer(ctx context.Context) (err error) {
 		default:
 			return ErrServerAlreadyStarted
 		}
+	}
+	// Terminals run bash: check it now rather than failing on each new window
+	bashPath, err := exec.LookPath("bash")
+	if err != nil {
+		return fmt.Errorf("bash is required to run terminals: %w", err)
 	}
 	// Cleanup on error
 	defer func() {
@@ -120,6 +141,30 @@ readiness:
 			}
 			return fmt.Errorf("server not ready: %w (last probe error: %w)", readyCtx.Err(), probeErr)
 		}
+	}
+	// Configure it: without a configuration file, these are the only differences with tmux defaults
+	optsCtx, optsCtxCancel := context.WithTimeout(ctx, serverStartTimeout)
+	defer optsCtxCancel()
+	options := [][2]string{
+		{"default-shell", bashPath},
+		{"history-limit", strconv.Itoa(serverHistoryLimit)},
+		{"default-size", serverDefaultSize},
+		// keep that size whoever attaches: with the default (latest), a human attaching to inspect
+		// resizes the windows to their terminal, and they keep that size once the human detaches
+		{"window-size", "manual"},
+		// already tmux default, but window names are how agents find their terminals back:
+		// programs must not be able to rename them (escape sequences)
+		{"allow-rename", "off"},
+	}
+	var args []string
+	for i, option := range options {
+		if i > 0 {
+			args = append(args, ";")
+		}
+		args = append(args, "set-option", "-g", option[0], option[1])
+	}
+	if out, err := c.cmd(optsCtx, args).CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to configure server: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return
 }

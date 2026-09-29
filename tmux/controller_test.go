@@ -8,13 +8,20 @@ import (
 	"testing"
 )
 
-// newTestController returns a controller on its own socket, skipping the test if tmux is not installed.
+// requireTmux fails the test if tmux is not installed: rat can not work without it,
+// and a test run that tested nothing must not pass.
+func requireTmux(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Fatal("tmux is required to run the tests:", err)
+	}
+}
+
+// newTestController returns a controller on its own socket.
 // The server is stopped (if still running) when the test ends.
 func newTestController(t *testing.T, tenant string) *Controller {
 	t.Helper()
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not installed")
-	}
+	requireTmux(t)
 	c, err := New(context.Background(), "test-"+tenant)
 	if err != nil {
 		t.Fatal(err)
