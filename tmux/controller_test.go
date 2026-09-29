@@ -31,7 +31,7 @@ func newTestController(t *testing.T, tenant string) *Controller {
 }
 
 func TestNewValidTenants(t *testing.T) {
-	for _, tenant := range []string{"", "alice", "team_1-prod", "-L", strings.Repeat("a", tenantMaxLen)} {
+	for _, tenant := range []string{"", "alice", "team_1-prod", "-L", strings.Repeat("a", nameMaxLen)} {
 		if _, err := New(context.Background(), tenant); err != nil {
 			t.Errorf("tenant %q: %v", tenant, err)
 		}
@@ -39,7 +39,7 @@ func TestNewValidTenants(t *testing.T) {
 }
 
 func TestNewInvalidTenants(t *testing.T) {
-	for _, tenant := range []string{"no/such/dir", "../../etc", "..", "a b", "é", "a\x00b", strings.Repeat("a", tenantMaxLen+1)} {
+	for _, tenant := range []string{"no/such/dir", "../../etc", "..", "a b", "é", "a\x00b", strings.Repeat("a", nameMaxLen+1)} {
 		if _, err := New(context.Background(), tenant); !errors.Is(err, ErrInvalidTenant) {
 			t.Errorf("tenant %q: expected ErrInvalidTenant, got %v", tenant, err)
 		}
