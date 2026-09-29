@@ -125,6 +125,23 @@ Comments rot quietly, tests break loudly. When a decision can be checked, write 
 - Tests drive a real tmux, which rat cannot work without: a test run lacking tmux fails instead
   of skipping, since a green run that tested nothing is a false signal.
 
+### How we work
+
+A guideline rather than a rule: rat is built with a human in the loop, closer to pair
+programming than to reviewing results at checkpoints. It is slower, and it is what catches what
+tests written in advance do not: most pitfalls described in `tmux/README.md` were found this way.
+
+- Work in small steps, bottom up, each one building and passing its tests on its own: one
+  commit, read by the other side before the next step starts.
+- Surface what a step reveals (a tool pitfall, a doubtful choice) as soon as it is found, with
+  its evidence, rather than fixing it silently among other changes: the finding is what the
+  reader needs to challenge, and challenging it often leads to a better design than the fix.
+- Read adversarially, whoever wrote: question every decision and every comment. A question from
+  the reader means the code or its explanation misses something: answer it in the code (a
+  comment, a name, a test), not only in the conversation.
+- Longer autonomous iterations, reviewed at checkpoints, fit mechanical changes. The design, and
+  anything touching the invariants, goes step by step.
+
 ### Code conventions
 
 - Exported errors are sentinels named `ErrXxx`, wrapped with `%w`.
