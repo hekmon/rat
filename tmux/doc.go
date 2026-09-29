@@ -1,0 +1,41 @@
+// Package tmux controls a dedicated tmux server giving agents persistent terminals.
+//
+// It is the low level layer of rat: explicit, with no automatic behavior, but opinionated for
+// agent usage. It exposes what agents need rather than all of tmux, and enforces its invariants
+// (exact targets, validated names, a server free of any user configuration…). The MCP server
+// composes these primitives into the few tools agents see. The design decisions, and the tmux
+// pitfalls they avoid, are described in the README of this package.
+//
+// # Server
+//
+// A [Controller] owns one tmux server, on a socket named after its tenant (rat-<tenant>, or rat
+// for the default tenant). [Controller.StartServer] starts it in the foreground, as a child of
+// rat, watches it and returns once it is ready. [Controller.StopServer] asks it to exit, then
+// terminates it if needed. Stopping the server stops every terminal it runs.
+//
+// # Sessions and windows
+//
+// A session groups the windows of an agent (or of an MCP client). A tmux session can not be
+// empty: [Controller.NewSession] creates it with a first window named [FirstWindow], and closing
+// its last window closes the session.
+//
+// A window is a terminal running bash, starting in the home directory of the user running rat.
+// Windows are identified by their name, unique within their session: it is how agents find
+// them back. [Controller.ListWindows] and [Controller.Window] describe them as tmux currently
+// sees them: foreground command, working directory, last activity, full-screen program, size of
+// the scrollback. Nothing is cached: tmux is the single source of truth.
+//
+// # Input and capture
+//
+// [Controller.SendText] types text as is, then presses Enter only if asked: agents may be
+// answering a prompt rather than running a command. [Controller.SendKeys] presses keys by their
+// tmux names (C-c, Escape, Up…). [Controller.Capture] returns a [Snapshot] of what a window
+// displays, with optional scrollback above it, and what is needed to interpret it.
+//
+// # Errors
+//
+// Failures are reported with sentinel errors ([ErrSessionNotFound], [ErrWindowExists],
+// [ErrServerNotRunning]…) for the caller to decide what to do: the controller never works
+// around them. For instance, the MCP server meeting ErrSessionNotFound creates the session and
+// carries on, treating ErrSessionExists as a concurrent creation rather than an error.
+package tmux
