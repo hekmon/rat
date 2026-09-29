@@ -6,11 +6,18 @@ restart or a context compaction.
 
 ## Architecture
 
-- **`tmux` package (controller)**: low level Go API over tmux. Thin and explicit: sessions are
-  created and destroyed manually, no automatic behavior.
+- **`tmux` package (controller)**: low level Go API over tmux, explicit (sessions are created
+  and destroyed manually, no automatic behavior) but opinionated for agent usage: it exposes
+  what agents need, not all of tmux, and enforces the invariants below.
 - **MCP server**: high level, agent facing. Keeps the tool set minimal (list windows,
   create/close window, send input, get content) and handles the plumbing automatically
   (e.g. a session is created on first use) to avoid tool and context bloat.
+
+A tmux session can not exist without a window: the controller creates sessions with a first
+window named `main`, and a session disappears with its last window. The MCP server composes the
+controller primitives to hide this from agents: whenever a tool meets a missing session, it
+creates it (a concurrent creation is not an error) and carries on. An agent closing all its
+windows simply finds a fresh `main` on its next call.
 
 ## Principles
 
