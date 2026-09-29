@@ -57,8 +57,8 @@ container) per tenant.
 - **Terminals are found by name**: tenant, session and window names are plain names, validated
   before reaching tmux, and targeted exactly. A window name is unique in its session; tmux IDs
   are never used nor stored.
-- **Agent input reaches the terminal as is**: text is typed literally, never interpreted by tmux,
-  and Enter is only pressed when asked.
+- **Agent input reaches the terminal as is**: text is pasted literally, as a human pastes, never
+  interpreted by tmux, and Enter is only pressed when asked.
 
 How the tmux controller keeps them, and the tmux pitfalls behind each of them, are described in
 [`tmux/README.md`](tmux/README.md).

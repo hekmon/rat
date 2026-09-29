@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
 
-// TestSendText guards that text is typed literally (key names and a leading '-' included), and
+// TestSendText guards that text is sent literally (key names and a leading '-' included), and
 // that Enter is only pressed when asked.
 func TestSendText(t *testing.T) {
 	c := startTestServer(t, "sendtext")
@@ -42,6 +43,38 @@ func TestSendText(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventually(t, "text and Enter in one call", screenContains(c, "s", FirstWindow, "\none-call"))
+}
+
+// TestSendTextPasted guards that text is pasted as a human pastes: bash, which asks for bracketed
+// paste, inserts a multi-line text into its command line and runs nothing until Enter, which then
+// runs every line.
+func TestSendTextPasted(t *testing.T) {
+	c := startTestServer(t, "sendpasted")
+	ctx := context.Background()
+	if err := c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	// bash asks for pastes to be marked whenever it waits at a prompt, before displaying it: a
+	// text pasted earlier, while bash starts, is marked for nobody and read as typed. A prompt
+	// displayed after the output of a command means bash is waiting and asked for it.
+	typeCommand(t, c, "s", FirstWindow, "echo ready")
+	eventually(t, "prompt after the command", screenContains(c, "s", FirstWindow, "\nready\n"))
+	if err := c.SendText(ctx, "s", FirstWindow, "echo one\necho two\n", false); err != nil {
+		t.Fatal(err)
+	}
+	// typed rather than pasted, bash would have run the first line before displaying the second
+	eventually(t, "text pasted", screenContains(c, "s", FirstWindow, "echo two"))
+	snapshot, err := c.Capture(ctx, "s", FirstWindow, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(strings.Split(snapshot.Content, "\n"), "one") {
+		t.Fatalf("pasted text ran without Enter:\n%s", snapshot.Content)
+	}
+	if err := c.SendText(ctx, "s", FirstWindow, "", true); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "every line run", screenContains(c, "s", FirstWindow, "\none\ntwo"))
 }
 
 // TestSendKeys guards that keys act as keys (C-c interrupts the foreground command), and that
@@ -107,7 +140,7 @@ func TestUTF8(t *testing.T) {
 	})
 }
 
-// TestSendSemicolon guards that a text or key ending with ';' is typed as is: tmux would read that
+// TestSendSemicolon guards that a text or key ending with ';' is sent as is: tmux would read that
 // ';' as the end of its command and drop it.
 func TestSendSemicolon(t *testing.T) {
 	c := startTestServer(t, "semicolon")

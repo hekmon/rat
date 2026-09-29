@@ -27,8 +27,8 @@
 //
 // # Input and capture
 //
-// [Controller.SendText] types text as is, then presses Enter only if asked: agents may be
-// answering a prompt rather than running a command. [Controller.SendKeys] presses keys by their
+// [Controller.SendText] pastes text as is, as a human pastes, then presses Enter only if asked:
+// agents may be answering a prompt rather than running a command. [Controller.SendKeys] presses keys by their
 // tmux names (C-c, Escape, Up…). [Controller.Capture] returns a [Snapshot] of what a window
 // displays, with optional scrollback above it, and what is needed to interpret it.
 //

@@ -20,10 +20,14 @@ var (
 // name as text instead of failing, which would hide the mistake: "Ctrl-C" would not interrupt.
 var keyFormat = regexp.MustCompile(`^(?:[CMS]-)*(?:[!-~]|Enter|Escape|Tab|BTab|BSpace|Space|Up|Down|Left|Right|Home|End|PageUp|PgUp|PageDown|PgDn|PPage|NPage|Insert|IC|Delete|DC|F[1-9]|F1[0-2])$`)
 
-// SendText types text in window of session, then presses Enter if enter is true. The text is
-// typed as is, never interpreted as key names and with nothing added or removed: a new line in
-// it is typed as a new line character, which bash (like most programs) reads as Enter. It has no
-// size limit, and reaches the terminal whole: no other input can interleave with it.
+// SendText pastes text in window of session, as a human pastes, then presses Enter if enter is
+// true. The text is pasted as is, never interpreted as key names and with nothing added or
+// removed. When the text arrives, a program asking for pastes to be marked (bracketed paste:
+// bash waiting at its prompt, vim…) receives it as a paste: bash inserts it into its command
+// line, new lines included, and runs nothing until Enter. Otherwise, the text is read as typed, a
+// new line as Enter: by programs that do not ask, but also by bash reading it later, when it was
+// pasted while bash was starting or running a command. It has no size limit, and reaches the
+// terminal whole: no other input can interleave with it.
 // The error wraps ErrSessionNotFound or ErrWindowNotFound if they do not exist.
 func (c *Controller) SendText(ctx context.Context, session, window, text string, enter bool) error {
 	if err := checkNames(session, window); err != nil {
@@ -49,8 +53,8 @@ func (c *Controller) SendText(ctx context.Context, session, window, text string,
 			// paste it into the window, where:
 			//  -r keeps new lines as is (tmux would replace them with carriage returns)
 			//  -d deletes the buffer once pasted
-			//  no -p: no bracketed paste markers, programs read the text as if typed
-			"paste-buffer", "-t", tg, "-b", buffer, "-r", "-d",
+			//  -p marks the paste (bracketed paste) if the program asked for it
+			"paste-buffer", "-t", tg, "-b", buffer, "-r", "-d", "-p",
 		}
 	}
 	if enter {

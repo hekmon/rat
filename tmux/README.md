@@ -249,26 +249,50 @@ The obvious way, `send-keys -l -- text`, fails agents twice:
 Text is therefore loaded into a tmux buffer from stdin, then pasted, in the same invocation:
 
 ```
-load-buffer -b rat-input-N - ; paste-buffer -d -r -b rat-input-N -t =session:=window ; send-keys -t =session:=window Enter
+load-buffer -b rat-input-N - ; paste-buffer -t =session:=window -b rat-input-N -r -d -p ; send-keys -t =session:=window Enter
 ```
 
 - stdin is not subject to the message limit (115 KB went through unchanged in a manual test,
   64 KiB in `TestSendLargeText`), and never goes through argument parsing.
 - `paste-buffer` writes the buffer to the terminal as is. `-r` keeps new lines, which tmux
-  would otherwise replace by carriage returns. Without `-p`, no bracketed paste markers are
-  added, even when the program asks for them (`cmd-paste-buffer.c`). With them, what a text does
-  would depend on the program: bash 5.1 and later ask for them, and insert pasted new lines into
-  the command line rather than running it (readline documentation, not tested: the bash of the
-  development machine, 3.2, has no bracketed paste). Without them, programs read the text as typed.
+  would otherwise replace by carriage returns. `-p` marks the paste, see below.
 - Buffers are global to the server: each input uses its own name (a counter), so concurrent
   inputs do not paste each other's text. `-d` deletes the buffer once pasted; a failed paste
   (missing window) leaves it, holding the text of an agent, so rat deletes it.
 - `load-buffer` creates no buffer from an empty input, and the paste would then fail: an empty
   text only presses Enter, if asked.
 
-Nothing is added nor removed. Enter is only pressed when asked, as a separate key: a new line
-in the text is typed as a new line character, which bash (like most programs) reads as Enter,
-but rat does not decide it for the agent.
+Nothing is added nor removed, and Enter is only pressed when asked, as a separate key.
+
+### Pasted as a human pastes
+
+A terminal program receives bytes, and can not tell a paste from typing: pasting `rm -rf x`
+followed by a new line into a shell would run it. Programs can ask the terminal to mark pastes
+(bracketed paste): the terminal, here tmux, then wraps each paste between `ESC[200~` and
+`ESC[201~`. `-p` adds these markers when the program asks for them, and only then
+(`cmd-paste-buffer.c`).
+
+bash asks for them (readline's `enable-bracketed-paste`) while it waits at its prompt: it
+inserts a pasted text into its command line, new lines included, and runs nothing until Enter,
+which then runs every line. The rule for agents is the one of a human paste: the text is pasted,
+Enter runs it. Without `-p`, each new line would run the line before it, and a text ending with a
+new line would run by itself.
+
+As for a human, what the text does depends on the program when it arrives, which rat does not
+know:
+
+- A program that does not ask (`cat`, a `read` prompt, most scripts) reads the text as typed, a
+  new line as Enter.
+- bash only asks while waiting at its prompt: readline turns the mode on before displaying the
+  prompt, and off before running a command. A text pasted while bash starts (a window just
+  created) or runs a command waits in the terminal, marked for nobody, and bash reads it later as
+  typed.
+- bash before 5.1 does not ask by default (the setting exists since 4.4, off until 5.1), nor
+  bash whose inputrc turns it off; bash 3.2, shipped by macOS, can not. Their pasted text is read
+  as typed.
+
+Verified with bash 3.2 to 5.3 (tmux 3.5a and 3.7c), for the default setting, an inputrc turning
+it off, and with and without `-p`. `TestSendTextPasted` guards the behavior at a bash prompt.
 
 Rejected:
 
