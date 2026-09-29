@@ -23,7 +23,8 @@
 //
 // A window is a terminal running bash, starting in the home directory of the user running rat.
 // Windows are identified by their name, unique within their session: it is how agents find
-// them back. [Controller.ListWindows] and [Controller.Window] describe them as tmux currently
+// them back. Session and window names are plain names, which [CheckName] validates without
+// tmux. [Controller.ListWindows] and [Controller.Window] describe them as tmux currently
 // sees them: foreground command, working directory, last activity, full-screen program, size of
 // the scrollback. Nothing is cached: tmux is the single source of truth.
 //

@@ -27,9 +27,10 @@ windows simply finds a fresh `main` on its next call.
   window or pane IDs. Every read asks tmux, even if a high level operation takes several tmux
   commands. This is what allows agents to rediscover their terminals (window names, running
   commands, paths, activity) after a restart.
-- **Terminal input, not command execution.** Agents type into a terminal: sending Enter is
-  optional (e.g. "press y to confirm"), and the input may answer a prompt rather than start a
-  command. rat does not know when a command finishes, only which process is in the foreground.
+- **Terminal input, not command execution.** Agents act on a terminal as a human does: they
+  paste text and press keys. Pressing Enter is optional (e.g. "press y to confirm"), and the
+  input may answer a prompt rather than start a command. rat does not know when a command
+  finishes, only which process is in the foreground.
 - **KISS.** Prefer what tmux already provides over rebuilding it.
 
 ## Isolation model
@@ -51,9 +52,13 @@ container) per tenant.
 ## Invariants
 
 - **rat owns its tmux server**: it starts it (`-D`, never daemonized), watches it and stops it.
-  It refuses a socket already served by another server. Stopping rat stops its terminals.
+  It refuses a socket already served by another server. Stopping rat stops its terminals. A
+  server dying on its own (crash, `tmux kill-server` typed in a terminal) is restarted by the
+  MCP server, the controller only reporting the exit: its terminals and their commands are lost,
+  as when rat stops. Repeated deaths make the MCP server exit, for its supervisor to notice.
 - **Terminals are the same on every machine**, whatever the user configuration and rat's own
-  environment: bash, starting at home, a neutral UTF-8 locale, no pager, a fixed size.
+  environment: bash, starting at home, a neutral UTF-8 locale, no pager, bracketed paste, a
+  fixed size.
 - **Terminals are found by name**: tenant, session and window names are plain names, validated
   before reaching tmux, and targeted exactly. A window name is unique in its session; tmux IDs
   are never used nor stored.
@@ -124,6 +129,9 @@ Comments rot quietly, tests break loudly. When a decision can be checked, write 
   tmux or the processes it runs misbehave.
 - Tests drive a real tmux, which rat cannot work without: a test run lacking tmux fails instead
   of skipping, since a green run that tested nothing is a false signal.
+- The tmux tests also run with the oldest tmux supported, in a Docker container
+  (`TestMinimumTmux`): Docker is required as well, and `-short` skips it, as an explicit choice
+  to test less.
 
 ### How we work
 

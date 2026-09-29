@@ -239,9 +239,9 @@ The window description is therefore separated by spaces, which must not be ambig
 
 ## Input
 
-Agents type into a terminal, they do not run commands: the input may answer a prompt ("press y
-to confirm") as well as start a command. rat does not know when a command finishes, only which
-process is in the foreground.
+Agents act on a terminal, they do not run commands: they paste text and press keys, and the
+input may answer a prompt ("press y to confirm") as well as start a command. rat does not know
+when a command finishes, only which process is in the foreground.
 
 ### One input, one tmux invocation
 
