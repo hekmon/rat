@@ -10,8 +10,10 @@ import (
 )
 
 var (
+	// ErrSessionNotFound is returned by commands on a session that does not exist.
 	ErrSessionNotFound = errors.New("session not found")
-	ErrSessionExists   = errors.New("session already exists")
+	// ErrSessionExists is returned by NewSession when the session already exists.
+	ErrSessionExists = errors.New("session already exists")
 )
 
 // ListSessions returns the names of the existing sessions, sorted by name.

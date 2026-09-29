@@ -13,10 +13,15 @@ import (
 )
 
 var (
+	// ErrServerAlreadyStarted is returned by StartServer while its server is running.
 	ErrServerAlreadyStarted = errors.New("server already started")
-	ErrServerNotRunning     = errors.New("server not running")
-	ErrServerTerminated     = errors.New("server did not stop gracefully and has been terminated (SIGTERM)")
-	ErrServerKilled         = errors.New("server did not stop gracefully and has been killed (SIGKILL)")
+	// ErrServerNotRunning is returned by commands and StopServer when the server has not been
+	// started, has been stopped, or has exited on its own. StartServer can start a new one.
+	ErrServerNotRunning = errors.New("server not running")
+	// ErrServerTerminated is returned by StopServer when the server had to be sent SIGTERM.
+	ErrServerTerminated = errors.New("server did not stop gracefully and has been terminated (SIGTERM)")
+	// ErrServerKilled is returned by StopServer when the server had to be sent SIGKILL.
+	ErrServerKilled = errors.New("server did not stop gracefully and has been killed (SIGKILL)")
 )
 
 // serverStartTimeout is how long StartServer waits for the server to answer probes.

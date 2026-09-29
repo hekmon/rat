@@ -22,7 +22,7 @@ func requireTmux(t *testing.T) {
 func newTestController(t *testing.T, tenant string) *Controller {
 	t.Helper()
 	requireTmux(t)
-	c, err := New("test-"+tenant)
+	c, err := New("test-" + tenant)
 	if err != nil {
 		t.Fatal(err)
 	}

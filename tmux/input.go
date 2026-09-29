@@ -8,6 +8,7 @@ import (
 )
 
 var (
+	// ErrInvalidKey is returned by SendKeys for a name that is not a known tmux key name.
 	ErrInvalidKey = errors.New("invalid key name")
 )
 

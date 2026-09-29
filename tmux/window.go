@@ -12,8 +12,10 @@ import (
 )
 
 var (
+	// ErrWindowNotFound is returned by commands on a window that does not exist in its session.
 	ErrWindowNotFound = errors.New("window not found")
-	ErrWindowExists   = errors.New("window already exists")
+	// ErrWindowExists is returned by NewWindow when the session already has a window of that name.
+	ErrWindowExists = errors.New("window already exists")
 )
 
 // Window describes a terminal, as tmux sees it when asked.
@@ -140,9 +142,9 @@ func (c *Controller) Window(ctx context.Context, session, window string) (Window
 }
 
 // NewWindow creates window in session, a terminal running bash in the home directory of the user
-// running rat, and leaves the window a human may be looking at selected. The error wraps ErrSessionNotFound if the session does not exist,
-// or ErrWindowExists if a window already has that name in the session: names are how windows are
-// found back.
+// running rat, and leaves the window a human may be looking at selected.
+// The error wraps ErrSessionNotFound if the session does not exist, or ErrWindowExists if a window
+// already has that name in the session: names are how windows are found back.
 func (c *Controller) NewWindow(ctx context.Context, session, window string) error {
 	if err := checkNames(session, window); err != nil {
 		return err

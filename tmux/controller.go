@@ -11,8 +11,11 @@ import (
 )
 
 var (
+	// ErrInvalidTenant is returned by New for a tenant name that is not a plain name.
 	ErrInvalidTenant = errors.New("invalid tenant name")
-	ErrInvalidName   = errors.New("invalid name")
+	// ErrInvalidName is returned for a session or window name that is not a plain name, before
+	// anything reaches tmux.
+	ErrInvalidName = errors.New("invalid name")
 )
 
 // nameMaxLen bounds tenant, session and window names. For tenants, it keeps the socket path
@@ -25,6 +28,12 @@ const nameMaxLen = 32
 // tmux targets, where ':' and '.' separate the session, window and pane parts.
 var nameFormat = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
+// Controller owns the tmux server of a tenant, and runs the commands on its sessions and windows.
+// Create it with New, which validates the tenant. It is safe for concurrent use.
+//
+// It holds the server process, never the state of its terminals: sessions and windows are asked
+// to tmux on every call. It runs one server at a time, and a server that exited on its own can
+// be replaced by calling StartServer again.
 type Controller struct {
 	// config
 	tenant string
