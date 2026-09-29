@@ -30,3 +30,6 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Tidet resources are synced by Tidet Cloud, never by Git.
+.tidet/
