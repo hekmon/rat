@@ -36,15 +36,16 @@ func foregroundIs(c *Controller, session, window, command string) func() (bool, 
 // TestParseWindow guards the parsing of the window format, whose command is quoted by tmux and
 // whose path comes last unquoted.
 func TestParseWindow(t *testing.T) {
-	w, err := parseWindow(`w 1700000000 my\ prog\|x /tmp/a dir|b`)
+	w, err := parseWindow(`w 1700000000 1 42 my\ prog\|x /tmp/a dir|b`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := Window{Name: "w", Command: "my prog|x", Path: "/tmp/a dir|b", Activity: time.Unix(1700000000, 0)}
+	expected := Window{Name: "w", Command: "my prog|x", Path: "/tmp/a dir|b", Activity: time.Unix(1700000000, 0),
+		FullScreen: true, Scrollback: 42}
 	if w != expected {
 		t.Errorf("got %+v, expected %+v", w, expected)
 	}
-	for _, line := range []string{"", "w", "w 1700000000", "w notanumber bash /tmp"} {
+	for _, line := range []string{"", "w", "w 1700000000 0 0", "w notanumber 0 0 bash /tmp", "w 1700000000 0 x bash /tmp"} {
 		if _, err := parseWindow(line); err == nil {
 			t.Errorf("%q: expected an error", line)
 		}
@@ -77,7 +78,8 @@ func TestListWindows(t *testing.T) {
 	if len(windows) != 1 {
 		t.Fatalf("expected one window, got %+v", windows)
 	}
-	if w := windows[0]; w.Name != FirstWindow || w.Command != "bash" || w.Path != home || time.Since(w.Activity) > time.Minute {
+	if w := windows[0]; w.Name != FirstWindow || w.Command != "bash" || w.Path != home || time.Since(w.Activity) > time.Minute ||
+		w.FullScreen {
 		t.Errorf("unexpected description of a new window: %+v", w)
 	}
 	if w, err := c.Window(ctx, "s", FirstWindow); err != nil || w != windows[0] {

@@ -28,27 +28,44 @@ type Window struct {
 	Path string
 	// Activity is the last time the terminal output changed.
 	Activity time.Time
+	// FullScreen is true when a full-screen program (less, vim, top…) draws on the alternate
+	// screen of the terminal: what it displays disappears when it quits.
+	FullScreen bool
+	// Scrollback is the number of terminal rows kept above the screen, which a capture can
+	// include (bounded by the history limit).
+	Scrollback int
 }
 
 // windowFormat is the tmux format describing a window, parsed by parseWindow. Fields are
 // separated by spaces: tmux replaces control characters (such as tabs) by '_' in its output, so
-// the separator has to be printable. The name (validated) and the activity (a number) can not
-// contain it, the command is quoted by tmux (q: escapes spaces and special characters with a
-// backslash), and the path comes last so it needs no quoting.
-const windowFormat = "#{window_name} #{window_activity} #{q:pane_current_command} #{pane_current_path}"
+// the separator has to be printable. The name (validated) and the numbers can not contain it,
+// the command is quoted by tmux (q: escapes spaces and special characters with a backslash),
+// and the path comes last so it needs no quoting.
+const windowFormat = "#{window_name} #{window_activity} #{alternate_on} #{history_size} #{q:pane_current_command} #{pane_current_path}"
 
 func parseWindow(line string) (w Window, err error) {
-	name, rest, _ := strings.Cut(line, " ")
-	activity, rest, _ := strings.Cut(rest, " ")
-	command, path, ok := cutQuoted(rest)
+	fields := strings.SplitN(line, " ", 5)
+	if len(fields) != 5 {
+		return w, fmt.Errorf("unexpected window description %q", line)
+	}
+	command, path, ok := cutQuoted(fields[4])
 	if !ok {
 		return w, fmt.Errorf("unexpected window description %q", line)
 	}
-	seconds, err := strconv.ParseInt(activity, 10, 64)
-	if err != nil {
-		return w, fmt.Errorf("unexpected window activity in %q: %w", line, err)
+	var numbers [3]int64
+	for i, field := range fields[1:4] {
+		if numbers[i], err = strconv.ParseInt(field, 10, 64); err != nil {
+			return w, fmt.Errorf("unexpected window description %q: %w", line, err)
+		}
 	}
-	return Window{Name: name, Command: command, Path: path, Activity: time.Unix(seconds, 0)}, nil
+	return Window{
+		Name:       fields[0],
+		Command:    command,
+		Path:       path,
+		Activity:   time.Unix(numbers[0], 0),
+		FullScreen: numbers[1] == 1,
+		Scrollback: int(numbers[2]),
+	}, nil
 }
 
 // cutQuoted reads a field quoted by the tmux q: format modifier (spaces and special characters
