@@ -204,13 +204,12 @@ func TestServerOptions(t *testing.T) {
 		}
 	}
 	for variable, expected := range map[string]string{
-		"BASH_SILENCE_DEPRECATION_WARNING": "1",
-		"LC_ALL":                           "C.UTF-8",
-		"PAGER":                            "cat",
-		"GIT_PAGER":                        "cat",
-		"MANPAGER":                         "cat",
-		"SYSTEMD_PAGER":                    "cat",
-		"PROMPT_COMMAND":                   `bind "set enable-bracketed-paste on"`,
+		"LC_ALL":         "C.UTF-8",
+		"PAGER":          "cat",
+		"GIT_PAGER":      "cat",
+		"MANPAGER":       "cat",
+		"SYSTEMD_PAGER":  "cat",
+		"PROMPT_COMMAND": `bind "set enable-bracketed-paste on"`,
 	} {
 		out, err := c.cmd(context.Background(), []string{"show-environment", "-g", variable}).Output()
 		if err != nil {

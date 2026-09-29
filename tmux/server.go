@@ -215,9 +215,6 @@ readiness:
 	}
 	// Terminals inherit the server environment (rat's own) plus these variables
 	environment := [][2]string{
-		// macOS bash prints a "default shell is now zsh" notice at each start, which would be the
-		// first thing agents read in every new terminal
-		{"BASH_SILENCE_DEPRECATION_WARNING", "1"},
 		// the same neutral UTF-8 locale everywhere, whatever rat's own (a service often has none).
 		// UTF-8: without it, bash reads non ASCII input (é, ✓) as meta keys and mangles it, and
 		// models read and write UTF-8. C: English messages and stable formats (decimal point,

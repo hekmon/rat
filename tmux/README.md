@@ -138,8 +138,6 @@ Terminals inherit rat's environment, plus variables enforced at `StartServer`:
   `less` when their output does not fit the screen, and agents would have to notice it and quit
   it. The output goes to the scrollback instead. The tool specific ones are needed as they take
   precedence over `PAGER` and users often set them (`GIT_PAGER` also overrides `core.pager`).
-- `BASH_SILENCE_DEPRECATION_WARNING=1`: on macOS, bash prints a "the default shell is now zsh"
-  notice at each start, the first thing agents would read in every new terminal.
 - `PROMPT_COMMAND='bind "set enable-bracketed-paste on"'`: pasted text relies on bracketed
   paste (see Input), which bash 4.4 and 5.0 do not enable by default, and an inputrc can disable.
   bash runs `PROMPT_COMMAND` before each prompt, after its startup files, so the setting holds
