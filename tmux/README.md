@@ -21,6 +21,16 @@ learns the server exited through a channel closed by that goroutine. This is how
 is reported during startup, how `StopServer` waits for the exit, and how `StartServer` notices a
 previous server died on its own and can start a new one.
 
+`WaitServer` exposes that exit to the caller, with its reason, so that it can restart the server
+(the controller never does it by itself). Each run of the server is a value of its own
+(`serverProcess`): a waiter keeps it, and still reads why it exited once the controller has moved
+on to another server. An exit asked by `StopServer` is told apart from a server exiting on its
+own: a crash, the OOM killer, or `tmux kill-server` typed in a terminal, which reaches rat's
+server since `TMUX` is kept (see Terminal environment).
+
+A foreground server also survives its last session: tmux turns `exit-empty` off for it
+(`server.c`). Otherwise an agent closing its last window would stop every terminal of the tenant.
+
 The consequence is that stopping rat stops its terminals, and their running commands.
 Rejected for now: adopting a server already running on the socket at startup, which would let
 terminals survive a rat restart but loses the ability to wait for the server (it is not rat's

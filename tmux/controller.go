@@ -39,12 +39,8 @@ var nameFormat = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 type Controller struct {
 	// config
 	tenant string
-	// runtime
-	server          *exec.Cmd
-	serverCtx       context.Context
-	serverCtxCancel func()
-	serverDone      chan struct{} // closed once the server process has exited and been reaped
-	serverWaitErr   error         // server Wait() result, only valid once serverDone is closed
+	// runtime: the current server, nil when none is started
+	server *serverProcess
 	// serverAction is held exclusively to start or stop the server, and shared to run commands on it
 	serverAction sync.RWMutex
 	// windowCreation makes checking a window name is free and creating it atomic: tmux itself
@@ -130,7 +126,10 @@ func (c *Controller) run(ctx context.Context, args ...string) (string, error) {
 func (c *Controller) serverContext() context.Context {
 	c.serverAction.RLock()
 	defer c.serverAction.RUnlock()
-	return c.serverCtx
+	if c.server == nil {
+		return nil
+	}
+	return c.server.ctx
 }
 
 // runWithStdin is run, feeding stdin to the tmux client (nil for none).
@@ -144,8 +143,8 @@ func (c *Controller) runWithStdin(ctx context.Context, stdin io.Reader, args ...
 		return "", ErrServerNotRunning
 	}
 	select {
-	case <-c.serverDone:
-		return "", fmt.Errorf("%w: server exited on its own", ErrServerNotRunning)
+	case <-c.server.done:
+		return "", c.server.exitedOnItsOwn()
 	default:
 	}
 	cmd := c.cmd(ctx, args)

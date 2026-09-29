@@ -87,16 +87,66 @@ func TestServerExitedOnItsOwn(t *testing.T) {
 		t.Fatal(err)
 	}
 	// StartServer notices the dead server and starts a new one
-	_ = c.server.Process.Signal(syscall.SIGKILL)
-	<-c.serverDone
+	_ = c.server.cmd.Process.Signal(syscall.SIGKILL)
+	<-c.server.done
 	if err := c.StartServer(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	// StopServer reports it was not running anymore
-	_ = c.server.Process.Signal(syscall.SIGKILL)
-	<-c.serverDone
+	_ = c.server.cmd.Process.Signal(syscall.SIGKILL)
+	<-c.server.done
 	if err := c.StopServer(context.Background()); !errors.Is(err, ErrServerNotRunning) {
 		t.Fatalf("expected ErrServerNotRunning, got %v", err)
+	}
+}
+
+// TestWaitServer guards what WaitServer reports: nil for an exit StopServer asked for, the reason
+// for a server exiting on its own (killed, or kill-server typed in a terminal as an agent could),
+// and that after StartServer replaces a dead server, the new one is the one waited for.
+func TestWaitServer(t *testing.T) {
+	c := newTestController(t, "wait")
+	ctx := context.Background()
+	if err := c.WaitServer(ctx); !errors.Is(err, ErrServerNotRunning) {
+		t.Fatalf("no server: expected ErrServerNotRunning, got %v", err)
+	}
+	// later runs event after WaitServer has started waiting
+	later := func(event func() error) <-chan error {
+		result := make(chan error, 1)
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			result <- event()
+		}()
+		return result
+	}
+	for _, exit := range []struct {
+		name  string
+		event func() error
+		check func(error) bool
+	}{
+		{"killed", func() error { return c.server.cmd.Process.Signal(syscall.SIGKILL) },
+			func(err error) bool {
+				return errors.Is(err, ErrServerNotRunning) && strings.Contains(err.Error(), "killed")
+			}},
+		{"kill-server typed in a terminal", func() error { _, _ = c.run(ctx, "kill-server"); return nil },
+			func(err error) bool { return errors.Is(err, ErrServerNotRunning) }},
+		{"stopped by StopServer", func() error { return c.StopServer(ctx) },
+			func(err error) bool { return err == nil }},
+	} {
+		if err := c.StartServer(ctx); err != nil {
+			t.Fatal(err)
+		}
+		short, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+		if err := c.WaitServer(short); !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("%s: expected the context to end first, got %v", exit.name, err)
+		}
+		cancel()
+		eventErr := later(exit.event)
+		if err := c.WaitServer(ctx); !exit.check(err) {
+			t.Errorf("%s: unexpected WaitServer result %v", exit.name, err)
+		}
+		if err := <-eventErr; err != nil {
+			t.Errorf("%s: %v", exit.name, err)
+		}
 	}
 }
 
@@ -105,9 +155,9 @@ func TestServerStopTerminated(t *testing.T) {
 	if err := c.StartServer(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	c.serverCtxCancel() // what StopServer does when kill-server fails or the grace period is over
-	<-c.serverDone
-	if err := c.forcedStopError(); !errors.Is(err, ErrServerTerminated) {
+	c.server.cancel() // what StopServer does when kill-server fails or the grace period is over
+	<-c.server.done
+	if err := c.server.forcedStopError(); !errors.Is(err, ErrServerTerminated) {
 		t.Fatalf("expected ErrServerTerminated, got %v", err)
 	}
 }
@@ -118,7 +168,7 @@ func TestServerStopKilled(t *testing.T) {
 		t.Fatal(err)
 	}
 	// a frozen server can not handle kill-server nor SIGTERM: only SIGKILL gets rid of it
-	_ = c.server.Process.Signal(syscall.SIGSTOP)
+	_ = c.server.cmd.Process.Signal(syscall.SIGSTOP)
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	if err := c.StopServer(ctx); !errors.Is(err, ErrServerKilled) {
@@ -194,6 +244,8 @@ func TestServerOptions(t *testing.T) {
 		// tmux default: a global manual crashes tmux 3.3 to 3.6, windows get it one by one
 		"window-size":  "latest",
 		"allow-rename": "off",
+		// forced off by tmux for a foreground server (-D): it survives its last session closing
+		"exit-empty": "off",
 	} {
 		out, err := c.cmd(context.Background(), []string{"show-options", "-gv", option}).Output()
 		if err != nil {

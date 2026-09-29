@@ -12,6 +12,8 @@
 // for the default tenant). [Controller.StartServer] starts it in the foreground, as a child of
 // rat, watches it and returns once it is ready. [Controller.StopServer] asks it to exit, then
 // terminates it if needed. Stopping the server stops every terminal it runs.
+// [Controller.WaitServer] tells when and why the server exited on its own, for the caller to
+// restart it: the controller never does it by itself.
 //
 // # Sessions and windows
 //

@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -93,6 +94,27 @@ const serverStopGracePeriod = 5 * time.Second
 // (context cancellation) before being sent SIGKILL.
 const serverKillDelay = 2 * time.Second
 
+// serverProcess is one run of the tmux server, from StartServer until it exits. Waiters keep a
+// reference to it: its exit reason outlives the controller moving on to another server.
+type serverProcess struct {
+	cmd    *exec.Cmd
+	ctx    context.Context // canceled to terminate the server (SIGTERM, then SIGKILL)
+	cancel func()
+	done   chan struct{} // closed once the process has exited and been reaped
+	// waitErr is the Wait() result, with the server stderr if any: only valid once done is closed
+	waitErr error
+	// stopRequested is set by StopServer before asking the server to exit: its exit is expected
+	stopRequested atomic.Bool
+}
+
+// exitedOnItsOwn returns the error reporting the server exited on its own, once done is closed.
+func (p *serverProcess) exitedOnItsOwn() error {
+	if p.waitErr != nil {
+		return fmt.Errorf("%w: server exited on its own: %w", ErrServerNotRunning, p.waitErr)
+	}
+	return fmt.Errorf("%w: server exited on its own", ErrServerNotRunning)
+}
+
 // bracketedPasteCommand turns bracketed paste on in bash, run before each prompt through
 // PROMPT_COMMAND (see terminalEnvironment).
 const bracketedPasteCommand = `bind "set enable-bracketed-paste on"`
@@ -140,7 +162,7 @@ func (c *Controller) StartServer(ctx context.Context) (err error) {
 	c.serverAction.Lock()
 	if c.server != nil {
 		select {
-		case <-c.serverDone:
+		case <-c.server.done:
 			// previous server exited on its own, we can start a new one
 			c.resetServer()
 		default:
@@ -155,42 +177,43 @@ func (c *Controller) StartServer(ctx context.Context) (err error) {
 	if err = checkBashVersion(ctx, bashPath); err != nil {
 		return err
 	}
+	// Start the server
+	p := &serverProcess{}
+	p.ctx, p.cancel = context.WithCancel(ctx)
+	p.cmd = c.cmd(p.ctx, []string{"-D"})
+	p.cmd.Cancel = func() error {
+		// let tmux clean up (socket, clients) before resorting to SIGKILL
+		return p.cmd.Process.Signal(syscall.SIGTERM)
+	}
+	// if the server has not exited serverKillDelay after Cancel has been called,
+	// os/exec kills it (SIGKILL)
+	p.cmd.WaitDelay = serverKillDelay
+	// keep the server stderr to explain an early exit
+	stderr := &limitedBuffer{limit: serverStderrMaxLen}
+	p.cmd.Stderr = stderr
+	c.server = p
 	// Cleanup on error
 	defer func() {
 		if err != nil {
-			c.serverCtxCancel() // terminate the server if started
-			if c.serverDone != nil {
-				<-c.serverDone // wait for the watcher to reap the terminated process
+			p.cancel() // terminate the server if started
+			if p.done != nil {
+				<-p.done // wait for the watcher to reap the terminated process
 			}
 			c.resetServer()
 		}
 	}()
-	// Start the server
-	c.serverCtx, c.serverCtxCancel = context.WithCancel(ctx)
-	server := c.cmd(c.serverCtx, []string{"-D"})
-	server.Cancel = func() error {
-		// let tmux clean up (socket, clients) before resorting to SIGKILL
-		return server.Process.Signal(syscall.SIGTERM)
-	}
-	// if the server has not exited serverKillDelay after Cancel has been called,
-	// os/exec kills it (SIGKILL)
-	server.WaitDelay = serverKillDelay
-	// keep the server stderr to explain an early exit
-	stderr := &limitedBuffer{limit: serverStderrMaxLen}
-	server.Stderr = stderr
-	c.server = server
-	if err = c.server.Start(); err != nil {
+	if err = p.cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start server: %w", err)
 	}
-	// Watch the server: this goroutine is the only one calling Wait(), others use serverDone
+	// Watch the server: this goroutine is the only one calling Wait(), others use done
 	done := make(chan struct{})
-	c.serverDone = done
+	p.done = done
 	go func() {
-		waitErr := server.Wait()
+		waitErr := p.cmd.Wait()
 		if msg := stderr.String(); waitErr != nil && msg != "" {
 			waitErr = fmt.Errorf("%w: %s", waitErr, msg)
 		}
-		c.serverWaitErr = waitErr
+		p.waitErr = waitErr
 		close(done)
 	}()
 	// Wait for it to be ready: the deadline also bounds a probe hanging
@@ -198,7 +221,7 @@ func (c *Controller) StartServer(ctx context.Context) (err error) {
 	defer readyCtxCancel()
 	ticker := time.NewTicker(serverReadyProbeInterval)
 	defer ticker.Stop()
-	serverPID := strconv.Itoa(server.Process.Pid)
+	serverPID := strconv.Itoa(p.cmd.Process.Pid)
 	var probeErr error
 readiness:
 	for {
@@ -218,7 +241,7 @@ readiness:
 		select {
 		case <-ticker.C:
 		case <-done:
-			return fmt.Errorf("server exited during startup: %w", c.serverWaitErr)
+			return fmt.Errorf("server exited during startup: %w", p.waitErr)
 		case <-readyCtx.Done():
 			if probeErr == nil {
 				return fmt.Errorf("server not ready: %w", readyCtx.Err())
@@ -270,59 +293,82 @@ func (c *Controller) StopServer(ctx context.Context) (err error) {
 	if c.server == nil {
 		return ErrServerNotRunning
 	}
+	p := c.server
 	defer c.resetServer()
 	// Has it exited on its own ?
 	select {
-	case <-c.serverDone:
-		if c.serverWaitErr != nil {
-			return fmt.Errorf("%w: server exited on its own: %w", ErrServerNotRunning, c.serverWaitErr)
-		}
-		return fmt.Errorf("%w: server exited on its own", ErrServerNotRunning)
+	case <-p.done:
+		return p.exitedOnItsOwn()
 	default:
 	}
+	// from now on its exit is expected, whatever happens: WaitServer reports it as such
+	p.stopRequested.Store(true)
 	// Try to close it properly first
 	stopCmd := c.cmd(ctx, []string{"kill-server"})
 	if err = stopCmd.Run(); err != nil {
 		// failed to execute command, let's terminate the server thru its context
-		c.serverCtxCancel()
-		<-c.serverDone // wait for the watcher to reap the terminated process
-		return fmt.Errorf("%w: kill-server failed: %w", c.forcedStopError(), err)
+		p.cancel()
+		<-p.done // wait for the watcher to reap the terminated process
+		return fmt.Errorf("%w: kill-server failed: %w", p.forcedStopError(), err)
 	}
 	// Let's wait for the server to exit after received the exit command,
 	// terminating it if it does not within the grace period
 	graceTimer := time.NewTimer(serverStopGracePeriod)
 	defer graceTimer.Stop()
 	select {
-	case <-c.serverDone:
+	case <-p.done:
 	case <-graceTimer.C:
-		c.serverCtxCancel()
-		<-c.serverDone // wait for the watcher to reap the terminated process
-		return fmt.Errorf("still running %s after kill-server command: %w", serverStopGracePeriod, c.forcedStopError())
+		p.cancel()
+		<-p.done // wait for the watcher to reap the terminated process
+		return fmt.Errorf("still running %s after kill-server command: %w", serverStopGracePeriod, p.forcedStopError())
 	}
-	if c.serverWaitErr != nil {
+	if p.waitErr != nil {
 		// non-zero exit codes are reported as *exec.ExitError
-		return fmt.Errorf("server exited with an error: %w", c.serverWaitErr)
+		return fmt.Errorf("server exited with an error: %w", p.waitErr)
 	}
 	// clean stop
 	return
 }
 
+// WaitServer waits for the current server to exit, and tells why. It returns nil when StopServer
+// asked it to exit (StopServer reports how that went), and an error wrapping ErrServerNotRunning
+// with the reason when it exited on its own: crash, killed, or kill-server typed in a terminal.
+// It returns ErrServerNotRunning right away if no server is started, and ctx.Err() if ctx ends
+// first. It does not restart the server: the caller decides, and StartServer replaces a server
+// that exited on its own.
+func (c *Controller) WaitServer(ctx context.Context) error {
+	c.serverAction.RLock()
+	p := c.server
+	c.serverAction.RUnlock()
+	if p == nil {
+		return ErrServerNotRunning
+	}
+	select {
+	case <-p.done:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if p.stopRequested.Load() {
+		return nil
+	}
+	return p.exitedOnItsOwn()
+}
+
 // resetServer releases the server context resources and clears the server state.
 // If the server is still running, canceling its context terminates it.
 func (c *Controller) resetServer() {
-	c.serverCtxCancel()
-	c.server, c.serverCtx, c.serverCtxCancel = nil, nil, nil
-	c.serverDone, c.serverWaitErr = nil, nil
+	c.server.cancel()
+	c.server = nil
 }
 
-// forcedStopError tells, once the server context has been canceled and serverDone closed,
+// forcedStopError tells, once the server context has been canceled and done closed,
 // if the server has exited on SIGTERM or had to be killed after serverKillDelay.
-func (c *Controller) forcedStopError() error {
-	if c.server.ProcessState == nil {
+func (p *serverProcess) forcedStopError() error {
+	if p.cmd.ProcessState == nil {
 		// Wait failed before reaping the process: we can not tell how it stopped
-		return fmt.Errorf("failed to wait for the server: %w", c.serverWaitErr)
+		return fmt.Errorf("failed to wait for the server: %w", p.waitErr)
 	}
-	if ws, ok := c.server.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() && ws.Signal() == syscall.SIGKILL {
+	if ws, ok := p.cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() && ws.Signal() == syscall.SIGKILL {
 		return ErrServerKilled
 	}
 	return ErrServerTerminated
