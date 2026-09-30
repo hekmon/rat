@@ -199,8 +199,10 @@ errors with its messages.
 
 - **`write_file`** `{path, content}`: creates the file or replaces it, and says which (with the
   former size). A replaced file keeps its mode, a new one gets 0644 minus ratd's umask. Missing
-  directories are not created. Only a regular file is written: a FIFO would block, and a device
-  is not a file to replace.
+  directories are created, as `mkdir -p` does (0755 minus ratd's umask), sparing a round trip
+  through the terminal, and the result names them: a typo in a path creates directories the
+  agent did not mean. Only a regular file is written: a FIFO would block, and a device is not a
+  file to replace.
 - **`read_file`** `{path, start_line, max_lines}`: whole lines of a text file, from `start_line`
   (1 by default, negative counts from the end: -100 for the last 100 lines), at most `max_lines`
   (all by default). The header tells the lines returned out of how many, the size and the last
