@@ -195,13 +195,17 @@ func TestReadFileTimeout(t *testing.T) {
 	session, logs, home := connectFiles(t)
 	timeout, reader := toolTimeout, fileReader
 	toolTimeout = 200 * time.Millisecond
-	stuck := make(chan struct{})
+	// The call returns without waiting for the goroutine reading the file, which reads fileReader
+	// on its own: restoring the hook is ordered after that read by called, or it races.
+	stuck, called := make(chan struct{}), make(chan struct{})
 	fileReader = func(*daemon, string, tools.ReadFileInput, time.Time) result {
+		close(called)
 		<-stuck
 		return result{}
 	}
 	t.Cleanup(func() {
 		close(stuck)
+		<-called
 		toolTimeout, fileReader = timeout, reader
 	})
 	expectTool(t, session, "read_file", map[string]any{"path": "~/x"}, true,

@@ -191,13 +191,17 @@ func TestWriteFileTimeout(t *testing.T) {
 	session, logs, home := connectFiles(t)
 	timeout, writer := toolTimeout, fileWriter
 	toolTimeout = 200 * time.Millisecond
-	stuck := make(chan struct{})
+	// The call returns without waiting for the goroutine writing the file, which reads fileWriter
+	// on its own: restoring the hook is ordered after that read by called, or it races.
+	stuck, called := make(chan struct{}), make(chan struct{})
 	fileWriter = func(*daemon, string, string) result {
+		close(called)
 		<-stuck
 		return result{}
 	}
 	t.Cleanup(func() {
 		close(stuck)
+		<-called
 		toolTimeout, fileWriter = timeout, writer
 	})
 	path := filepath.Join(home, "x")
