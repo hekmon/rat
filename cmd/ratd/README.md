@@ -96,6 +96,8 @@ terminals share a client certificate; agents meant to be apart get one each.
 The stateless handler asks for a server with each request (`getServer`, given the HTTP request):
 ratd reads the client name from the TLS connection there, and returns a server whose tools are
 bound to that session. Tools need nothing from the request, so they can be tested without HTTP.
+The SDK passes tool handlers no more of the request than its headers (`RequestExtra`), which is
+why the session is bound when the server is built.
 
 Rejected:
 
@@ -104,6 +106,11 @@ Rejected:
   need to send it.
 - **A tool parameter**, which the agent fills in and could change.
 - **A URL path**, which does not reach tool handlers.
+
+A server is built for each request, and the SDK asks for it twice (for the protocol versions it
+supports, then to serve): about 0.1 ms and 335 KB each with the schemas cached
+(`SchemaCache`), measured with 8 tools, against milliseconds of tmux for a tool call and seconds
+for a model to answer. Rejected: a server kept per session, a map for no noticeable gain.
 
 Sessions are only kept apart by ratd: a command typed in a terminal reaches every session of its
 tmux server (see the limit of the isolation model in `AGENTS.md`).
@@ -120,8 +127,12 @@ Rejected: a bearer token. It is a secret stored next to the terminals, in a file
 environment that agents, running as the same user, can read; with mTLS, nothing on the server
 lets a client in (see package `mtls`).
 
-The SDK DNS rebinding protection (on by default) is kept, although redundant: it stops a browser
-tricked into calling a local server, and a browser can not present the client certificate.
+The SDK DNS rebinding protection (on by default) is turned off. It refuses a request reaching a
+loopback address with another host name than `localhost` or a loopback address: a client
+through an ssh tunnel under an alias, or on the machine itself under its name (Debian maps it to
+127.0.1.1). It protects nothing here: a browser tricked into calling ratd can not present a
+client certificate, and the TLS handshake refuses it before any request exists. Users get the
+constraints of mTLS: they keep the freedom of their host names.
 
 ## Tools
 
@@ -292,7 +303,8 @@ message tells an outcome the agent may act upon, such as nothing to close.
 
 ## MCP instructions
 
-Built at startup, sent to each client when it initializes:
+Built at startup, sent to each client when it initializes, or discovers the server from protocol
+2026-07-28 on:
 
 > rat gives you persistent terminals on *host*: commands run there, not where you run. It is
 > asynchronous by design: sending a command returns at once, without waiting for it to finish.
@@ -380,8 +392,9 @@ the terminals are restarting.
   alone would be silently ignored by `ListenAndServe`, serving plain HTTP: a test must guard that
   a client without a certificate is refused. HTTP/1.1 only (no `h2` offered): requests are short
   JSON exchanges.
-- **Rejected handshakes** are logged, rate limited: a public port gets scanned. The standard
-  library would otherwise print them through the `log` package, outside ratd's logs.
+- **Rejected handshakes** are logged, at most once every 10 seconds with the count of the others:
+  a public port gets scanned. The standard library would otherwise print them through the `log`
+  package, outside ratd's logs.
 
 ## Logs
 
@@ -391,6 +404,11 @@ was pressed, the number of keys, the rows read, the path and size of a file. Nev
 neither text, nor keys (they can spell a password one key at a time), nor files. And the
 lifecycle: startup (tenant, address, bundle expiry), the bracketed paste check, tmux exits and
 restarts, the crash budget, shutdown.
+
+At debug level, one line per MCP request (the session, the method, the duration), whatever the
+protocol version: clients initialize, or discover the server from protocol 2026-07-28 on (the Go
+SDK does). The SDK logs every stateless request at info level (a session connecting, then
+disconnecting): only its warnings and errors are kept, all of it at debug level.
 
 ## Configuration
 
