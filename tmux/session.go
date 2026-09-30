@@ -7,6 +7,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 )
 
 var (
@@ -65,16 +66,46 @@ func (c *Controller) KillSession(ctx context.Context, session string) error {
 	return nil
 }
 
+// serverExitWait is how long explaining a failed command waits for the server to be seen exiting
+// (see sessionError).
+const serverExitWait = 500 * time.Millisecond
+
 // sessionError explains why a command on session failed. tmux reports a missing session with
 // messages depending on the server state ("can't find session", but "no current target" once no
 // session is left), so rather than parsing them, ask tmux what exists.
-// It returns an error wrapping ErrSessionNotFound, or err as is.
+// It returns an error wrapping ErrSessionNotFound, ErrServerNotRunning, or err as is.
 func (c *Controller) sessionError(ctx context.Context, err error, session string) error {
 	if errors.Is(err, ErrServerNotRunning) {
 		return err
 	}
-	if sessions, listErr := c.ListSessions(ctx); listErr == nil && !slices.Contains(sessions, session) {
+	sessions, listErr := c.ListSessions(ctx)
+	switch {
+	case listErr == nil && !slices.Contains(sessions, session):
 		return fmt.Errorf("%w: %s", ErrSessionNotFound, session)
+	case listErr == nil:
+		return err
+	}
+	// Listing failed as well: the server may have died during the command, which then failed
+	// saying little ("server exited unexpectedly"), and is reaped a moment later. Not once ctx
+	// ended: a server stuck, not dying, would make every timeout longer.
+	if ctx.Err() == nil && c.serverExited(serverExitWait) {
+		return fmt.Errorf("%w: server exited during the command: %w", ErrServerNotRunning, err)
 	}
 	return err
+}
+
+// serverExited tells whether the current server has exited, waiting for it up to wait.
+func (c *Controller) serverExited(wait time.Duration) bool {
+	c.serverAction.RLock()
+	p := c.server
+	c.serverAction.RUnlock()
+	if p == nil {
+		return true
+	}
+	select {
+	case <-p.done:
+		return true
+	case <-time.After(wait):
+		return false
+	}
 }

@@ -101,7 +101,8 @@ func target(session, window string) string {
 
 // ListWindows returns the windows of session, in tmux index order. It is not the creation order:
 // a new window takes the first free index, such as one left by a closed window.
-// The error wraps ErrSessionNotFound if the session does not exist.
+// The error wraps ErrSessionNotFound if the session does not exist, and ErrServerNotRunning if the
+// server shut down during the command.
 func (c *Controller) ListWindows(ctx context.Context, session string) ([]Window, error) {
 	if err := checkNames(session); err != nil {
 		return nil, err
@@ -109,6 +110,11 @@ func (c *Controller) ListWindows(ctx context.Context, session string) ([]Window,
 	out, err := c.run(ctx, "list-windows", "-t", "="+session, "-F", windowFormat)
 	if err != nil {
 		return nil, c.sessionError(ctx, fmt.Errorf("failed to list windows of %s: %w", session, err), session)
+	}
+	// A session has a window at least: nothing listed means the server shut down during the
+	// command, its client exiting as if the command succeeded.
+	if out == "" {
+		return nil, fmt.Errorf("%w: server shut down while listing the windows of %s", ErrServerNotRunning, session)
 	}
 	var windows []Window
 	for line := range strings.Lines(out) {

@@ -95,6 +95,28 @@ server stopped for 3 seconds and a client killed after half a second, its output
 after 4 seconds (tmux 3.7c). Every command therefore has a `WaitDelay`: once its context has
 ended and the client is killed, waiting gives up on the pipes after a second, and closes them.
 
+### A server shutting down during a command
+
+A server shutting down cleanly (SIGTERM, `kill-server`) tells its clients to exit normally: a
+client whose command was still waiting exits with status 0, no output and no error, although its
+command never ran (tmux 3.3a and 3.7c). The controller can not tell it from a success by the exit
+status. It can by the output, for the commands that always print something: `list-windows`
+lists a window at least (a session has one), a capture prints the state of the pane. No output
+then means the server is gone, reported as `ErrServerNotRunning`. Silent commands (a paste, keys,
+a new window) have nothing to tell: one sent while the server shuts down is reported as done, and
+the caller learns of the shutdown with its next command.
+
+A server killed, or dying on its own, makes its clients fail instead ("server exited
+unexpectedly"). A failed command is explained by asking tmux what exists (see Targets and
+names): when that fails as well, the server is given half a second to be seen exiting, and the
+failure is reported as `ErrServerNotRunning` rather than with the message. Not once the context
+of the command has ended: a server stuck rather than dying would make every timeout longer.
+
+Rejected: ending each silent invocation with a command printing a marker, whose absence would
+tell the invocation did not complete. Should the shutdown lose the output of an invocation that
+did complete, it would be reported as failed, and retried: a command pasted twice runs twice,
+worse than a paste reported done in terminals about to vanish.
+
 ## Environment
 
 The goal: the same terminals on every machine, whatever the user configuration and whatever the

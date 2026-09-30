@@ -44,7 +44,8 @@ const captureStateFormat = "#{alternate_on} #{history_size} #{cursor_flag} #{cur
 
 // Capture returns the content of window in session, as currently displayed, preceded by up to
 // extraLines rows of scrollback.
-// The error wraps ErrSessionNotFound or ErrWindowNotFound if they do not exist.
+// The error wraps ErrSessionNotFound or ErrWindowNotFound if they do not exist, and
+// ErrServerNotRunning if the server shut down during the command.
 func (c *Controller) Capture(ctx context.Context, session, window string, extraLines int) (Snapshot, error) {
 	if err := checkNames(session, window); err != nil {
 		return Snapshot{}, err
@@ -70,6 +71,11 @@ func (c *Controller) Capture(ctx context.Context, session, window string, extraL
 		"if-shell", "-F", "-t", tg, "#{alternate_on}", "capture-pane -p -t "+tg, normalScreen)
 	if err != nil {
 		return Snapshot{}, c.windowError(ctx, fmt.Errorf("failed to capture %s:%s: %w", session, window, err), session, window)
+	}
+	// the state is always printed: nothing means the server shut down during the command, its
+	// client exiting as if the command succeeded
+	if out == "" {
+		return Snapshot{}, fmt.Errorf("%w: server shut down while capturing %s:%s", ErrServerNotRunning, session, window)
 	}
 	state, content, _ := strings.Cut(out, "\n")
 	snapshot, err := parseCaptureState(state, extraLines)

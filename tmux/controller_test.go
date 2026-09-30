@@ -87,3 +87,57 @@ func TestCommandStuckServer(t *testing.T) {
 		t.Fatal("the command did not return once its context ended")
 	}
 }
+
+// TestCommandServerShuttingDown guards that a command whose server goes away before running it
+// fails with ErrServerNotRunning, rather than succeeding empty or failing with a message: a server
+// shutting down cleanly (SIGTERM) makes its clients exit with status 0 and no output, as if their
+// commands succeeded, and a server killed (SIGKILL) makes them fail ("server exited
+// unexpectedly"). The commands are held in flight by stopping the server first.
+func TestCommandServerShuttingDown(t *testing.T) {
+	for _, signal := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
+		t.Run(signal.String(), func(t *testing.T) {
+			c := startTestServer(t, "goingaway")
+			ctx := context.Background()
+			if err := c.NewSession(ctx, "s"); err != nil {
+				t.Fatal(err)
+			}
+			pid := c.server.cmd.Process.Pid
+			if err := syscall.Kill(pid, syscall.SIGSTOP); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGCONT) })
+			listed, captured := make(chan error, 1), make(chan error, 1)
+			go func() {
+				windows, err := c.ListWindows(ctx, "s")
+				if err == nil && len(windows) == 0 {
+					err = errors.New("no window, and no error")
+				}
+				listed <- err
+			}()
+			go func() {
+				_, err := c.Capture(ctx, "s", FirstWindow, 0)
+				captured <- err
+			}()
+			// both clients wait for the stopped server
+			for _, command := range []string{"list-windows", "display-message"} {
+				pattern := c.socketName() + " .*" + command
+				for deadline := time.Now().Add(5 * time.Second); exec.Command("pgrep", "-f", pattern).Run() != nil; time.Sleep(50 * time.Millisecond) {
+					if time.Now().After(deadline) {
+						t.Fatalf("no %s client waiting for the server", command)
+					}
+				}
+			}
+			if err := syscall.Kill(pid, signal); err != nil {
+				t.Fatal(err)
+			}
+			if err := syscall.Kill(pid, syscall.SIGCONT); err != nil && signal != syscall.SIGKILL {
+				t.Fatal(err)
+			}
+			for command, result := range map[string]chan error{"ListWindows": listed, "Capture": captured} {
+				if err := <-result; !errors.Is(err, ErrServerNotRunning) {
+					t.Errorf("%s: expected ErrServerNotRunning, got %v", command, err)
+				}
+			}
+		})
+	}
+}
