@@ -7,13 +7,15 @@ alternatives they rejected. What ratd is and how its parts fit is described by i
 ## Name
 
 ratd follows the convention of daemons (`sshd`, `containerd`): it is a long running service,
-and `rat` is left for a client (such as the ssh proxy below). It also keeps "server" for the
-tmux server, which ratd owns.
+and `rat` is its client, the stdio bridge (see Topology). It also keeps "server" for the tmux
+server, which ratd owns.
 
 ## Topology
 
 One ratd process per tenant (see the isolation model in `AGENTS.md`): a service owning the tmux
-server of that tenant, and serving several MCP clients over the network.
+server of that tenant, and serving several MCP clients over the network. The tenant is named by
+the server certificate of its bundle, not by a setting: a ratd can not serve a tenant with the
+bundle of another.
 
 Rejected alternatives, and why:
 
@@ -23,21 +25,34 @@ Rejected alternatives, and why:
   connection would start its own ratd, and terminals would die with the connection, when
   persistence is the point of rat.
 - **stdio over ssh with tmux as its own daemon**, ratd being a thin process per client
-  (terminals then outlive every ratd process). Decisive: hosted clients (web and cloud agents)
-  can not spawn a process, they only reach MCP servers by URL. And stopping rat would no longer
-  stop everything: an admin stopping the service must be sure that no terminal and no way in is
-  left, without hunting for tmux sockets (see `AGENTS.md`). The rest has answers, at a price:
-  tmux supervised by nobody, or by a service of its own (systemd running `tmux -D`, rat's
-  settings reapplied by each client process), which moves rat's work into configuration outside
-  rat; the tmux daemon inheriting the environment of whichever ssh session started it (agent
-  forwarding would give every terminal the user's ssh agent), unless that service starts it;
-  and what one process guarantees today (a window name checked free, then created) turning into
-  races between processes.
+  (terminals then outlive every ratd process). Decisive: stopping rat would no longer stop
+  everything: an admin stopping the service must be sure that no terminal and no way in is left,
+  without hunting for tmux sockets (see `AGENTS.md`). The rest has answers, at a price: tmux
+  supervised by nobody, or by a service of its own (systemd running `tmux -D`, rat's settings
+  reapplied by each client process), which moves rat's work into configuration outside rat; the
+  tmux daemon inheriting the environment of whichever ssh session started it (agent forwarding
+  would give every terminal the user's ssh agent), unless that service starts it; and what one
+  process guarantees today (a window name checked free, then created) turning into races between
+  processes.
 
-What ssh offers is not lost: ratd listening on 127.0.0.1, reached through an ssh tunnel, gets
-its authentication and encryption, with no token on the network and no TLS to configure. A
-stdio proxy run over ssh, relaying to the service, could be added later without changing this
-design; the opposite choice would have shut out hosted clients.
+### The bridge
+
+Clients authenticate with a certificate (see Authentication), which most harnesses can not
+present when they configure an HTTP MCP server, while all of them can start a stdio one. `rat` is
+that stdio server: started by the harness, it relays every message to ratd, presenting the
+client certificate. It keeps no state and holds no terminal: persistence stays in ratd. A
+harness able to present the certificate, and to accept the server without checking its host name
+(see package `mtls`), can target ratd directly: the bridge adds no protocol of its own.
+
+The bridge relays JSON-RPC messages as they are, rather than being an MCP client and server
+repeating ratd's tools and instructions: it never needs to change when ratd does.
+
+Hosted clients (web and cloud agents) are left out on purpose: they only reach MCP servers by
+URL, and can present no certificate. Admitting them would take a credential stored by a third
+party, in front of a user shell.
+
+An ssh tunnel to a ratd listening on 127.0.0.1 is still possible, and needs mTLS all the same
+(see Authentication).
 
 ## Transport
 
@@ -45,15 +60,29 @@ Streamable HTTP, the transport of the MCP specification for networked servers (H
 predecessor, is deprecated), with the official Go SDK (`github.com/modelcontextprotocol/go-sdk`).
 Only the transport is needed, not its streaming:
 
-- **Stateless mode**: each request carries everything it needs (token, tmux session), and tmux
-  is the only source of truth, so ratd keeps no state per connection. It drops server to client
-  requests (sampling, elicitation, roots), which rat does not need, and follows the direction of
-  the specification and of the SDK, whose stateful handler rejects the newer protocol versions.
+- **Stateless mode**: each request carries everything it needs (its client certificate names
+  its tmux session), and tmux is the only source of truth, so ratd keeps no state per
+  connection. It drops server to client requests (sampling, elicitation, roots), which rat does
+  not need, and follows the direction of the specification and of the SDK, whose stateful
+  handler rejects the newer protocol versions.
   Rejected: stateful sessions (`Mcp-Session-Id`), state kept for nothing.
 - **JSON responses**: a request gets a single JSON answer rather than an event stream (SSE),
   which only serves messages sent before the result (progress, logs) and requests to the client.
   Tool calls are short, so no long lived connection is left for a proxy to cut, and exchanges
   are plain to debug.
+
+ratd stays a standard MCP server: a client written with any MCP SDK connects to it with a
+single addition, outside the protocol: an HTTP client presenting the client certificate and
+accepting the server without checking its host name (package `mtls`). The bridge is such a
+client.
+
+The SDK bounds request bodies to 4 MiB of JSON (`DefaultMaxRequestBodyBytes`), answering 413
+beyond. It is kept: it protects ratd from exhausting its memory, and a tool call is written by a
+model within its output limit, a small fraction of it. The limit stays usable: bash reads a 4
+MiB paste at its prompt in about 11 seconds (1 MiB in under 2, measured with bash 5.3 and tmux
+3.7c), a time growing faster than the size. The controller sets no limit on pasted text (see
+`tmux/README.md`): the transport does, and the bridge's stdio transport allows more (16 MiB per
+message).
 
 Two different things are called a session: the tmux session holding the windows of a client,
 and the MCP session of the protocol (`Mcp-Session-Id`, the SDK `ServerSession`), which stateless
@@ -61,19 +90,40 @@ mode does not use. Names in the code say which one they mean.
 
 ## Sessions
 
-The tmux session of a client comes from its MCP client configuration, sent with every request in
-an HTTP header. Agents never see it nor choose it: no tool mentions sessions. An HTTP middleware
-validates the header with `tmux.CheckName`, without asking tmux, and answers 400 when it is
-missing or invalid: a misconfigured client fails when it connects, in front of the human
-configuring it, rather than later in front of an agent. Rejected: a tool parameter, which the
-agent fills in and could change, and a URL path, which does not reach tool handlers.
+The tmux session of a request is the name in the client certificate presenting it: a session is
+a client of the tenant, named when the bundle is generated. Agents never see it nor choose it
+(no tool mentions sessions), and a client can only reach its own session. Agents meant to share
+terminals share a client certificate; agents meant to be apart get one each.
+
+The stateless handler asks for a server with each request (`getServer`, given the HTTP request):
+ratd reads the client name from the TLS connection there, and returns a server whose tools are
+bound to that session. Tools need nothing from the request, so they can be tested without HTTP.
+
+Rejected:
+
+- **A header naming the session**, set by the client configuration: any client could pick any
+  session, the harness or bridge configuration grows, and a client connecting directly would
+  need to send it.
+- **A tool parameter**, which the agent fills in and could change.
+- **A URL path**, which does not reach tool handlers.
+
+Sessions are only kept apart by ratd: a command typed in a terminal reaches every session of its
+tmux server (see the limit of the isolation model in `AGENTS.md`).
 
 ## Authentication
 
-A bearer token, compared in constant time. Never passed as a flag: command lines are visible to
-every user (see the open questions in `AGENTS.md`). TLS is optional but first class: rat is
-remote by name, and running it on 127.0.0.1 only for persistence is valid too, where the SDK
-DNS rebinding protection (on by default) matters.
+Mutual TLS, always, loopback included: ratd hands out a user shell, and a loopback address is
+reachable by every user of the machine. There is no plain HTTP mode. Clients present a
+certificate from the bundle of the tenant (package `mtls`: a closed bundle, generated with
+`rat-mtls`), and ratd presents the server certificate of that bundle. The client name, which is
+its session, is logged with each call, telling which client did what.
+
+Rejected: a bearer token. It is a secret stored next to the terminals, in a file or an
+environment that agents, running as the same user, can read; with mTLS, nothing on the server
+lets a client in (see package `mtls`).
+
+The SDK DNS rebinding protection (on by default) is kept, although redundant: it stops a browser
+tricked into calling a local server, and a browser can not present the client certificate.
 
 ## Tools
 
@@ -134,8 +184,6 @@ logged for the operator, and added to the MCP instructions built at startup for 
 
 ## Open questions
 
-- How the auth token reaches ratd (see `AGENTS.md`: environment, systemd).
-- Configuration: tenant, listen address, TLS files, their format.
-- The name of the tmux session header.
+- Configuration: listen address (default port), bundle directory.
 - The restart delay and the crash budget (for instance 5 deaths in 5 minutes).
 - Output redaction (see `AGENTS.md`).

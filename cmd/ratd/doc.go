@@ -8,10 +8,12 @@
 //
 // # Service
 //
-// One ratd process serves one tenant: it owns the tmux server of that tenant, and serves several
-// MCP clients over the network (Streamable HTTP, stateless, JSON responses). Clients
-// authenticate with a bearer token. Each client works in its own tmux session, named by its
-// configuration and sent with every request in an HTTP header: agents never see sessions.
+// One ratd process serves one tenant, named by its server certificate: it owns the tmux server of
+// that tenant, and serves several MCP clients over the network (Streamable HTTP, stateless, JSON
+// responses). Clients authenticate with a certificate, over mutual TLS (package mtls); harnesses
+// that can not present one start rat, a stdio MCP server relaying to ratd. Each client works in
+// its own tmux session, named by its certificate: agents never see sessions, and a client only
+// reaches its own.
 //
 // # Tools
 //

@@ -12,9 +12,17 @@ at once, and to know what they leave behind.
 - **`tmux` package (controller)**: low level Go API over tmux, explicit (sessions are created
   and destroyed manually, no automatic behavior) but opinionated for agent usage: it exposes
   what agents need, not all of tmux, and enforces the invariants below.
-- **MCP server**: high level, agent facing. Keeps the tool set minimal (list windows,
-  create/close window, send input, get content) and handles the plumbing automatically
-  (e.g. a session is created on first use) to avoid tool and context bloat.
+- **`mtls` package**: the TLS contract between ratd and its clients: closed bundles (a CA, a
+  server named after its tenant and clients named after their session, generated together) and
+  the TLS configuration of each side.
+- **`ratd` (MCP server)**: high level, agent facing, served over HTTP with mutual TLS. Keeps the
+  tool set minimal (list windows, create/close window, send input, get content) and handles the
+  plumbing automatically (e.g. a session is created on first use) to avoid tool and context
+  bloat.
+- **`rat` (bridge)**: a stdio MCP server relaying to ratd, for harnesses that can not present a
+  client certificate (most of them). It relays messages as they are, presenting the
+  certificate.
+- **`rat-mtls`**: creates and inspects bundles.
 
 A tmux session can not exist without a window: the controller creates sessions with a first
 window named `main`, and a session disappears with its last window. The MCP server composes the
@@ -40,17 +48,22 @@ windows simply finds a fresh `main` on its next call.
 
 | Level | Maps to | Set by | Purpose |
 |---|---|---|---|
-| Tenant | one tmux server (`-L rat-<tenant>`), one rat process, its own endpoint and auth | MCP server configuration | isolation between rat instances |
-| Session | one tmux session | MCP client configuration | organization between agents/clients (not enforced) |
+| Tenant | one tmux server (`-L rat-<tenant>`), one ratd process, its own endpoint and mTLS bundle | the server certificate of the bundle | isolation between rat instances |
+| Session | one tmux session | a client certificate of the bundle | telling apart the clients of a tenant |
 | Window | one terminal running `bash` | the agent, by name | a workspace |
 
-The tenant name is optional: an empty one is the default tenant (socket `rat`). Agents never
-choose their tenant nor their session.
+Both names are chosen when the bundle is generated, and carried by its certificates: ratd reads
+its tenant from its server certificate, and the session of each request from the client
+certificate presenting it. Agents never choose their tenant nor their session, and a client can
+only reach its own session. Agents meant to share terminals share a client certificate. The
+controller accepts an empty tenant (socket `rat`), ratd does not: a tenant is always named.
 
 **Limit:** all tenants of a Unix user run as that user. A command typed in a terminal can reach
-other tenants (tmux sockets, signals, files), or even run tmux within tmux. Tenants protect
-against mistakes, not against a malicious agent: real isolation requires a Unix user (or
-container) per tenant.
+other tenants (tmux sockets, signals, files), or even run tmux within tmux. Within a tenant, ratd
+keeps each client to its session, but a command typed in a terminal reaches every session of its
+tmux server (`TMUX` is kept, see `tmux/README.md`). Tenants and sessions protect against
+mistakes, not against a malicious agent: real isolation requires a Unix user (or container) per
+tenant.
 
 ## Invariants
 
@@ -79,14 +92,6 @@ How the tmux controller keeps them, and the tmux pitfalls behind each of them, a
 
 ## Open questions
 
-- **rat's own secrets** (e.g. the MCP endpoint auth token). Never as flags: command lines are
-  visible to every user (`ps`, `top`). The likely way is a systemd unit reading an environment
-  file readable by root only, which hides them from other users. Not from the agents: rat and
-  its terminals run as the same user, so its environment is readable (`/proc/<pid>/environ`,
-  which keeps the startup environment even after an unset) and terminals inherit it. The token
-  only grants a shell as that user, which agents already have; still, rat should keep its
-  secrets out of the terminals environment so that a plain `env` does not print them. Hiding
-  them from agents for real requires running rat and its terminals as different users.
 - **Output redaction** (MCP layer): configured words or patterns masked in captures before they
   are sent. Agents keep using the secrets on the machine (they have a shell to do things), but
   their values do not travel back to the model, its logs or transcripts. Best effort only: it
