@@ -115,7 +115,7 @@ tmux server (see the limit of the isolation model in `AGENTS.md`).
 Mutual TLS, always, loopback included: ratd hands out a user shell, and a loopback address is
 reachable by every user of the machine. There is no plain HTTP mode. Clients present a
 certificate from the bundle of the tenant (package `mtls`: a closed bundle, generated with
-`rat-mtls`), and ratd presents the server certificate of that bundle. The client name, which is
+`rat-tool`), and ratd presents the server certificate of that bundle. The client name, which is
 its session, is logged with each call, telling which client did what.
 
 Rejected: a bearer token. It is a secret stored next to the terminals, in a file or an

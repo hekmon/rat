@@ -15,20 +15,21 @@ at once, and to know what they leave behind.
 - **`mtls` package**: the TLS contract between ratd and its clients: closed bundles (a CA, a
   server named after its tenant and clients named after their session, generated together) and
   the TLS configuration of each side.
-- **`ratd` (MCP server)**: high level, agent facing, served over HTTP with mutual TLS. Keeps the
-  tool set minimal (list windows, create/close window, send input, get content) and handles the
-  plumbing automatically (e.g. a session is created on first use) to avoid tool and context
-  bloat.
+- **`ratd` (MCP server)**: high level, agent facing, served over HTTP with mutual TLS. Each of
+  its tools serves a purpose (list, create and close windows, send text or keys, read a window,
+  read and write files), and composing the controller primitives to serve it is ratd's value:
+  the plumbing (e.g. a session created on first use) stays hidden, to avoid tool and context
+  bloat. It reads and writes files itself: tmux is its terminal backend, not its file backend.
 - **`rat` (bridge)**: a stdio MCP server relaying to ratd, for harnesses that can not present a
   client certificate (most of them). It relays messages as they are, presenting the
   certificate.
-- **`rat-mtls`**: creates and inspects bundles.
+- **`rat-tool`**: the utility. It creates and inspects bundles, and checks a running ratd end to
+  end. It holds every secondary feature, so that ratd and rat keep a single mode each.
 
 A tmux session can not exist without a window: the controller creates sessions with a first
-window named `main`, and a session disappears with its last window. The MCP server composes the
-controller primitives to hide this from agents: whenever a tool meets a missing session, it
-creates it (a concurrent creation is not an error) and carries on. An agent closing all its
-windows simply finds a fresh `main` on its next call.
+window named `main`, and a session disappears with its last window. ratd hides this from agents:
+whenever a tool needs a missing session, it creates it (a concurrent creation is not an error).
+An agent closing all its windows simply finds a fresh `main` on its next call.
 
 ## Principles
 
@@ -42,6 +43,11 @@ windows simply finds a fresh `main` on its next call.
   paste text and press keys. Pressing Enter is optional (e.g. "press y to confirm"), and the
   input may answer a prompt rather than start a command. rat does not know when a command
   finishes, only which process is in the foreground.
+- **Files, as a human copies them.** Agents also move whole files to and from the machine,
+  without a terminal: exact content, nothing on a screen, whatever the terminals are doing.
+  Files are read and written on ratd's machine, as its user, never inside an ssh session or a
+  container running in a terminal. What comes back is checked before being sent (a regular file,
+  text, within a budget): what reaches a model's context can not be taken back.
 - **KISS.** Prefer what tmux already provides over rebuilding it.
 
 ## Isolation model
@@ -68,16 +74,24 @@ tenant.
 ## Invariants
 
 - **rat owns its tmux server**: it starts it (`-D`, never daemonized), watches it and stops it.
-  It refuses a socket already served by another server. Stopping rat stops its terminals: an
-  admin stopping the service is sure that no terminal and no way in is left, without hunting for
-  tmux sockets. Commands detached from their terminal (`nohup`, `setsid`) survive tmux: only a
-  service manager stops them, systemd killing every process left in the service's control group.
-  Running rat as a service is what makes this kill switch complete. What an agent makes
-  persistent outside rat on purpose (crontab, user services) is beyond it: a dedicated Unix user
-  lets the admin stop all of it at once. A server dying on its own (crash, `tmux
-  kill-server` typed in a terminal) is restarted by the MCP server, the controller only
-  reporting the exit: its terminals and their commands are lost, as when rat stops. Repeated
-  deaths make the MCP server exit, for its supervisor to notice.
+  It refuses a socket already served by another server, which keeps a tenant to a single ratd on
+  a machine (for a Unix user).
+- **Stopping rat leaves nothing behind**, in three levels:
+  - **Stopping ratd closes the door**: first its endpoint, so that no call gets in anymore, then
+    its tmux server, every terminal and the processes attached to them. An admin stopping the
+    service is sure that no terminal and no way in is left, without hunting for tmux sockets.
+  - **The service manager stops what escapes**: commands detached from their terminal (`nohup`,
+    `setsid`, daemons) survive tmux. systemd stops them with the service, killing every process
+    left in its control group (`KillMode=control-group`, the default, which must be kept).
+    Running ratd as a service is what makes the kill switch complete: started by hand, detached
+    commands outlive it.
+  - **A dedicated Unix user bounds what was set up on purpose**: what an agent makes persistent
+    outside the service (crontab, user services, ssh keys, files) is beyond it. A Unix user for
+    rat alone lets the admin find and stop all of it at once, and lock the account.
+- **A tmux server dying on its own is restarted** (a crash, the OOM killer, `tmux kill-server`
+  typed in a terminal), by ratd, the controller only reporting the exit. Its terminals and their
+  commands are lost, as when ratd stops. Repeated deaths make ratd exit, for its supervisor to
+  notice.
 - **Terminals are the same on every machine**, whatever the user configuration and rat's own
   environment: bash, starting at home, a neutral UTF-8 locale, no pager, bracketed paste, a
   fixed size.
@@ -92,10 +106,10 @@ How the tmux controller keeps them, and the tmux pitfalls behind each of them, a
 
 ## Open questions
 
-- **Output redaction** (MCP layer): configured words or patterns masked in captures before they
-  are sent. Agents keep using the secrets on the machine (they have a shell to do things), but
-  their values do not travel back to the model, its logs or transcripts. Best effort only: it
-  matches the literal output, not an encoded or split value.
+- **Output redaction** (MCP layer): configured words or patterns masked in window captures and
+  file reads before they are sent. Agents keep using the secrets on the machine (they have a
+  shell to do things), but their values do not travel back to the model, its logs or
+  transcripts. Best effort only: it matches the literal output, not an encoded or split value.
 
 ## Working on rat
 
@@ -167,3 +181,7 @@ tests written in advance do not: most pitfalls described in `tmux/README.md` wer
 ### Code conventions
 
 - Exported errors are sentinels named `ErrXxx`, wrapped with `%w`.
+- The three binaries share their command line conventions: `urfave/cli` v3 (long and short
+  flags, the same help), rather than the standard `flag` package, whose flags and help differ.
+- Logs go through `log/slog`, text handler, on stderr: readable in `journalctl` and in a
+  terminal.

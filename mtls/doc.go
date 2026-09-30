@@ -23,5 +23,5 @@
 // check the server certificate the same way with serverAuth, but not the host name they reach:
 // it carries no address. Each side also checks its own files when loading them (key matching
 // the certificate, CA, role, validity, name), to fail at startup rather than at the first
-// connection; rat-mtls runs the same checks for humans.
+// connection; rat-tool runs the same checks for humans.
 package mtls
