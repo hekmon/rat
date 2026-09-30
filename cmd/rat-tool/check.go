@@ -49,6 +49,9 @@ type checker struct {
 	target flags.Target
 	// side is the client directory, loaded by the files step
 	side *mtls.Side
+	// conn is the connection to ratd opened by the network step, on which the TLS step runs its
+	// handshake: closed without one, it would show in the logs of ratd as a refused handshake
+	conn net.Conn
 	// session is the MCP session opened by the MCP step
 	session *mcp.ClientSession
 }
@@ -58,6 +61,9 @@ type checker struct {
 func checkRatd(ctx context.Context, cmd *cli.Command) error {
 	c := &checker{out: cmd.Root().Writer, target: flags.FromCommand(cmd)}
 	defer func() {
+		if c.conn != nil {
+			_ = c.conn.Close()
+		}
 		if c.session != nil {
 			_ = c.session.Close()
 		}
@@ -102,15 +108,14 @@ func (c *checker) files(context.Context) bool {
 	return true
 }
 
-// network checks the address of ratd answers.
+// network checks the address of ratd answers, keeping the connection for the TLS step.
 func (c *checker) network(ctx context.Context) bool {
 	fmt.Fprintln(c.out, "Network")
 	start := time.Now()
-	conn, err := (&net.Dialer{Timeout: dialTimeout}).DialContext(ctx, "tcp", c.target.Server)
-	if err != nil {
+	var err error
+	if c.conn, err = (&net.Dialer{Timeout: dialTimeout}).DialContext(ctx, "tcp", c.target.Server); err != nil {
 		return c.fail("%s does not answer: %s", c.target.Server, innermost(err))
 	}
-	_ = conn.Close()
 	c.ok("%s answers (TCP, %d ms)", c.target.Server, time.Since(start).Milliseconds())
 	return true
 }
@@ -125,15 +130,12 @@ func (c *checker) tls(ctx context.Context) bool {
 		return c.fail("%v", err)
 	}
 	config.NextProtos = []string{"http/1.1"}
-	dialer := &tls.Dialer{NetDialer: &net.Dialer{Timeout: dialTimeout}, Config: config}
 	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()
-	conn, err := dialer.DialContext(ctx, "tcp", c.target.Server)
-	if err != nil {
+	tlsConn := tls.Client(c.conn, config)
+	if err = tlsConn.HandshakeContext(ctx); err != nil {
 		return c.fail("%s", handshakeFailure(err))
 	}
-	defer conn.Close()
-	tlsConn := conn.(*tls.Conn)
 	_ = tlsConn.SetDeadline(time.Now().Add(dialTimeout))
 	_, err = fmt.Fprintf(tlsConn, "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", connect.Path, c.target.Server)
 	if err == nil {

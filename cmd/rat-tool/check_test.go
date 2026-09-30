@@ -1,14 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -16,11 +19,30 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// syncBuffer collects what is written concurrently.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // fakeRatd serves an MCP server as ratd serves it (stateless, JSON responses), over mutual TLS
-// with the server directory of bundle, until the test ends, and returns its address and the count
-// of tool calls it received. clientCA, when set, replaces the CA it checks clients with, for it to
-// refuse them.
-func fakeRatd(t *testing.T, bundle string, clientCA *x509.Certificate) (string, *atomic.Int32) {
+// with the server directory of bundle, until the test ends, and returns its address, the count of
+// tool calls it received, and the errors of its HTTP server (refused TLS handshakes, which ratd
+// logs as warnings). clientCA, when set, replaces the CA it checks clients with, for it to refuse
+// them.
+func fakeRatd(t *testing.T, bundle string, clientCA *x509.Certificate) (string, *atomic.Int32, *syncBuffer) {
 	t.Helper()
 	server := mcp.NewServer(&mcp.Implementation{Name: "ratd", Title: "rat t on host", Version: "v1.2.0"},
 		&mcp.ServerOptions{Instructions: "rat gives you persistent terminals on host."})
@@ -52,17 +74,20 @@ func fakeRatd(t *testing.T, bundle string, clientCA *x509.Certificate) (string, 
 	config.NextProtos = []string{"http/1.1"}
 	httpServer := httptest.NewUnstartedServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server },
 		&mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, DisableLocalhostProtection: true}))
+	errors := &syncBuffer{}
+	httpServer.Config.ErrorLog = log.New(errors, "", 0)
 	httpServer.TLS = config
 	httpServer.StartTLS()
 	t.Cleanup(httpServer.Close)
-	return httpServer.Listener.Addr().String(), calls
+	return httpServer.Listener.Addr().String(), calls, errors
 }
 
 // TestCheck guards a check passing: each step, what ratd tells clients (information, protocol,
-// instructions, tools), and no tool called.
+// instructions, tools), no tool called, and nothing refused in the logs of ratd: the network step
+// reaches ratd on the connection the TLS step uses, rather than on one closed before a handshake.
 func TestCheck(t *testing.T) {
 	bundle := newBundle(t)
-	addr, calls := fakeRatd(t, bundle, nil)
+	addr, calls, serverErrors := fakeRatd(t, bundle, nil)
 	out, err := run(t, "check", "-s", addr, "-b", mtls.ClientDir(bundle, "alice"))
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -84,6 +109,9 @@ func TestCheck(t *testing.T) {
 	if calls.Load() != 0 {
 		t.Errorf("expected no tool called, got %d calls", calls.Load())
 	}
+	if logged := serverErrors.String(); logged != "" {
+		t.Errorf("expected nothing refused by ratd, got:\n%s", logged)
+	}
 }
 
 // TestCheckFailures guards the check stopping at the step failing, telling why, with an error
@@ -92,13 +120,13 @@ func TestCheck(t *testing.T) {
 func TestCheckFailures(t *testing.T) {
 	bundle := newBundle(t)
 	alice := mtls.ClientDir(bundle, "alice")
-	addr, _ := fakeRatd(t, bundle, nil)
-	otherAddr, _ := fakeRatd(t, newBundle(t), nil)
+	addr, _, _ := fakeRatd(t, bundle, nil)
+	otherAddr, _, _ := fakeRatd(t, newBundle(t), nil)
 	otherSide, err := mtls.Load(mtls.ClientDir(newBundle(t), "alice"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	refusingAddr, _ := fakeRatd(t, bundle, otherSide.CA)
+	refusingAddr, _, _ := fakeRatd(t, bundle, otherSide.CA)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

@@ -46,7 +46,8 @@ Checks a running ratd from a client directory, with the flags of rat, declared o
 first failure with a message proper to that step:
 
 1. **Files**: the checks of `bundle inspect`, and a client directory rather than the server's.
-2. **Network**: the address answers (TCP, 10 seconds at most).
+2. **Network**: the address answers (TCP, 10 seconds at most), on the connection the TLS step
+   then uses: one closed without a handshake would show in the logs of ratd as a refused one.
 3. **TLS**: the handshake, and when it fails, why. It reports the tenant, from the server
    certificate, and the session, from the client certificate. In TLS 1.3, a client completes its
    handshake before the server has checked its certificate: a refusal only shows on the first
