@@ -90,14 +90,37 @@ configuration therefore turns them all off, then checks everything but the host 
 - `VerifyConnection`, not `VerifyPeerCertificate`: it also runs on resumed sessions, and
   `VerifyPeerCertificate` gets no verified chains once `InsecureSkipVerify` is set.
 - Leaving `ServerName` empty does not skip the check: Go, `http.Transport` in particular, derives
-  it from the address it dials.
+  it from the address it dials (`transport.go`).
+- The server still proves it holds the key of its certificate: `InsecureSkipVerify` only skips
+  the verification of the certificate, Go checks the signature of the handshake
+  (`CertificateVerify`) regardless (`handshake_client_tls13.go`).
+- A server refused fails the handshake with the error of the check of a side it matches (CA,
+  validity, role), for the client to tell why.
 
 The server side needs none of this: servers do not check client certificates against a host
 name, and with `RequireAndVerifyClientCert` and the CA as `ClientCAs`, Go checks the chain, the
-validity and the clientAuth role by itself.
+validity and the clientAuth role by itself. Neither end checks that the peer certificate carries
+its role only, as loading a side does: no certificate of a closed bundle carries both.
 
 The client configuration is exported: a Go client connecting to ratd directly reuses it, rather
 than writing these checks again.
+
+### Where a refused client learns it
+
+In TLS 1.3, a client completes its handshake before the server has checked its certificate: a
+refused client learns it on its first read, from the alert of the server, which tells why
+(guarded by `TestConfigs`):
+
+| Client certificate | Alert |
+|---|---|
+| of another bundle of the same tenant | unknown certificate authority |
+| of another tenant | certificate required |
+| of the wrong role | bad certificate |
+| expired | expired certificate |
+
+A client of another tenant presents no certificate at all: the server asks for one signed by the
+CA of its bundle, naming it, and Go's client only presents a certificate whose issuer bears that
+name. The CAs of two bundles of the same tenant bear the same name.
 
 ## One bundle, one ratd
 
