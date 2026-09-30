@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime/debug"
 
 	"github.com/urfave/cli/v3"
 )
@@ -23,6 +24,15 @@ func command() *cli.Command {
 		Usage: "the utility of rat: certificate bundles, and checking a running ratd",
 		Commands: []*cli.Command{
 			bundleCommand(),
+			checkCommand(),
 		},
 	}
+}
+
+// version returns the version of rat-tool, from its build.
+func version() string {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		return info.Main.Version
+	}
+	return "unknown"
 }

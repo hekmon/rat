@@ -45,23 +45,46 @@ Checks a running ratd from a client directory, with the flags of rat, declared o
 `internal/flags`: a harness command line is checked by copying it. Step by step, stopping at the
 first failure with a message proper to that step:
 
-1. **Files**: the checks of `bundle inspect`.
-2. **Network**: the address answers.
-3. **TLS**: the handshake, and when it fails, why (a server from another bundle, a wrong role, an
-   expired certificate). It reports the tenant, from the server certificate, and the session,
-   from the client certificate. In TLS 1.3, a client completes its handshake before the server
-   has checked its certificate: a refusal only shows on the first read, which this step does
-   before concluding.
-4. **MCP**: initialize, then the server information, the protocol version, and the instructions,
-   which carry the bracketed paste warning when ratd has one: a human sees it too.
+1. **Files**: the checks of `bundle inspect`, and a client directory rather than the server's.
+2. **Network**: the address answers (TCP, 10 seconds at most).
+3. **TLS**: the handshake, and when it fails, why. It reports the tenant, from the server
+   certificate, and the session, from the client certificate. In TLS 1.3, a client completes its
+   handshake before the server has checked its certificate: a refusal only shows on the first
+   read. A plain HTTP request follows the handshake, for that read to come at once rather than
+   after waiting on a timer (any status will do). A refusal by ratd is explained from its alert
+   (see package `mtls`): a certificate of another bundle of the tenant, of another tenant, of
+   another role, expired. A server refused by this client is told as package `mtls` tells it.
+4. **MCP**: the client of the Go SDK connects (initialize, or discover from protocol 2026-07-28
+   on), through `connect.Transport`, then shows the server information, the protocol version,
+   and the instructions, which carry the bracketed paste warning when ratd has one: a human sees
+   it too.
 5. **Tools**: their names and descriptions.
+
+```
+Files: clients/alice
+  ok    files of a side
+  …
+  client alice of tenant prod, working in session alice
+Network
+  ok    host:7281 answers (TCP, 3 ms)
+TLS
+  ok    ratd serves tenant prod, and accepts this client as session alice
+MCP
+  ok    ratd v1.2.0, "rat prod on host", protocol 2026-07-28
+  instructions:
+    rat gives you persistent terminals on host: …
+Tools
+  ok    8 tools
+    list_windows: List your terminals: …
+ratd at host:7281 serves this client.
+```
 
 It calls no tool: listing windows, for instance, would create the session. Its exit code is not
 zero on failure, for scripts. It warns once less than a year of validity remains.
 
-It is written with the `Client` of the Go SDK, as a harness author would: it checks that ratd
-stays a standard MCP server, where rat talks to ratd through a relay of its own (see the README
-of `cmd/rat`).
+It is written with the `Client` of the Go SDK and package `connect`, as a harness author would:
+it checks that ratd stays a standard MCP server, where rat talks to ratd through a relay of its
+own (see the README of `cmd/rat`).
 
 Rejected: a `--check` mode in rat, which would test the configuration actually used by the
 harness, but give the bridge a second mode. Sharing the flags gets the same result.

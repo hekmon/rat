@@ -104,6 +104,7 @@ func inspectBundle(_ context.Context, cmd *cli.Command) error {
 		if i > 0 {
 			fmt.Fprintln(out)
 		}
+		fmt.Fprintln(out, dir)
 		side := inspectSide(out, dir)
 		if side == nil {
 			failed++
@@ -134,9 +135,9 @@ func inspectBundle(_ context.Context, cmd *cli.Command) error {
 }
 
 // inspectSide loads dir as ratd and rat do, printing one line per check until one fails, then what
-// the directory is for. It returns the side, or nil if a check failed.
+// the directory is for, below a title the caller printed. It returns the side, or nil if a check
+// failed.
 func inspectSide(out io.Writer, dir string) *mtls.Side {
-	fmt.Fprintln(out, dir)
 	side, err := mtls.Load(dir)
 	checks := mtls.Checks()
 	// the checks before the failing one passed, all of them on success
