@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/hekmon/rat/tmux/names"
 )
@@ -68,13 +69,24 @@ func (c *Controller) socketName() string {
 	return "rat-" + c.tenant
 }
 
+// commandWaitDelay is how long waiting for a tmux client killed by its context waits for its
+// output pipes to close (see cmd).
+const commandWaitDelay = time.Second
+
+// cmd returns the tmux client command running args on the server of the tenant. It returns once
+// ctx ends, even on a server that does not answer.
 func (c *Controller) cmd(ctx context.Context, args []string) (cmd *exec.Cmd) {
 	// -f /dev/null: never load the user (nor system) configuration, rat must behave the same
 	// everywhere. It only matters when the command starts a server, but is harmless otherwise
 	// and ensures a server started by any command is configuration free.
 	// -u: output UTF-8 whatever rat's locale. Without a UTF-8 locale (common for services), tmux
 	// replaces non ASCII characters by '_' in what it prints: captures, paths.
-	return exec.CommandContext(ctx, "tmux", append([]string{"-L", c.socketName(), "-f", "/dev/null", "-u"}, args...)...)
+	cmd = exec.CommandContext(ctx, "tmux", append([]string{"-L", c.socketName(), "-f", "/dev/null", "-u"}, args...)...)
+	// The client hands its stdin, stdout and stderr to the server, over the socket: a server not
+	// reading it (stopped, stuck) keeps them open after the client is killed, and waiting for the
+	// output would wait for the server. WaitDelay gives up on the pipes once ctx has ended.
+	cmd.WaitDelay = commandWaitDelay
+	return cmd
 }
 
 // tmuxArg protects an argument ending with ';': tmux reads it as the end of the command (the ';'

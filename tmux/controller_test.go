@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/hekmon/rat/tmux/names"
 )
@@ -55,5 +57,33 @@ func TestTmuxArg(t *testing.T) {
 		if got := tmuxArg(arg); got != expected {
 			t.Errorf("tmuxArg(%q) = %q, expected %q", arg, got, expected)
 		}
+	}
+}
+
+// TestCommandStuckServer guards that a command on a server that does not answer (here stopped by
+// SIGSTOP) returns once its context ends: the tmux client hands its stdout to the server, which
+// keeps it open after the client is killed, until it reads its socket.
+func TestCommandStuckServer(t *testing.T) {
+	c := startTestServer(t, "stuck")
+	pid := c.server.cmd.Process.Pid
+	if err := syscall.Kill(pid, syscall.SIGSTOP); err != nil {
+		t.Fatal(err)
+	}
+	// before the server is stopped: cleanups run in reverse order
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGCONT) })
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	listed := make(chan error, 1)
+	go func() {
+		_, err := c.ListSessions(ctx)
+		listed <- err
+	}()
+	select {
+	case err := <-listed:
+		if err == nil {
+			t.Error("expected an error from a stuck server")
+		}
+	case <-time.After(200*time.Millisecond + commandWaitDelay + 2*time.Second):
+		t.Fatal("the command did not return once its context ended")
 	}
 }

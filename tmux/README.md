@@ -84,6 +84,17 @@ and stopping hold it exclusively. Without it, a command could run while the serv
 stopped: `new-session` would then start a new server by itself, daemonized, which rat would not
 watch nor stop. Only a server crashing while a command runs can still lead to that.
 
+### A stuck server
+
+A command on a server that does not answer (stopped, deadlocked, dying) must still return once
+its context ends, for the caller to tell its own caller. Killing the tmux client is not enough: a
+client hands its stdin, stdout and stderr to the server (file descriptors passed over the
+socket), and a server not reading its socket leaves them in the socket queue, where the kernel
+keeps them open. Waiting for the output of the killed client then waits for the server: with a
+server stopped for 3 seconds and a client killed after half a second, its output reached its end
+after 4 seconds (tmux 3.7c). Every command therefore has a `WaitDelay`: once its context has
+ended and the client is killed, waiting gives up on the pipes after a second, and closes them.
+
 ## Environment
 
 The goal: the same terminals on every machine, whatever the user configuration and whatever the
