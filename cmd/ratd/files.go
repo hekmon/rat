@@ -15,9 +15,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// addFileTools adds the tools moving files on the machine of ratd, which reads and writes them
-// itself, as its user: tmux, its terminal backend, would only add a round trip. They act on files
-// of rat's machine only: no open world.
+// addFileTools adds the tools copying files to and from the machine of ratd, which reads and writes
+// them itself, as its user: tmux, its terminal backend, would only add a round trip. They act on
+// files of rat's machine only: no open world.
 func (d *daemon) addFileTools(server *mcp.Server, session string) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        tools.WriteFile,

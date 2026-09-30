@@ -56,7 +56,7 @@ An agent closing all its windows simply finds a fresh `main` on its next call.
   get: a window keeps its size, and a mode left on (copy mode, to scroll back) is left before the
   next input. Disturbing the terminals beyond a peek is on the human: rat does not guard against
   it.
-- **Files, as a human copies them.** Agents also move whole files to and from the machine,
+- **Files, as a human copies them.** Agents also copy whole files to and from the machine,
   without a terminal: exact content, nothing on a screen, whatever the terminals are doing.
   Files are read and written on ratd's machine, as its user, never inside an ssh session or a
   container running in a terminal.

@@ -392,8 +392,9 @@ Built at startup, sent to each client when it initializes, or discovers the serv
 > foreground command (bash means the terminal waits for input), read_window shows the screen.
 > Run several commands in parallel in several windows. Each terminal is a window running bash,
 > found by name: windows persist across your restarts and context compactions, so call
-> list_windows first. A window named main exists when you start. To move a whole file, or to read
-> a long output (redirect it to a file), use write_file and read_file rather than the terminal.
+> list_windows first. A window named main exists when you start. To copy a whole file to or from
+> the machine, or to read a long output (redirect it to a file), use write_file and read_file
+> rather than the terminal.
 > If the terminals restart after a failure, every window disappears and you find a fresh main.
 
 The host name tells an agent that has a local shell too where commands run. The tenant and the
