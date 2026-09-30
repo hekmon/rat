@@ -185,6 +185,52 @@ func TestServerStopKilled(t *testing.T) {
 	}
 }
 
+// TestServerStopStuck guards that stopping a stuck server terminates it, then kills it, even with
+// a context without deadline: kill-server, which a stuck server does not answer, is bounded by the
+// grace period.
+func TestServerStopStuck(t *testing.T) {
+	c := newTestController(t, "stuck-stop")
+	if err := c.StartServer(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.server.cmd.Process.Signal(syscall.SIGSTOP)
+	stopped := make(chan error, 1)
+	go func() { stopped <- c.StopServer(context.Background()) }()
+	select {
+	case err := <-stopped:
+		if !errors.Is(err, ErrServerKilled) {
+			t.Errorf("expected ErrServerKilled, got %v", err)
+		}
+	case <-time.After(serverStopGracePeriod + commandWaitDelay + serverKillDelay + 3*time.Second):
+		t.Fatal("stopping a stuck server did not return")
+	}
+}
+
+// TestServerStopExitingOnItsOwn guards that a server exiting on its own while being stopped, on a
+// signal of its own (a service manager signals every process of a service at once), is reported
+// as having exited on its own, not as terminated nor killed by StopServer. Here it is killed while
+// kill-server waits for it, stopped.
+func TestServerStopExitingOnItsOwn(t *testing.T) {
+	c := newTestController(t, "exiting-stop")
+	if err := c.StartServer(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	pid := c.server.cmd.Process.Pid
+	_ = syscall.Kill(pid, syscall.SIGSTOP)
+	stopped := make(chan error, 1)
+	go func() { stopped <- c.StopServer(context.Background()) }()
+	pattern := c.socketName() + " .*kill-server"
+	for deadline := time.Now().Add(5 * time.Second); exec.Command("pgrep", "-f", pattern).Run() != nil; time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("no kill-server client waiting for the server")
+		}
+	}
+	_ = syscall.Kill(pid, syscall.SIGKILL)
+	if err := <-stopped; !errors.Is(err, ErrServerNotRunning) {
+		t.Errorf("expected ErrServerNotRunning, got %v", err)
+	}
+}
+
 func TestServerStartFailureStderr(t *testing.T) {
 	requireTmux(t)
 	// bypass New validation to make tmux fail creating its socket

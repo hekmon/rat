@@ -89,8 +89,8 @@ const serverHistoryLimit = 10000
 // whiptail), top shows few processes, and pagers (less via git, journalctl…) kick in more often.
 const serverDefaultSize = "200x24"
 
-// serverStopGracePeriod is how long StopServer waits for the server to exit
-// after a successful kill-server before terminating it (SIGTERM).
+// serverStopGracePeriod is how long StopServer waits for the server to exit, kill-server included,
+// before terminating it (SIGTERM).
 const serverStopGracePeriod = 5 * time.Second
 
 // serverKillDelay is how long the server has to exit after receiving SIGTERM
@@ -304,9 +304,12 @@ func (c *Controller) socketServerPID(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// StopServer stops the current server if running, asking it to exit with kill-server.
+// StopServer stops the current server if running, asking it to exit with kill-server, and
+// terminating it if it has not exited within serverStopGracePeriod, stuck or not answering.
 // A nil error means the server exited gracefully. Otherwise:
-//   - ErrServerNotRunning: there was no server to stop, or it had already exited on its own
+//   - ErrServerNotRunning: there was no server to stop, or it exited on its own, before or while
+//     being stopped: a service manager stopping a service signals all its processes at once,
+//     the server included
 //   - ErrServerTerminated: the server did not exit gracefully and has been sent SIGTERM, which it exited on
 //   - ErrServerKilled: the server ignored SIGTERM for serverKillDelay and has been sent SIGKILL
 //   - any other error: the server exited with a non-zero code, or waiting for it failed
@@ -329,24 +332,26 @@ func (c *Controller) StopServer(ctx context.Context) (err error) {
 	}
 	// from now on its exit is expected, whatever happens: WaitServer reports it as such
 	p.stopRequested.Store(true)
-	// Try to close it properly first
-	stopCmd := c.cmd(ctx, []string{"kill-server"})
-	if err = stopCmd.Run(); err != nil {
-		// failed to execute command, let's terminate the server thru its context
-		p.cancel()
-		<-p.done // wait for the watcher to reap the terminated process
-		return fmt.Errorf("%w: kill-server failed: %w", p.forcedStopError(), err)
-	}
-	// Let's wait for the server to exit after received the exit command,
-	// terminating it if it does not within the grace period
-	graceTimer := time.NewTimer(serverStopGracePeriod)
-	defer graceTimer.Stop()
+	// Ask it to exit, and wait for it within the grace period, which also bounds kill-server: a
+	// stuck server answers nothing, and ctx may have no deadline. kill-server failing does not
+	// mean the server is stuck: it may be exiting already, on a signal of its own.
+	graceCtx, cancelGrace := context.WithTimeout(ctx, serverStopGracePeriod)
+	defer cancelGrace()
+	killErr := c.cmd(graceCtx, []string{"kill-server"}).Run()
 	select {
 	case <-p.done:
-	case <-graceTimer.C:
+	case <-graceCtx.Done():
+		// terminate it through its context: SIGTERM, then SIGKILL after serverKillDelay
 		p.cancel()
 		<-p.done // wait for the watcher to reap the terminated process
+		if killErr != nil {
+			return fmt.Errorf("%w: kill-server failed: %w", p.forcedStopError(), killErr)
+		}
 		return fmt.Errorf("still running %s after kill-server command: %w", serverStopGracePeriod, p.forcedStopError())
+	}
+	if killErr != nil {
+		// exited without having answered: on a signal of its own, not on our request
+		return p.exitedOnItsOwn()
 	}
 	if p.waitErr != nil {
 		// non-zero exit codes are reported as *exec.ExitError

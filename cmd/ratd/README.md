@@ -385,6 +385,11 @@ with a context the signal does not cancel, which would otherwise stop the termin
 door rather than after it. The supervisor is stopped before the server, so that it does not
 restart what ratd stops.
 
+Stopped as a service, ratd is not the only one signaled: systemd sends SIGTERM to every process
+of the service at once, tmux included (see the kill switch in `AGENTS.md`). The terminals then
+stop with the door, and `StopServer` reports a server that exited on its own, which ratd does not
+warn about.
+
 ### Timeouts
 
 - **A tool call: 10 seconds.** No call waits for a command, and tmux answers in milliseconds even

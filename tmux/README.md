@@ -71,6 +71,12 @@ check, so the check after starting would be needed anyway.
    `Cancel`: the default would be SIGKILL, giving tmux no chance to clean up);
 2. no exit 2 seconds later: `WaitDelay` makes Go send SIGKILL.
 
+The 5 seconds include `kill-server` itself: a stuck server does not answer it, and the caller may
+give no deadline (ratd does not, when it stops). `kill-server` failing does not mean the server is
+stuck either: it may be exiting already, on a signal of its own, as when systemd stops a service
+by signaling all its processes at once. The server is then waited for all the same, and its exit
+reported as its own (`ErrServerNotRunning`) rather than as terminated by `StopServer`.
+
 `WaitDelay` does not bound how long `Wait()` blocks on a running process: its timer only starts
 once the context is canceled (or the process exited with its pipes still open). This is why the
 first step needs its own timer. The error tells what was needed (`ErrServerTerminated`,

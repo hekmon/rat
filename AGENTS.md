@@ -97,7 +97,13 @@ tenant.
     `setsid`, daemons) survive tmux. systemd stops them with the service, killing every process
     left in its control group (`KillMode=control-group`, the default, which must be kept).
     Running ratd as a service is what makes the kill switch complete: started by hand, detached
-    commands outlive it.
+    commands outlive it. systemd sends SIGTERM to every process of the service at once, tmux
+    included, then SIGKILL to those left after `TimeoutStopSec`: the terminals stop with the
+    door rather than after it, and only calls in flight at that moment notice, agents losing
+    their terminals anyway. Rejected, after measuring with systemd 252: `KillMode=mixed`, which
+    keeps ratd's order but sends SIGKILL to everything else as soon as ratd exits, leaving
+    detached commands no chance to shut down cleanly; and a stop command waiting for ratd to exit
+    (`ExecStop`), which keeps both, with a shell loop in the unit. Neither leaves more behind.
   - **A dedicated Unix user bounds what was set up on purpose**: what an agent makes persistent
     outside the service (crontab, user services, ssh keys, files) is beyond it. A Unix user for
     rat alone lets the admin find and stop all of it at once, and lock the account.
