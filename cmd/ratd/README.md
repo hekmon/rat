@@ -42,10 +42,8 @@ present when they configure an HTTP MCP server, while all of them can start a st
 that stdio server: started by the harness, it relays every message to ratd, presenting the
 client certificate. It keeps no state and holds no terminal: persistence stays in ratd. A
 harness able to present the certificate, and to accept the server without checking its host name
-(see package `mtls`), can target ratd directly: the bridge adds no protocol of its own.
-
-The bridge relays JSON-RPC messages as they are, rather than being an MCP client and server
-repeating ratd's tools and instructions: it never needs to change when ratd does.
+(see package `mtls`), can target ratd directly: the bridge adds no protocol of its own. How it
+relays is described in the README of `cmd/rat`.
 
 Hosted clients (web and cloud agents) are left out on purpose: they only reach MCP servers by
 URL, and can present no certificate. Admitting them would take a credential stored by a third
@@ -73,8 +71,8 @@ Only the transport is needed, not its streaming:
 
 ratd stays a standard MCP server: a client written with any MCP SDK connects to it with a
 single addition, outside the protocol: an HTTP client presenting the client certificate and
-accepting the server without checking its host name (package `mtls`). The bridge is such a
-client.
+accepting the server without checking its host name (package `mtls`). `rat-tool check` is such
+a client, written with the Go SDK as a harness author would.
 
 The SDK bounds request bodies to 4 MiB of JSON (`DefaultMaxRequestBodyBytes`), answering 413
 beyond. It is kept: it protects ratd from exhausting its memory, and a tool call is written by a
