@@ -259,8 +259,9 @@ needs no lock on windows. This comes from the tmux source (3.7c):
   (`server-client.c`, `cmdq_get_command` in `cmd-queue.c`);
 - the server is single threaded, and drains a client queue in one go, stopping only on a
   command that waits (`server_loop` in `server.c`, `cmdq_next` in `cmd-queue.c`);
-- `send-keys` and `paste-buffer` never wait. `load-buffer -` does, while reading its stdin, but
-  before anything is typed: other clients may run then, not in the middle of the text.
+- `copy-mode -q`, `send-keys` and `paste-buffer` never wait. `load-buffer -` does, while
+  reading its stdin, but before anything is typed: other clients may run then, not in the middle
+  of the text.
 
 Two agents typing in the same window are like two persons sharing a keyboard: each input is one
 hand on it, and the inputs come one after the other, never mixed. A text and keys are separate
@@ -280,7 +281,7 @@ The obvious way, `send-keys -l -- text`, fails agents twice:
 Text is therefore loaded into a tmux buffer from stdin, then pasted, in the same invocation:
 
 ```
-load-buffer -b rat-input-N - ; paste-buffer -t =session:=window -b rat-input-N -r -d -p ; send-keys -t =session:=window Enter
+load-buffer -b rat-input-N - ; copy-mode -q -t =session:=window ; paste-buffer -t =session:=window -b rat-input-N -r -d -p ; send-keys -t =session:=window Enter
 ```
 
 - stdin is not subject to the message limit (115 KB went through unchanged in a manual test,
@@ -292,6 +293,7 @@ load-buffer -b rat-input-N - ; paste-buffer -t =session:=window -b rat-input-N -
   (missing window) leaves it, holding the text of an agent, so rat deletes it.
 - `load-buffer` creates no buffer from an empty input, and the paste would then fail: an empty
   text only presses Enter, if asked.
+- `copy-mode -q` leaves any tmux mode, right before the paste (see Input leaves tmux modes).
 
 Nothing is added nor removed, and Enter is only pressed when asked, as a separate key.
 
@@ -349,6 +351,34 @@ Keys are tmux key names (`C-c`, `Escape`, `Up`, `F5`…), validated before being
 an unknown name as text instead of failing, so `Ctrl-C` would be typed rather than interrupt
 the command. Names are case sensitive (stricter than tmux), and only cover what agents need:
 printable ASCII characters and the usual named keys, with the `C-`, `M-` and `S-` modifiers.
+
+### Input leaves tmux modes
+
+A human peeking at the terminals (attached to rat's tmux server) can leave a window in a tmux
+mode: copy mode to scroll back (`C-b [`), clock mode (`C-b t`), the choose-tree menus (`C-b s`,
+`C-b w`)… A mode is displayed over the program, and stays on once the human detaches. Input then
+does not reach the program as sent (tmux 3.3a and 3.7c):
+
+- **Text is pasted unmarked.** `paste-buffer` still writes to the program, but checks whether it
+  asked for bracketed paste on the screen of the mode rather than on its own (`wp->screen` in
+  `cmd-paste-buffer.c`): at a bash prompt, a multi-line text runs line by line.
+- **Keys go to the mode.** Copy mode binds them to its own commands: `q` leaves it, and a key
+  prompting for more (`f`, `t`, `g`) fails the whole invocation (`no current client`). The other
+  modes only take keys from an attached client (`window_pane_key` in `window.c`): the keys of a
+  command are dropped, and the command reports success.
+
+Input therefore leaves them first, with `copy-mode -q`, which leaves every mode of the window
+(`window_pane_reset_mode_all`), and does nothing on a window in none. It runs in the invocation
+of the input, right before it: after `load-buffer`, which waits, so that no mode can be entered
+in between. A human scrolling back sees the view return to the program as the agent types: the
+terminals are the agents', humans peek.
+
+Reads leave modes alone: a capture reads the screen of the program, not the view of the mode.
+
+Rejected: reporting the mode (in the window description, then in `list_windows` and
+`read_window`), or refusing input in a mode, for the caller to leave it: the caller is an agent
+in the end, who would get tmux plumbing to handle, and could not leave every mode anyway, its
+keys being dropped.
 
 ## Capture
 

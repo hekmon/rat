@@ -33,7 +33,8 @@ var keyFormat = regexp.MustCompile(`^(?:[CMS]-)*(?:[!-~]|Enter|Escape|Tab|BTab|B
 // line, new lines included, and runs nothing until Enter. Otherwise, the text is read as typed, a
 // new line as Enter: by programs that do not ask, but also by bash reading it later, when it was
 // pasted while bash was starting or running a command. It has no size limit, and reaches the
-// terminal whole: no other input can interleave with it.
+// terminal whole: no other input can interleave with it. A tmux mode a human left the window in
+// (copy mode, to scroll back) is left first: in a mode, tmux would paste the text unmarked.
 // The error wraps ErrSessionNotFound or ErrWindowNotFound if they do not exist.
 func (c *Controller) SendText(ctx context.Context, session, window, text string, enter bool) error {
 	if err := checkNames(session, window); err != nil {
@@ -53,25 +54,22 @@ func (c *Controller) SendText(ctx context.Context, session, window, text string,
 		// load-buffer creates no buffer from an empty input, and paste-buffer would then fail
 		buffer = "rat-input-" + strconv.FormatUint(c.inputBuffers.Add(1), 10)
 		stdin = strings.NewReader(text)
-		args = []string{
-			// copy stdin ("-") into a buffer of its own
-			"load-buffer", "-b", buffer, "-", ";",
-			// paste it into the window, where:
-			//  -r keeps new lines as is (tmux would replace them with carriage returns)
-			//  -d deletes the buffer once pasted
-			//  -p marks the paste (bracketed paste) if the program asked for it
-			"paste-buffer", "-t", tg, "-b", buffer, "-r", "-d", "-p",
-		}
+		// copy stdin ("-") into a buffer of its own
+		args = []string{"load-buffer", "-b", buffer, "-", ";"}
+	}
+	// Leave any mode, which also reports a missing window when there is nothing to send. After
+	// load-buffer, which waits while reading stdin and lets other clients run meanwhile: a mode
+	// entered then would still be on for the paste.
+	args = append(args, leaveModes(tg)...)
+	if text != "" {
+		// paste the buffer into the window, where:
+		//  -r keeps new lines as is (tmux would replace them with carriage returns)
+		//  -d deletes the buffer once pasted
+		//  -p marks the paste (bracketed paste) if the program asked for it
+		args = append(args, ";", "paste-buffer", "-t", tg, "-b", buffer, "-r", "-d", "-p")
 	}
 	if enter {
-		if len(args) > 0 {
-			args = append(args, ";")
-		}
-		args = append(args, "send-keys", "-t", tg, "Enter")
-	}
-	if len(args) == 0 {
-		// nothing to send: send-keys without keys still reports a missing window
-		args = []string{"send-keys", "-t", tg}
+		args = append(args, ";", "send-keys", "-t", tg, "Enter")
 	}
 	if _, err := c.runWithStdin(ctx, stdin, args...); err != nil {
 		if buffer != "" {
@@ -89,7 +87,9 @@ func (c *Controller) SendText(ctx context.Context, session, window, text string,
 
 // SendKeys presses keys in window of session, in order. Keys are tmux key names, such as
 // "C-c", "Escape", "Up" or "F5"; the error wraps ErrInvalidKey for an unknown one, and nothing
-// is sent. The error wraps ErrSessionNotFound or ErrWindowNotFound if they do not exist.
+// is sent. A tmux mode a human left the window in (copy mode, to scroll back) is left first: in a
+// mode, tmux would take the keys for itself, or drop them.
+// The error wraps ErrSessionNotFound or ErrWindowNotFound if they do not exist.
 func (c *Controller) SendKeys(ctx context.Context, session, window string, keys ...string) error {
 	if err := checkNames(session, window); err != nil {
 		return err
@@ -99,7 +99,8 @@ func (c *Controller) SendKeys(ctx context.Context, session, window string, keys 
 			return fmt.Errorf("%w: %q", ErrInvalidKey, key)
 		}
 	}
-	args := []string{"send-keys", "-t", target(session, window), "--"}
+	tg := target(session, window)
+	args := append(leaveModes(tg), ";", "send-keys", "-t", tg, "--")
 	for _, key := range keys {
 		args = append(args, tmuxArg(key))
 	}
@@ -107,6 +108,16 @@ func (c *Controller) SendKeys(ctx context.Context, session, window string, keys 
 		return c.windowError(ctx, fmt.Errorf("failed to send keys to %s:%s: %w", session, window, err), session, window)
 	}
 	return nil
+}
+
+// leaveModes returns the tmux command leaving every mode of the window target (copy mode, clock
+// mode…), to chain in an input invocation right before the input. In a mode, tmux pastes a text
+// without marking it (bracketed paste), even if the program asked for it, and takes keys for the
+// mode: copy mode binds them to its own commands, the other modes drop them. A human peeking at
+// the terminals leaves a mode behind when detaching: agents come first, and never see modes.
+// It does nothing on a window in no mode, and fails on a missing one.
+func leaveModes(target string) []string {
+	return []string{"copy-mode", "-q", "-t", target}
 }
 
 // CheckBracketedPaste checks that bash startup files keep bracketed paste enforced in terminals.

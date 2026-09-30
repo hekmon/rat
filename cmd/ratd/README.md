@@ -138,7 +138,7 @@ rat fit long running commands: an agent starts one, carries on, and comes back t
 ### Terminals
 
 - **`list_windows`**: for each window, its name, foreground command, working directory and last
-  activity, plus when they apply: a full-screen program, the scrollback size, copy mode.
+  activity, plus when they apply: a full-screen program, the scrollback size.
   Activity is relative ("12s ago"): models do not know the current time. The description tells
   it is the cheap way to check whether a command finished: bash in the foreground means the
   terminal waits for input, with its caveats (bash builtins and loops show as bash, ssh shows as
@@ -164,10 +164,9 @@ rat fit long running commands: an agent starts one, carries on, and comes back t
   modifiers, combinable. An unknown name is refused with a pointer to `send_text`.
 - **`read_window`** `{window, scrollback_rows}`: the screen (200×24), preceded by up to
   `scrollback_rows` rows of history (0 by default). The header tells how many rows it holds and
-  why fewer than asked (a shorter history, a full-screen program, the read budget), copy mode,
-  and a full-screen program, with its cursor position unless the program hides it. Under a
-  full-screen program, the history belongs to the terminal before the program started: it is
-  never included.
+  why fewer than asked (a shorter history, a full-screen program, the read budget), and a
+  full-screen program, with its cursor position unless the program hides it. Under a full-screen
+  program, the history belongs to the terminal before the program started: it is never included.
 
 Text and keys are two tools rather than one `send_input` taking either: JSON Schema can not say
 "exactly one of", so a small model would learn it by failing, where two tools each have a schema
@@ -187,9 +186,10 @@ at the end of the prompt, the last line. Rejected: mapping the cursor to joined 
 capturing twice, heavier, and wrong when output arrives in between. A program hiding its cursor
 (`htop`) gets no position, only a header saying so: a human sees no cursor either.
 
-Copy mode is not handled by the controller yet. It matters: a human inspecting a window can
-leave it in copy mode, and every key then goes to tmux, not to the program. ratd shows it rather
-than leaving it, which would pull the view from under the human.
+Agents never see tmux modes. A human peeking at the terminals can leave a window in one (copy
+mode, to scroll back), where input would not reach the program as sent: the controller leaves
+any mode before an input, and a capture shows the program whatever the mode (see
+`tmux/README.md`, which tells why modes are not shown to agents).
 
 ### Files
 

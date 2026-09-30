@@ -99,8 +99,53 @@ func checkPasted(t *testing.T, c *Controller) {
 	eventually(t, "every line run", screenContains(c, "s", FirstWindow, "\none\ntwo"))
 }
 
-// TestSendKeys guards that keys act as keys (C-c interrupts the foreground command), and that
-// an unknown key name is refused rather than typed as text.
+// TestInputLeavesModes guards that input reaches the program whatever tmux mode a human peeking at
+// the terminal left the window in: copy mode (scrolling back), where tmux would paste text without
+// marking it and take keys for itself, and clock mode, where it would drop keys, reporting success.
+func TestInputLeavesModes(t *testing.T) {
+	c := startTestServer(t, "inputmodes")
+	ctx := context.Background()
+	if err := c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	// a prompt displayed after the output of a command: bash waits, and asked for bracketed paste
+	typeCommand(t, c, "s", FirstWindow, "echo ready")
+	eventually(t, "prompt after the command", screenContains(c, "s", FirstWindow, "\nready\n"))
+	enterMode := func(mode string) {
+		t.Helper()
+		if _, err := c.run(ctx, mode, "-t", target("s", FirstWindow)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, mode := range []string{"copy-mode", "clock-mode"} {
+		// a text is pasted as a paste: nothing runs until Enter
+		enterMode(mode)
+		if err := c.SendText(ctx, "s", FirstWindow, "echo "+mode+"-one\necho "+mode+"-two", false); err != nil {
+			t.Fatal(err)
+		}
+		// typed rather than pasted, bash would have run the first line before displaying the second
+		eventually(t, mode+": text pasted", screenContains(c, "s", FirstWindow, "echo "+mode+"-two"))
+		if snapshot, err := c.Capture(ctx, "s", FirstWindow, 0); err != nil ||
+			slices.Contains(strings.Split(snapshot.Content, "\n"), mode+"-one") {
+			t.Fatalf("%s: pasted text ran without Enter: %v\n%s", mode, err, snapshot.Content)
+		}
+		// keys reach bash
+		enterMode(mode)
+		if err := c.SendKeys(ctx, "s", FirstWindow, "Enter"); err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, mode+": keys pressed", screenContains(c, "s", FirstWindow, "\n"+mode+"-one\n"+mode+"-two"))
+		// and so does the Enter of a text
+		enterMode(mode)
+		if err := c.SendText(ctx, "s", FirstWindow, "echo "+mode+"-enter", true); err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, mode+": text run", screenContains(c, "s", FirstWindow, "\n"+mode+"-enter"))
+	}
+}
+
+// TestSendKeys guards that keys act as keys (C-c interrupts the foreground command), that an
+// unknown key name is refused rather than typed as text, and that missing targets are reported.
 func TestSendKeys(t *testing.T) {
 	c := startTestServer(t, "sendkeys")
 	ctx := context.Background()
@@ -113,6 +158,12 @@ func TestSendKeys(t *testing.T) {
 	eventually(t, "sleep in the foreground", foregroundIs(c, "s", FirstWindow, "sleep"))
 	if err := c.SendKeys(ctx, "s", FirstWindow, "Ctrl-C"); !errors.Is(err, ErrInvalidKey) {
 		t.Errorf("expected ErrInvalidKey, got %v", err)
+	}
+	if err := c.SendKeys(ctx, "s", "nope", "C-c"); !errors.Is(err, ErrWindowNotFound) {
+		t.Errorf("expected ErrWindowNotFound, got %v", err)
+	}
+	if err := c.SendKeys(ctx, "nope", FirstWindow, "C-c"); !errors.Is(err, ErrSessionNotFound) {
+		t.Errorf("expected ErrSessionNotFound, got %v", err)
 	}
 	if err := c.SendKeys(ctx, "s", FirstWindow, "C-c"); err != nil {
 		t.Fatal(err)

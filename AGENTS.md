@@ -106,7 +106,8 @@ tenant.
   before reaching tmux, and targeted exactly. A window name is unique in its session; tmux IDs
   are never used nor stored.
 - **Agent input reaches the terminal as is**: text is pasted literally, as a human pastes, never
-  interpreted by tmux, and Enter is only pressed when asked.
+  interpreted by tmux (not even by a mode a human left the terminal in), and Enter is only
+  pressed when asked.
 
 How the tmux controller keeps them, and the tmux pitfalls behind each of them, are described in
 [`tmux/README.md`](tmux/README.md).
