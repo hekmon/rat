@@ -17,13 +17,17 @@
 //
 // # Tools
 //
-// Five tools: list windows, create window, close window, send input (text pasted then Enter if
-// asked, or keys), get content (the screen, with optional scrollback above it). Missing tmux
-// sessions are created on the fly, so an agent closing all its windows finds a fresh main.
+// Six tools act on terminals: list_windows, create_window, close_window, send_text (pasted as a
+// human pastes, then Enter if asked), send_keys (by their tmux names) and read_window (the
+// screen, with optional scrollback above it). Two move files, which ratd reads and writes
+// itself: write_file and read_file. No tool waits for a command. What they send back is checked
+// and bounded by the read budget. Missing tmux sessions are created on the fly, so an agent
+// closing all its windows finds a fresh main.
 //
 // # tmux server
 //
-// Ratd keeps its tmux server running, restarting it when it dies on its own, and exits when
-// that makes no sense: a first start failing, or a server dying repeatedly. Stopping ratd stops
-// every terminal.
+// Ratd takes its tenant by starting the tmux server before listening, keeps it running,
+// restarting it when it dies on its own, and exits when that makes no sense: a first start
+// failing, or a server dying repeatedly. Stopping ratd closes its endpoint, then stops every
+// terminal.
 package main

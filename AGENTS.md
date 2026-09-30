@@ -46,8 +46,10 @@ An agent closing all its windows simply finds a fresh `main` on its next call.
 - **Files, as a human copies them.** Agents also move whole files to and from the machine,
   without a terminal: exact content, nothing on a screen, whatever the terminals are doing.
   Files are read and written on ratd's machine, as its user, never inside an ssh session or a
-  container running in a terminal. What comes back is checked before being sent (a regular file,
-  text, within a budget): what reaches a model's context can not be taken back.
+  container running in a terminal.
+- **What reaches a model is bounded.** Window captures and file reads are checked (text, a
+  regular file) and bounded (the read budget) before being sent: what reaches a model's context
+  can not be taken back.
 - **KISS.** Prefer what tmux already provides over rebuilding it.
 
 ## Isolation model
