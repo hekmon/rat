@@ -180,10 +180,13 @@ rat fit long running commands: an agent starts one, carries on, and comes back t
   to `send_text`, and nothing is sent; so is an empty list of keys. The result repeats the keys
   pressed, which the logs never hold.
 - **`read_window`** `{window, scrollback_rows}`: the screen (200×24), preceded by up to
-  `scrollback_rows` rows of history (0 by default). The header tells how many rows it holds and
-  why fewer than asked (a shorter history, a full-screen program, the read budget), and a
-  full-screen program, with its cursor position unless the program hides it. Under a full-screen
-  program, the history belongs to the terminal before the program started: it is never included.
+  `scrollback_rows` rows of history (0 by default). A header tells the rows of history it holds
+  when some were asked, a full-screen program, with its cursor position unless the program hides
+  it, and a cut to the read budget. Fewer rows than asked, with no other header, mean the history
+  holds no more: models infer it, the header does not spell it out. Under a full-screen program,
+  the history belongs to the terminal before the program started: it is never included, and the
+  header says so when history was asked. `scrollback_rows` is unsigned, so that the schema
+  refuses a negative number.
 
 Text and keys are two tools rather than one `send_input` taking either: JSON Schema can not say
 "exactly one of", so a small model would learn it by failing, where two tools each have a schema
@@ -251,10 +254,22 @@ is only given when the file is small enough to be scanned within the call.
 ### Read budget
 
 A result of `read_window` or `read_file` holds at most the read budget, 64 KiB by default (about
-16k tokens), set by `--read-budget`. `read_window` keeps the rows closest to the screen that fit;
-the screen alone always does (about 5 KB, 20 KB with multibyte characters): ratd refuses a budget
-under 32 KiB. Harnesses also cut or divert large results, and a larger context still degrades as
-it fills.
+16k tokens), set by `--read-budget`, header included. Harnesses also cut or divert large
+results, and a larger context still degrades as it fills.
+
+`read_window` cuts the history, keeping its end: the last lines whole, then the end of the line
+before them, cut at a character boundary. Rather than whole lines only: a long output with no new
+line is a single line once joined, spanning the history and the screen (a line of 100000
+characters), and dropping it would take the screen away. Once cut, lines could be counted, not
+rows: the header tells no number.
+
+The screen itself is never cut: a cut screen would be read as the whole screen. A screen usually
+takes about 5 KB, 20 KB with multibyte characters, and ratd refuses a budget under 32 KiB. But
+characters piling up combining accents take more: a screen of them measured 78 KB. A screen over
+the budget is refused, telling its size, and the agent is told to close the window and start
+over in a new one: sent whole, it would flood a context the agent could not recover from. The
+controller tells the size of the screen alone (see `tmux/README.md`), which the joined content
+can not.
 
 It is a setting of ratd, not a parameter of the tools: the admin knows which models and harnesses
 connect, and long reads stay possible, one range at a time. The descriptions state the value.
@@ -282,7 +297,8 @@ Hidden from agents: a tool needing a missing tmux session creates it (a concurre
 not an error), so an agent closing all its windows finds a fresh `main`. What each tool does then
 is part of its purpose:
 
-- `list_windows` and `read_window` create it, and show the fresh `main`.
+- `list_windows` and `read_window` create it, and show the fresh `main` with a header saying so.
+  `read_window` naming another window fails: it does not exist, the error says how to create it.
 - `send_text` and `send_keys` create it, but send nothing: bash is still starting in the new
   `main`, and a pasted text would run line by line. This is the usual case after a tmux restart,
   when the agent retries its command. The error says so.
@@ -301,6 +317,8 @@ message tells an outcome the agent may act upon, such as nothing to close.
 |---|---|---|
 | sending to or reading a missing window | yes | the window does not exist, `list_windows` shows the others |
 | sending to a session just created | yes | `main` was just created, nothing was sent: wait for its prompt |
+| reading another window than `main` in a session just created | yes | `main` was just created, `create_window` for the other |
+| screen over the read budget | yes | its size, close the window and start over in a new one |
 | invalid window name | yes | the naming rule |
 | unknown key | yes | the key names, and `send_text` to type text |
 | tmux restarting | yes | every window was lost, retry in a few seconds to find a fresh `main` |
@@ -422,10 +440,11 @@ One line per tool call, at info level, or warning for a failure the agent did no
 answering, an internal error): the session (the client name), the tool, the window, the outcome
 (`ok`, `message` for a result that is not an error, `error` with its cause) and the duration,
 plus what tells the action without its content: the size of a text and whether Enter was
-pressed, the number of keys, the rows read, the path and size of a file. Never the content:
-neither text, nor keys (they can spell a password one key at a time), nor files. And the
-lifecycle: startup (tenant, address, bundle expiry), the bracketed paste check, tmux exits and
-restarts, the crash budget, shutdown.
+pressed, the number of keys, the rows of history asked and read (and the size of a screen
+refused), the path and size of a file. Never the content: neither text, nor keys (they can spell
+a password one key at a time), nor files. And the lifecycle: startup (tenant, address, read
+budget, bundle expiry), the bracketed paste check, tmux exits and restarts, the crash budget,
+shutdown.
 
 At debug level, one line per MCP request (the session, the method, the duration), whatever the
 protocol version: clients initialize, or discover the server from protocol 2026-07-28 on (the Go
@@ -439,8 +458,10 @@ ratd --bundle DIR [--listen :7281] [--read-budget 64KiB] [--log-level info]
 ```
 
 `--bundle` is the server directory of a bundle (see `rat-tool`); the tenant comes from its
-certificate. No configuration file nor environment variable: nothing ratd needs is secret on a
-command line.
+certificate. `--read-budget` takes a size with its unit (`64KiB`, `1MiB`, `65536B`, parsed by
+`github.com/hekmon/cunits`). Decimal units are accepted too, and so are bits (`Kb`): such a
+mistake usually falls under 32 KiB, and the refusal tells the size read. No configuration file
+nor environment variable: nothing ratd needs is secret on a command line.
 
 ## Open questions
 

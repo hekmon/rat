@@ -51,7 +51,7 @@ func runRatd(t *testing.T, bundle string) (addr string, logs *logBuffer, stop fu
 	ctx, cancel := context.WithCancel(context.Background())
 	ran := make(chan error, 1)
 	go func() {
-		ran <- run(ctx, slog.New(slog.NewTextHandler(logs, nil)), mtls.ServerDir(bundle),
+		ran <- run(ctx, slog.New(slog.NewTextHandler(logs, nil)), mtls.ServerDir(bundle), defaultReadBudget,
 			func() (net.Listener, error) { return listener, nil })
 	}()
 	stopped := false
@@ -81,7 +81,7 @@ func TestRun(t *testing.T) {
 	}
 
 	listened := false
-	err := run(context.Background(), slog.New(slog.DiscardHandler), mtls.ServerDir(bundle), func() (net.Listener, error) {
+	err := run(context.Background(), slog.New(slog.DiscardHandler), mtls.ServerDir(bundle), defaultReadBudget, func() (net.Listener, error) {
 		listened = true
 		return nil, errors.New("not expected to listen")
 	})

@@ -39,7 +39,7 @@ func connectTools(t *testing.T, tenant string) (*mcp.ClientSession, *tmux.Contro
 	}
 	t.Cleanup(func() { _ = controller.StopServer(ctx) })
 	logs := &logBuffer{}
-	d, err := newDaemon(slog.New(slog.NewTextHandler(logs, nil)), &mtls.Side{Tenant: tenant}, controller, false)
+	d, err := newDaemon(slog.New(slog.NewTextHandler(logs, nil)), &mtls.Side{Tenant: tenant}, controller, false, defaultReadBudget)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,6 +197,7 @@ func TestToolsAnnotations(t *testing.T) {
 		"close_window":  {DestructiveHint: ptr(true), IdempotentHint: true, OpenWorldHint: ptr(false)},
 		"send_text":     {DestructiveHint: ptr(true), OpenWorldHint: ptr(true)},
 		"send_keys":     {DestructiveHint: ptr(true), OpenWorldHint: ptr(true)},
+		"read_window":   {ReadOnlyHint: true, OpenWorldHint: ptr(false)},
 	}
 	for _, tool := range tools.Tools {
 		want, ok := expected[tool.Name]

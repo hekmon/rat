@@ -58,7 +58,7 @@ func (d *daemon) listWindows(ctx context.Context, session string) result {
 			windows, err = d.controller.ListWindows(ctx, session)
 		}
 		if created {
-			header = "[your terminals did not exist: main was just created, bash is starting]\n"
+			header = freshMainHeader + "\n"
 		}
 	}
 	if err != nil {

@@ -80,14 +80,20 @@ const serverStderrMaxLen = 1024
 // visible screen can be captured (tmux default: 2000).
 const serverHistoryLimit = 10000
 
-// serverDefaultSize is the fixed size of the terminals (tmux default: 80x24).
+// ScreenColumns and ScreenRows are the fixed size of the terminals (tmux default: 80x24).
 // Wide, because programs lay out their output for the terminal width: some truncate lines to it
 // (ps, docker, tables), and joining wrapped lines at capture can not recover what they cut.
 // Short, because the height is what a full screen capture returns by default: more lines are
 // available on demand from the scrollback. But not shorter than 24, the classic terminal height
 // full-screen programs are designed for: below it some refuse to run or cut their menus (dialog,
 // whiptail), top shows few processes, and pagers (less via git, journalctl…) kick in more often.
-const serverDefaultSize = "200x24"
+const (
+	ScreenColumns = 200
+	ScreenRows    = 24
+)
+
+// serverDefaultSize is the size of the terminals, as tmux options take it.
+var serverDefaultSize = fmt.Sprintf("%dx%d", ScreenColumns, ScreenRows)
 
 // serverStopGracePeriod is how long StopServer waits for the server to exit, kill-server included,
 // before terminating it (SIGTERM).

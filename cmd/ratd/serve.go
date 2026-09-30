@@ -67,14 +67,19 @@ type daemon struct {
 	host string
 	// instructions are sent to every client
 	instructions string
+	// readBudget bounds what a read sends back, in bytes: once in the context of a model, it can
+	// not be taken back
+	readBudget int
 	// schemas spares building the schemas of the tools again for each request, which builds its
 	// own MCP server
 	schemas *mcp.SchemaCache
 }
 
 // newDaemon returns ratd serving the tenant of side, the server directory of its bundle, with the
-// terminals of controller, warning agents that pasted text may run line by line if warnPaste.
-func newDaemon(logger *slog.Logger, side *mtls.Side, controller *tmux.Controller, warnPaste bool) (*daemon, error) {
+// terminals of controller, warning agents that pasted text may run line by line if warnPaste, its
+// reads bounded by readBudget bytes.
+func newDaemon(logger *slog.Logger, side *mtls.Side, controller *tmux.Controller, warnPaste bool,
+	readBudget int) (*daemon, error) {
 	host, err := os.Hostname()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read the host name: %w", err)
@@ -90,7 +95,7 @@ func newDaemon(logger *slog.Logger, side *mtls.Side, controller *tmux.Controller
 		sdkLogger = slog.New(minLevel{Handler: logger.Handler(), min: slog.LevelWarn})
 	}
 	return &daemon{logger: logger, sdkLogger: sdkLogger, side: side, controller: controller, host: host,
-		instructions: instructions, schemas: mcp.NewSchemaCache()}, nil
+		instructions: instructions, readBudget: readBudget, schemas: mcp.NewSchemaCache()}, nil
 }
 
 // minLevel passes on the records of its handler from a minimum level only.
@@ -197,6 +202,7 @@ func (d *daemon) newServer(session string) *mcp.Server {
 	server.AddReceivingMiddleware(d.logRequests(session))
 	d.addWindowTools(server, session)
 	d.addInputTools(server, session)
+	d.addScreenTools(server, session)
 	return server
 }
 

@@ -65,7 +65,7 @@ func startRatd(t *testing.T, bundle string, level slog.Level) (string, *logBuffe
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, err := newDaemon(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: level})), side, controller, false)
+	d, err := newDaemon(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: level})), side, controller, false, defaultReadBudget)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestServeRefuses(t *testing.T) {
 // client can not run a server with its certificate.
 func TestRunClientDirectory(t *testing.T) {
 	bundle := newBundle(t, "t")
-	err := run(context.Background(), slog.New(slog.DiscardHandler), mtls.ClientDir(bundle, "alice"),
+	err := run(context.Background(), slog.New(slog.DiscardHandler), mtls.ClientDir(bundle, "alice"), defaultReadBudget,
 		func() (net.Listener, error) { return nil, errors.New("not expected to listen") })
 	if !errors.Is(err, mtls.ErrRole) {
 		t.Errorf("expected mtls.ErrRole, got %v", err)

@@ -52,6 +52,12 @@ func command(logs io.Writer) *cli.Command {
 				Value:   defaultListen,
 			},
 			&cli.StringFlag{
+				Name:    "read-budget",
+				Aliases: []string{"r"},
+				Usage:   "the most a read of a window or a file sends back, with its unit, 32KiB at least",
+				Value:   "64KiB",
+			},
+			&cli.StringFlag{
 				Name:  "log-level",
 				Usage: "the minimum level of the logs: debug, info, warn or error",
 				Value: "info",
@@ -62,24 +68,28 @@ func command(logs io.Writer) *cli.Command {
 			if err := level.UnmarshalText([]byte(cmd.String("log-level"))); err != nil {
 				return fmt.Errorf("invalid log level: %w", err)
 			}
+			readBudget, err := parseReadBudget(cmd.String("read-budget"))
+			if err != nil {
+				return err
+			}
 			logger := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: level}))
 			ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, os.Interrupt)
 			defer stop()
 			listen := cmd.String("listen")
-			return run(ctx, logger, cmd.String("bundle"), func() (net.Listener, error) {
+			return run(ctx, logger, cmd.String("bundle"), readBudget, func() (net.Listener, error) {
 				return net.Listen("tcp", listen)
 			})
 		},
 	}
 }
 
-// run starts ratd with the server directory of a bundle, then listens with listen, and serves
-// until ctx is done. The steps of the startup run in order, a failure making ratd exit while the
+// run starts ratd with the server directory of a bundle, its reads bounded by readBudget bytes,
+// then listens with listen, and serves until ctx is done. The steps of the startup run in order, a failure making ratd exit while the
 // admin is still there: loading the bundle, starting the tmux server of its tenant, checking
 // bracketed paste, listening. A second ratd for the same tenant thus fails before listening.
 // Stopping closes the door first (no call gets in anymore), then stops the terminals.
 // It also returns an error when the tmux server died too often: ratd then shows as failed.
-func run(ctx context.Context, logger *slog.Logger, bundle string, listen func() (net.Listener, error)) error {
+func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int, listen func() (net.Listener, error)) error {
 	side, err := mtls.Load(bundle)
 	if err != nil {
 		return fmt.Errorf("bundle: %w", err)
@@ -107,7 +117,7 @@ func run(ctx context.Context, logger *slog.Logger, bundle string, listen func() 
 		logger.Info("terminals stopped")
 	}()
 	warnPaste := checkBracketedPaste(ctx, logger, controller)
-	d, err := newDaemon(logger, side, controller, warnPaste)
+	d, err := newDaemon(logger, side, controller, warnPaste, readBudget)
 	if err != nil {
 		return err
 	}
@@ -116,7 +126,7 @@ func run(ctx context.Context, logger *slog.Logger, bundle string, listen func() 
 		return err
 	}
 	logger.Info("serving", "tenant", side.Tenant, "address", listener.Addr().String(), "endpoint", endpoint,
-		"bundle_expiry", side.NotAfter())
+		"read_budget", sizeText(readBudget), "bundle_expiry", side.NotAfter())
 	serving, stopServing := context.WithCancel(ctx)
 	defer stopServing()
 	supervised := make(chan struct{})
