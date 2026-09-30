@@ -6,29 +6,12 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
-	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/hekmon/rat/tmux/names"
 )
-
-var (
-	// ErrInvalidTenant is returned by New for a tenant name that is not a plain name.
-	ErrInvalidTenant = errors.New("invalid tenant name")
-	// ErrInvalidName is returned for a session or window name that is not a plain name, before
-	// anything reaches tmux (see CheckName).
-	ErrInvalidName = errors.New("invalid name")
-)
-
-// nameMaxLen bounds tenant, session and window names. For tenants, it keeps the socket path
-// (/tmp/tmux-<uid>/rat-<tenant>) well under the unix socket path limit (104 bytes on macOS,
-// 108 on Linux).
-const nameMaxLen = 32
-
-// nameFormat only allows plain names. A tenant ends up in the tmux socket name, where "/" or ".."
-// would move the socket out of the tmux private directory. Session and window names end up in
-// tmux targets, where ':' and '.' separate the session, window and pane parts.
-var nameFormat = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // Controller owns the tmux server of a tenant, and runs the commands on its sessions and windows.
 // Create it with New, which validates the tenant. It is safe for concurrent use.
@@ -51,13 +34,14 @@ type Controller struct {
 	inputBuffers atomic.Uint64
 }
 
-// New returns a controller for tenant, which can be empty (default socket) or
-// only contain letters, digits, '_' and '-' (up to nameMaxLen characters).
-// It does not start the server: see StartServer.
+// New returns a controller for tenant, which can be empty (default socket) or a plain name (see
+// package names): the error then wraps names.ErrInvalid. It does not start the server: see
+// StartServer.
 func New(tenant string) (c *Controller, err error) {
-	if tenant != "" && !validName(tenant) {
-		return nil, fmt.Errorf("%w %q: only letters, digits, '_' and '-' are allowed (up to %d characters)",
-			ErrInvalidTenant, tenant, nameMaxLen)
+	if tenant != "" {
+		if err = names.Check(tenant); err != nil {
+			return nil, fmt.Errorf("tenant: %w", err)
+		}
 	}
 	c = &Controller{
 		tenant: tenant,
@@ -65,25 +49,11 @@ func New(tenant string) (c *Controller, err error) {
 	return
 }
 
-func validName(name string) bool {
-	return len(name) <= nameMaxLen && nameFormat.MatchString(name)
-}
-
-// CheckName returns an error wrapping ErrInvalidName if name can not be a session or window
-// name: only letters, digits, '_' and '-' are allowed, up to 32 characters. It is the rule every
-// method applies, for callers to reject a name without asking tmux.
-func CheckName(name string) error {
-	if !validName(name) {
-		return fmt.Errorf("%w %q: only letters, digits, '_' and '-' are allowed (up to %d characters)",
-			ErrInvalidName, name, nameMaxLen)
-	}
-	return nil
-}
-
-// checkNames returns an error wrapping ErrInvalidName if one of the session or window names is invalid.
-func checkNames(names ...string) error {
-	for _, name := range names {
-		if err := CheckName(name); err != nil {
+// checkNames returns an error wrapping names.ErrInvalid if one of the session or window names of
+// a target is invalid, before anything reaches tmux.
+func checkNames(targetNames ...string) error {
+	for _, name := range targetNames {
+		if err := names.Check(name); err != nil {
 			return err
 		}
 	}

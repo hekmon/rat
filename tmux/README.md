@@ -187,9 +187,10 @@ asked to tmux every time instead.
 
 ### Names
 
-Session and window names follow the tenant rule: letters, digits, `_` and `-`, up to 32
-characters. In targets, `:` and `.` separate the session, window and pane parts, and a leading
-`=` asks for an exact match: any of them in a name would change what it targets.
+Session and window names follow the tenant rule, held by package `tmux/names`: letters,
+digits, `_` and `-`, up to 32 characters. In targets, `:` and `.` separate the session, window
+and pane parts, and a leading `=` asks for an exact match: any of them in a name would change
+what it targets.
 
 Window names are unique within a session, as they are how agents find their terminals. tmux
 accepts duplicates, and an exact target then fails as if the window did not exist, so rat

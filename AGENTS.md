@@ -12,7 +12,8 @@ at once, and to know what they leave behind.
 
 - **`tmux` package (controller)**: low level Go API over tmux, explicit (sessions are created
   and destroyed manually, no automatic behavior) but opinionated for agent usage: it exposes
-  what agents need, not all of tmux, and enforces the invariants below.
+  what agents need, not all of tmux, and enforces the invariants below. Its naming rule is a
+  package of its own (`tmux/names`), shared with mtls.
 - **`mtls` package**: the TLS contract between ratd and its clients: closed bundles (a CA, a
   server named after its tenant and clients named after their session, generated together) and
   the TLS configuration of each side.

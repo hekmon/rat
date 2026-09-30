@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"os/exec"
-	"strings"
 	"testing"
+
+	"github.com/hekmon/rat/tmux/names"
 )
 
 // requireTmux fails the test if tmux is not installed: rat can not work without it,
@@ -30,33 +31,17 @@ func newTestController(t *testing.T, tenant string) *Controller {
 	return c
 }
 
-func TestNewValidTenants(t *testing.T) {
-	for _, tenant := range []string{"", "alice", "team_1-prod", "-L", strings.Repeat("a", nameMaxLen)} {
+// TestNewTenants guards that a tenant is the default one (empty) or follows the naming rule
+// (package names), which keeps its socket in the tmux directory.
+func TestNewTenants(t *testing.T) {
+	for _, tenant := range []string{"", "alice", "-L"} {
 		if _, err := New(tenant); err != nil {
 			t.Errorf("tenant %q: %v", tenant, err)
 		}
 	}
-}
-
-func TestNewInvalidTenants(t *testing.T) {
-	for _, tenant := range []string{"no/such/dir", "../../etc", "..", "a b", "é", "a\x00b", strings.Repeat("a", nameMaxLen+1)} {
-		if _, err := New(tenant); !errors.Is(err, ErrInvalidTenant) {
-			t.Errorf("tenant %q: expected ErrInvalidTenant, got %v", tenant, err)
-		}
-	}
-}
-
-// TestCheckName guards the rule for session and window names, which callers apply without tmux:
-// plain names only, as ':', '.' and '=' change what a tmux target reaches.
-func TestCheckName(t *testing.T) {
-	for _, name := range []string{"main", "build_1", "-x", strings.Repeat("a", nameMaxLen)} {
-		if err := CheckName(name); err != nil {
-			t.Errorf("name %q: %v", name, err)
-		}
-	}
-	for _, name := range []string{"", "a:b", "s.1", "=s", "a b", "é", strings.Repeat("a", nameMaxLen+1)} {
-		if err := CheckName(name); !errors.Is(err, ErrInvalidName) {
-			t.Errorf("name %q: expected ErrInvalidName, got %v", name, err)
+	for _, tenant := range []string{"no/such/dir", "../../etc", ".."} {
+		if _, err := New(tenant); !errors.Is(err, names.ErrInvalid) {
+			t.Errorf("tenant %q: expected names.ErrInvalid, got %v", tenant, err)
 		}
 	}
 }

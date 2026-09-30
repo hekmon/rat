@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/hekmon/rat/tmux/names"
 )
 
 // startTestServer returns a controller whose server is started.
@@ -56,8 +58,8 @@ func TestSessionsNames(t *testing.T) {
 	c := startTestServer(t, "sessionsnames")
 	ctx := context.Background()
 	for _, session := range []string{"a:b", "s.1", "", "=s"} {
-		if err := c.NewSession(ctx, session); !errors.Is(err, ErrInvalidName) {
-			t.Errorf("%q: expected ErrInvalidName, got %v", session, err)
+		if err := c.NewSession(ctx, session); !errors.Is(err, names.ErrInvalid) {
+			t.Errorf("%q: expected names.ErrInvalid, got %v", session, err)
 		}
 	}
 }
