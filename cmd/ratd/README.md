@@ -222,10 +222,13 @@ errors with its messages.
   `mkdir -p` does (0755 minus ratd's umask), sparing a round trip through the terminal, and the
   result names them: a typo in a path creates directories the agent did not mean. The content is
   text (a JSON string), written as is: binary content goes through the terminal (`base64 -d`).
-- **`read_file`** `{path, start_line, max_lines}`: whole lines of a text file, from `start_line`
-  (1 by default, negative counts from the end: -100 for the last 100 lines), at most `max_lines`
-  (all by default). The header tells the lines returned out of how many, the size and the last
-  modification ("modified 3s ago": a command may still be writing).
+- **`read_file`** `{path, start_line, max_lines, line_numbers}`: whole lines of a text file, from
+  `start_line` (1 by default, negative counts from the end: -100 for the last 100 lines), at most
+  `max_lines` (all by default). The header tells the lines returned out of how many, the size and
+  the last modification ("modified 3s ago": a command may still be writing). The content is
+  exact, a final new line included, so that it can go back through `write_file`; `line_numbers`
+  prefixes each line with its number and a tab, as `cat -n` does, for an agent to refer to lines.
+  Not by default: about 7 bytes a line, and a content to strip before writing it back.
 
 A file is written in place, as `cp` does: truncated, then written. It keeps its mode, owner,
 hard links and extended attributes, and a symbolic link is followed, writing its target, as a
@@ -251,12 +254,17 @@ land elsewhere. `list_windows` shows the directories, for the agent to build abs
 
 What `read_file` sends is checked first, as it can not be taken back from a model's context:
 
-1. only a regular file is read: a FIFO would block forever, `/dev/zero` never ends;
-2. the read is bounded whatever the size tells: `/proc` files show 0 and stream, a log grows
-   while being read;
-3. the content must be text: no NUL byte (the heuristic of git and `grep -I`) and valid UTF-8.
-   Otherwise the tool refuses, pointing to the terminal (`file`, `xxd`, `base64`). Rejected:
-   running `file`, not always installed, with an output to parse, and saying nothing of size;
+1. only a regular file is read: a FIFO would block forever, `/dev/zero` never ends. It is checked
+   and opened as `write_file` does, without blocking;
+2. the read is bounded whatever the size tells: a log grows while being read, and is read up to
+   its size when opened, consistently with the size told; `/proc` files show 0, and are read to
+   their end within the time of the call;
+3. the content must be text: no NUL byte (the heuristic of git and `grep -I`) and valid UTF-8,
+   the line told. Otherwise the tool refuses, pointing to the terminal (`file`, `xxd`, `base64`).
+   What is checked is what is sent; a file over the budget read without a range sends nothing,
+   but its start is checked all the same (as git checks the start of a file), rather than telling
+   a line count for a range to be refused next. Rejected: running `file`, not always installed,
+   with an output to parse, and saying nothing of size;
 4. the result fits the read budget. Without a range, a file over the budget returns only its
    size, line count and modification time, for the agent to pick a range: nothing big lands in
    its context by surprise. With a range, a read returns the whole lines that fit and tells where
@@ -265,8 +273,26 @@ What `read_file` sends is checked first, as it can not be taken back from a mode
 
 Lines rather than bytes: agents think in lines, and a byte offset cuts lines and characters. The
 cost is that reaching line 30000 reads what comes before, having no index: fast enough for
-ordinary files. Reading from the end reads backwards, instant on any size. The total line count
-is only given when the file is small enough to be scanned within the call.
+ordinary files. Reading from the end reads backwards, instant on any size.
+
+Scanning (reaching a line, counting lines) takes half of the time of the call at most. A bound in
+time rather than in size, as the speed depends on where the file is: 1 GiB is scanned in 80 ms
+from the page cache (checks for text included), around 7 s from a hard disk. A line out of reach
+in time is refused, pointing to a negative `start_line` or the terminal (`sed -n`, `tail -n`),
+and a total not counted in time is not told: the file is "too large to count its lines", and a
+range from the end is then numbered from the end (`lines -100 to -41 counted from the end`). The
+same file may be counted on a warm cache and not on a cold one.
+
+Every range is read forward and cut at the end, telling the line to continue with: from the end
+too, as the continuation keeps the numbering of the header. `start_line` 0 is no start, the
+schema not telling 0 from a missing number: a range is a `start_line` or a `max_lines` given, so
+that `start_line` 1 reads a large file from its start, one cut at a time.
+
+Not provided: a tool telling the metadata of files (type, size, times). `ls -l` or `stat` in a
+terminal tells it, at the cost of a screen for a line, and `read_file` tells the size, line count
+and modification of a file over the budget. Worth a tool if agents turn out to spend many calls
+on it; the logs of ratd can not tell, as they never hold what is typed in a terminal: the
+transcripts of harnesses can.
 
 ### Read budget
 

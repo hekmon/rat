@@ -32,6 +32,7 @@ func (d *daemon) addFileTools(server *mcp.Server, session string) {
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(true), IdempotentHint: true, OpenWorldHint: ptr(false)},
 	}, tool(d, session, "write_file", func(writeFileInput) string { return "" },
 		func(ctx context.Context, in writeFileInput) result { return d.writeFile(ctx, in) }))
+	d.addReadFileTool(server, session)
 }
 
 // errRelativePath refuses a path relative to nothing ratd knows: the directory of a window is the
@@ -95,7 +96,7 @@ func (d *daemon) writeFileNow(path, content string) result {
 	var created []string
 	switch {
 	case err == nil:
-		if refused := d.notRegular(path, info); refused != nil {
+		if refused := d.notRegular(path, info, written); refused != nil {
 			return *refused
 		}
 	case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
@@ -106,15 +107,15 @@ func (d *daemon) writeFileNow(path, content string) result {
 			return *r
 		}
 	default:
-		return d.fileFailure(err, "Writing "+path, false)
+		return d.fileFailure(err, "Writing "+path, written, false)
 	}
 	file, isNew, err := openRegular(path)
 	var notRegular *notRegularError
 	switch {
 	case errors.As(err, &notRegular):
-		return *d.notRegular(path, notRegular.info)
+		return *d.notRegular(path, notRegular.info, written)
 	case err != nil:
-		return d.fileFailure(err, "Writing "+path, false)
+		return d.fileFailure(err, "Writing "+path, written, false)
 	}
 	// once truncated, a failure leaves the file partial
 	truncated := false
@@ -130,7 +131,7 @@ func (d *daemon) writeFileNow(path, content string) result {
 		err = closeErr
 	}
 	if err != nil {
-		return d.fileFailure(err, "Writing "+path, truncated)
+		return d.fileFailure(err, "Writing "+path, written, truncated)
 	}
 	text := fmt.Sprintf("Replaced %s (%s, %s before).", path, sizeText(len(content)), sizeText(int(info.Size())))
 	if isNew {
@@ -161,12 +162,12 @@ func (d *daemon) createDirectories(dir string) (created []string, refused *resul
 		case errors.Is(err, syscall.ENOTDIR):
 			// a parent further up is not a directory: found next
 		default:
-			r := d.fileFailure(err, "Creating "+dir, false)
+			r := d.fileFailure(err, "Creating "+dir, written, false)
 			return nil, &r
 		}
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		r := d.fileFailure(err, "Creating "+dir, false)
+		r := d.fileFailure(err, "Creating "+dir, written, false)
 		return nil, &r
 	}
 	return created, nil
@@ -196,29 +197,49 @@ func openRegular(path string) (file *os.File, created bool, err error) {
 	if err != nil {
 		return nil, false, err
 	}
-	info, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
+	if _, err = checkOpened(file); err != nil {
 		return nil, false, err
-	}
-	if !info.Mode().IsRegular() {
-		_ = file.Close()
-		return nil, false, &notRegularError{info: info}
 	}
 	return file, created, nil
 }
 
+// checkOpened returns the description of file, just opened, or a notRegularError if it is not a
+// regular file, closing it on failure.
+func checkOpened(file *os.File) (fs.FileInfo, error) {
+	info, err := file.Stat()
+	if err == nil && !info.Mode().IsRegular() {
+		err = &notRegularError{info: info}
+	}
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return info, nil
+}
+
+// access tells how a file tool accesses files, for the texts refusing it.
+type access bool
+
+const (
+	written access = false
+	read    access = true
+)
+
 // notRegular returns the refusal of path, described by info, if it is not a regular file: a
-// directory, or what write_file does not write (a FIFO would block, a device is not a file to
-// replace).
-func (d *daemon) notRegular(path string, info fs.FileInfo) *result {
+// directory, or what the file tools do not access (a FIFO would block, a device is not a file to
+// replace, /dev/zero never ends).
+func (d *daemon) notRegular(path string, info fs.FileInfo, how access) *result {
 	mode := info.Mode()
 	var kind string
 	switch {
 	case mode.IsRegular():
 		return nil
 	case mode.IsDir():
-		return &result{outcome: failed, err: syscall.EISDIR, text: fmt.Sprintf("%s is a directory, not a file.", path)}
+		text := fmt.Sprintf("%s is a directory, not a file.", path)
+		if how == read {
+			text = fmt.Sprintf("%s is a directory, not a file: list it in the terminal (ls).", path)
+		}
+		return &result{outcome: failed, err: syscall.EISDIR, text: text}
 	case mode&fs.ModeNamedPipe != 0:
 		kind = "a FIFO"
 	case mode&fs.ModeDevice != 0:
@@ -228,21 +249,29 @@ func (d *daemon) notRegular(path string, info fs.FileInfo) *result {
 	default:
 		kind = "of type " + mode.Type().String()
 	}
+	tool := "write_file only writes"
+	if how == read {
+		tool = "read_file only reads"
+	}
 	return &result{outcome: failed, err: fmt.Errorf("not a regular file: %s", mode.Type()), text: fmt.Sprintf(
-		"%s is not a regular file (%s): write_file only writes regular files.", path, kind)}
+		"%s is not a regular file (%s): %s regular files.", path, kind, tool)}
 }
 
 // fileFailure returns the result of a file operation, what telling it ("Writing /x"), failed with
 // err. The reason given by the system is told as is: a low level operation failing is what an
 // agent expects, and can act upon (no space left, a read-only file system). A denied permission
 // names the user. partial tells the file was truncated before failing.
-func (d *daemon) fileFailure(err error, what string, partial bool) result {
+func (d *daemon) fileFailure(err error, what string, how access, partial bool) result {
 	r := result{outcome: failed, err: err}
 	var pathErr *fs.PathError
 	switch {
 	case errors.Is(err, fs.ErrPermission) && errors.As(err, &pathErr):
-		r.text = fmt.Sprintf("Permission denied: %s can not be written by %s, the user the terminals run as.",
-			pathErr.Path, d.user)
+		verb := "written"
+		if how == read {
+			verb = "read"
+		}
+		r.text = fmt.Sprintf("Permission denied: %s can not be %s by %s, the user the terminals run as.",
+			pathErr.Path, verb, d.user)
 	case errors.As(err, &pathErr):
 		r.text = fmt.Sprintf("%s failed: %s.", what, pathErr.Err)
 	default:

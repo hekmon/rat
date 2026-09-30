@@ -130,8 +130,11 @@ func TestWriteFileRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectTool(t, session, "write_file", map[string]any{"path": locked + "/a.txt", "content": "x"}, true,
-		"Permission denied: "+locked+"/a.txt can not be written by "+me.Username+", the user the terminals run as.")
+	// no permission is denied to root
+	if os.Geteuid() != 0 {
+		expectTool(t, session, "write_file", map[string]any{"path": locked + "/a.txt", "content": "x"}, true,
+			"Permission denied: "+locked+"/a.txt can not be written by "+me.Username+", the user the terminals run as.")
+	}
 
 	var limit syscall.Rlimit
 	if err = syscall.Getrlimit(syscall.RLIMIT_FSIZE, &limit); err != nil {
