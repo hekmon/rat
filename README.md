@@ -29,12 +29,12 @@ with it.
 
 ## Not a tmux MCP server
 
-rat uses tmux as its terminal emulator: tmux renders what programs display, and rat reads the
+RAT uses tmux as its terminal emulator: tmux renders what programs display, and RAT reads the
 rendered screen. That is all agents get from tmux. They see no tmux session, pane, option nor
-command, but a few tools, each serving a purpose, which rat composes out of tmux (and out of its
+command, but a few tools, each serving a purpose, which RAT composes out of tmux (and out of its
 own file access) rather than forwarding tmux and leaving agents to assemble it: fewer tools,
-fewer options, less context spent. The tmux server is rat's own, started with no user
-configuration, for the same terminals on every machine, and stopped with rat.
+fewer options, less context spent. The tmux server is RAT's own, started with no user
+configuration, for the same terminals on every machine, and stopped with RAT.
 
 ## Tools
 
@@ -62,7 +62,7 @@ terminals are on another machine, and sending a command does not wait for it.
 Paths are absolute or start with `~/`. What `read_window` and `read_file` return is bounded by
 the read budget of ratd (64 KiB by default, `--read-budget`): a longer output is read a range at
 a time. `list_windows`, `read_window` and `read_file` only read; the others act on the terminals
-or the files, and only `send_text` and `send_keys` reach beyond rat, through what runs in the
+or the files, and only `send_text` and `send_keys` reach beyond RAT, through what runs in the
 terminals.
 
 ## Components
@@ -155,14 +155,14 @@ cp -r bundle-prod/server /etc/rat/prod/ && chown -R rat /etc/rat/prod
 ```ini
 # /etc/systemd/system/ratd-prod.service
 [Unit]
-Description=rat: persistent terminals for agents, tenant prod
+Description=RAT: persistent terminals for agents, tenant prod
 # the address of --listen must be up when ratd binds it, or ratd exits: a VPN address needs
 # the unit of the VPN before this one as well (After=wg-quick@wg0.service)
 Wants=network-online.target
 After=network-online.target
 
 [Service]
-# a Unix user for rat alone: what agents do is bounded by it
+# a Unix user for RAT alone: what agents do is bounded by it
 User=rat
 ExecStart=/usr/local/bin/ratd --bundle /etc/rat/prod/server --listen :7281
 # the default, and what the kill switch relies on: stopping the service kills every process
@@ -295,14 +295,14 @@ to a server; the bundle stands for `authorized_keys`, but closed:
 Unlike HTTPS on the web, the client does not check the name of the host it reaches: certificates
 carry no address, as both sides know each other beforehand, and presenting the certificate of the
 bundle proves being its ratd, wherever it is reached (a tunnel, another address). Most harnesses
-can not accept this, nor present a certificate: rat does it for them. And unlike SSH, no session
+can not accept this, nor present a certificate: RAT does it for them. And unlike SSH, no session
 is tied to a connection: the terminals keep running whether agents are connected or not, until
 the service stops.
 
 ### Deploying safely
 
 rat is not a sandbox: terminals run as the user running ratd, and an agent can do whatever that
-user can. Tenants and sessions keep agents apart from mistakes, not from a malicious agent. rat
+user can. Tenants and sessions keep agents apart from mistakes, not from a malicious agent. RAT
 enforces what it can (mutual TLS, bounded reads, terminals free of your configuration), and
 leaves the rest to how you deploy it:
 
@@ -310,7 +310,7 @@ leaves the rest to how you deploy it:
   mistaken command, or an instruction an agent read in a web page or a file, and the machine is
   lost. Unless the machine is meant to be the agent's (a machine you can lose, given to it whole),
   run ratd as an unprivileged user (see Deployment).
-- **A Unix user for rat, and for nothing else.** What agents do is bounded by what this user can
+- **A Unix user for RAT, and for nothing else.** What agents do is bounded by what this user can
   do: give it none of your own files, no password, and no login but ratd (no login shell, and
   sshd refusing it: see Deployment). Its tenants keep their agents apart from mistakes only (see
   Users, tenants and sessions).
@@ -358,17 +358,17 @@ leaves the rest to how you deploy it:
 
 ## Your shell configuration
 
-Terminals run bash as a login shell, which reads the bash startup files of the user running rat
-(`~/.bash_profile`, `~/.profile`…). rat enforces what it relies on, but a startup file can still
+Terminals run bash as a login shell, which reads the bash startup files of the user running RAT
+(`~/.bash_profile`, `~/.profile`…). RAT enforces what it relies on, but a startup file can still
 defeat it: one assigning `PROMPT_COMMAND` (rather than adding to it) turns off what makes a
-pasted text wait for Enter, and each of its lines then runs as soon as it is pasted. rat checks
-this when it starts and warns, but does not refuse to run. A startup file changed while rat runs
+pasted text wait for Enter, and each of its lines then runs as soon as it is pasted. RAT checks
+this when it starts and warns, but does not refuse to run. A startup file changed while RAT runs
 is only checked at its next start.
 
 ## Requirements
 
 - **Go 1.27 or later**, only to build from source.
-- **tmux 3.3 or later.** 3.3a (Debian 12) is the oldest version rat is tested with: older ones
-  behave differently in ways rat relies on, and are not supported.
+- **tmux 3.3 or later.** 3.3a (Debian 12) is the oldest version RAT is tested with: older ones
+  behave differently in ways RAT relies on, and are not supported.
 - **bash 4.4 or later**, which terminals run. macOS ships bash 3.2: install a recent one
   (`brew install bash`) and make sure it comes first in the PATH of rat.
