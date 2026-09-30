@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hekmon/rat/cmd/ratd/connect"
+	"github.com/hekmon/rat/connect"
 	"github.com/hekmon/rat/mtls"
 	"github.com/hekmon/rat/tmux"
 	"github.com/urfave/cli/v3"

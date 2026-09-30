@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hekmon/rat/cmd/ratd/connect"
+	"github.com/hekmon/rat/connect"
 	"github.com/hekmon/rat/mtls"
 	"github.com/hekmon/rat/tmux"
 	"github.com/modelcontextprotocol/go-sdk/mcp"

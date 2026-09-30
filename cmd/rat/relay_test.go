@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hekmon/rat/cmd/ratd/connect"
+	"github.com/hekmon/rat/internal/flags"
 	"github.com/hekmon/rat/mtls"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -159,7 +159,7 @@ func startRat(t *testing.T, bundle, addr string, level slog.Level) *ratProcess {
 	p := &ratProcess{stdin: stdinWriter, stdout: bufio.NewReader(stdoutReader), stdoutReader: stdoutReader,
 		logs: &logBuffer{}, done: make(chan error, 1)}
 	logger := slog.New(slog.NewTextHandler(p.logs, &slog.HandlerOptions{Level: level}))
-	target := connect.Target{Server: addr, Bundle: mtls.ClientDir(bundle, "alice")}
+	target := flags.Target{Server: addr, Bundle: mtls.ClientDir(bundle, "alice")}
 	go func() {
 		p.done <- run(context.Background(), logger, target, stdinReader, stdoutWriter)
 		_ = stdoutWriter.Close()
@@ -423,7 +423,7 @@ func TestRelayEndOfInput(t *testing.T) {
 // client certificate.
 func TestRunServerDirectory(t *testing.T) {
 	bundle := newBundle(t)
-	err := run(context.Background(), slog.New(slog.DiscardHandler), connect.Target{Server: "h:1", Bundle: mtls.ServerDir(bundle)},
+	err := run(context.Background(), slog.New(slog.DiscardHandler), flags.Target{Server: "h:1", Bundle: mtls.ServerDir(bundle)},
 		strings.NewReader(""), io.Discard)
 	if !errors.Is(err, mtls.ErrRole) {
 		t.Errorf("expected mtls.ErrRole, got %v", err)

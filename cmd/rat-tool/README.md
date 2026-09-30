@@ -42,8 +42,8 @@ scripts rely on the exit code.
 ## check
 
 Checks a running ratd from a client directory, with the flags of rat, declared once in package
-`cmd/ratd/connect`: a harness command line is checked by copying it. Step by step, stopping
-at the first failure with a message proper to that step:
+`internal/flags`: a harness command line is checked by copying it. Step by step, stopping at the
+first failure with a message proper to that step:
 
 1. **Files**: the checks of `bundle inspect`.
 2. **Network**: the address answers.

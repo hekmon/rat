@@ -10,8 +10,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hekmon/rat/cmd/ratd/connect"
 	"github.com/hekmon/rat/cmd/ratd/tools"
+	"github.com/hekmon/rat/connect"
+	"github.com/hekmon/rat/internal/flags"
 	"github.com/hekmon/rat/mtls"
 	"github.com/urfave/cli/v3"
 )
@@ -29,7 +30,7 @@ func command(stdin io.Reader, stdout, logs io.Writer) *cli.Command {
 	return &cli.Command{
 		Name:  "rat",
 		Usage: "relay a harness's stdio MCP messages to ratd, over mutual TLS",
-		Flags: append(connect.Flags(), &cli.StringFlag{
+		Flags: append(flags.Flags(), &cli.StringFlag{
 			Name:  "log-level",
 			Usage: "the minimum level of the logs: debug, info, warn or error",
 			Value: "info",
@@ -42,7 +43,7 @@ func command(stdin io.Reader, stdout, logs io.Writer) *cli.Command {
 			logger := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: level}))
 			ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, os.Interrupt)
 			defer stop()
-			return run(ctx, logger, connect.FromCommand(cmd), stdin, stdout)
+			return run(ctx, logger, flags.FromCommand(cmd), stdin, stdout)
 		},
 	}
 }
@@ -51,7 +52,7 @@ func command(stdin io.Reader, stdout, logs io.Writer) *cli.Command {
 // stdin ends or ctx is done. It loads and checks the client directory first, failing while the
 // harness still shows it: ratd itself is only reached by the first message, so that a ratd briefly
 // down does not fail the startup of the harness.
-func run(ctx context.Context, logger *slog.Logger, target connect.Target, stdin io.Reader, stdout io.Writer) error {
+func run(ctx context.Context, logger *slog.Logger, target flags.Target, stdin io.Reader, stdout io.Writer) error {
 	side, err := mtls.Load(target.Bundle)
 	if err != nil {
 		return fmt.Errorf("bundle: %w", err)

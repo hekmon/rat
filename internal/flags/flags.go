@@ -1,20 +1,19 @@
-package connect
+// Package flags holds the command line flags of the clients of ratd: the ratd to reach and the
+// client directory to present to it. They are declared once, for rat and rat-tool check, so that a
+// harness command line is checked by copying it, with the same names and the same checks. The
+// server has no default, as which machine to reach is the whole point of the configuration.
+//
+// Internal: package connect, which programs outside rat import, gets no dependency on the command
+// line library.
+package flags
 
 import (
 	"fmt"
 	"net"
-	"net/url"
 	"strconv"
 
+	"github.com/hekmon/rat/connect"
 	"github.com/urfave/cli/v3"
-)
-
-const (
-	// Path is the only path ratd serves: the convention of the MCP specification and of the SDK.
-	Path = "/mcp"
-	// DefaultPort is the port ratd listens on unless told otherwise: 7281 reads "RAT!" on a phone
-	// keypad.
-	DefaultPort = "7281"
 )
 
 // Names of the flags.
@@ -56,7 +55,7 @@ func checkServer(server string) error {
 	}
 	if err != nil {
 		return fmt.Errorf("invalid server %q, expected HOST:PORT (ratd listens on port %s by default): %w", server,
-			DefaultPort, err)
+			connect.DefaultPort, err)
 	}
 	return nil
 }
@@ -72,9 +71,4 @@ type Target struct {
 // FromCommand returns the target named by the flags of cmd, checked while parsing them.
 func FromCommand(cmd *cli.Command) Target {
 	return Target{Server: cmd.String(ServerFlag), Bundle: cmd.String(BundleFlag)}
-}
-
-// Endpoint returns the URL of the MCP endpoint of the target.
-func (t Target) Endpoint() string {
-	return (&url.URL{Scheme: "https", Host: t.Server, Path: Path}).String()
 }

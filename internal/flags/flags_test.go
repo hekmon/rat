@@ -1,4 +1,4 @@
-package connect
+package flags
 
 import (
 	"context"
@@ -23,22 +23,18 @@ func parse(args ...string) (Target, error) {
 	return target, err
 }
 
-// TestFlags guards the flags naming a ratd, long and short, and the endpoint they lead to: https,
-// the path of ratd, an IPv6 address between brackets.
+// TestFlags guards the flags naming a ratd, long and short, an IPv6 address between brackets.
 func TestFlags(t *testing.T) {
 	for _, tc := range []struct {
 		args     []string
 		expected Target
-		endpoint string
 	}{
-		{[]string{"--server", "host:7281", "--bundle", "dir"}, Target{"host:7281", "dir"}, "https://host:7281/mcp"},
-		{[]string{"-s", "[::1]:7281", "-b", "dir"}, Target{"[::1]:7281", "dir"}, "https://[::1]:7281/mcp"},
-		{[]string{"-s", "10.0.0.1:1", "-b", "dir"}, Target{"10.0.0.1:1", "dir"}, "https://10.0.0.1:1/mcp"},
+		{[]string{"--server", "host:7281", "--bundle", "dir"}, Target{"host:7281", "dir"}},
+		{[]string{"-s", "[::1]:7281", "-b", "dir"}, Target{"[::1]:7281", "dir"}},
+		{[]string{"-s", "10.0.0.1:1", "-b", "dir"}, Target{"10.0.0.1:1", "dir"}},
 	} {
-		target, err := parse(tc.args...)
-		if err != nil || target != tc.expected || target.Endpoint() != tc.endpoint {
-			t.Errorf("%v: expected %+v and %s, got %+v and %s, %v", tc.args, tc.expected, tc.endpoint, target,
-				target.Endpoint(), err)
+		if target, err := parse(tc.args...); err != nil || target != tc.expected {
+			t.Errorf("%v: expected %+v, got %+v, %v", tc.args, tc.expected, target, err)
 		}
 	}
 }

@@ -18,8 +18,9 @@ import (
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
-	"github.com/hekmon/rat/cmd/ratd/connect"
 	"github.com/hekmon/rat/cmd/ratd/tools"
+	"github.com/hekmon/rat/connect"
+	"github.com/hekmon/rat/internal/flags"
 	"github.com/hekmon/rat/mtls"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 )
@@ -46,7 +47,7 @@ var requestTimeout = 30 * time.Second
 type relay struct {
 	logger   *slog.Logger
 	client   *http.Client
-	target   connect.Target
+	target   flags.Target
 	endpoint string
 	// schemas are the input schemas of the tools of ratd, for the headers of annotated arguments
 	schemas map[string]*jsonschema.Schema
@@ -72,9 +73,9 @@ type call struct {
 }
 
 // newRelay returns a relay to the ratd of target, through client, writing the answers to out.
-func newRelay(logger *slog.Logger, client *http.Client, target connect.Target, schemas map[string]*jsonschema.Schema,
+func newRelay(logger *slog.Logger, client *http.Client, target flags.Target, schemas map[string]*jsonschema.Schema,
 	out io.Writer) *relay {
-	return &relay{logger: logger, client: client, target: target, endpoint: target.Endpoint(), schemas: schemas,
+	return &relay{logger: logger, client: client, target: target, endpoint: connect.Endpoint(target.Server), schemas: schemas,
 		out: out, calls: map[jsonrpc.ID]*call{}}
 }
 

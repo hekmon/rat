@@ -27,9 +27,10 @@ at once, and to know what they leave behind.
   certificate.
 - **`rat-tool`**: the utility. It creates and inspects bundles, and checks a running ratd end to
   end. It holds every secondary feature, so that ratd and rat keep a single mode each.
-- **`cmd/ratd/connect`**: how a client reaches ratd, as ratd defines it: the path and default
-  port it serves, and the flags naming a ratd and a client directory, shared by rat and
-  `rat-tool check`.
+- **`connect` package**: how a client reaches ratd: the defaults ratd and its clients share (path,
+  port), the HTTP client presenting a client certificate, for rat, rat-tool and Go harnesses
+  connecting directly. The flags naming a ratd and a client directory are in `internal/flags`,
+  shared by rat and `rat-tool check`.
 - **`cmd/ratd/tools`**: the inputs of ratd's tools (names, types, schemas), which ratd serves and
   rat reads to build the requests it relays.
 
