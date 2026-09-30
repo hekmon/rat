@@ -22,8 +22,10 @@ with it.
   full-screen programs, as a human would.
 - **Files, without a terminal.** Agents write and read whole files directly: exact content,
   nothing on a screen, and nothing unchecked nor oversized reaching their context.
-- **Built to be remote.** One service per tenant, reached over HTTP with mutual TLS on every
-  address, loopback included: it hands out a shell.
+- **Built to be remote, and to be reached by no one else.** One service per tenant, reached over
+  HTTPS with mutual TLS only, on every address, loopback included: without a certificate of its
+  bundle, no request even reaches it, and there is no password to guess nor to steal. One command
+  stops the service, its terminals and what runs in them.
 
 ## Not a tmux MCP server
 
@@ -68,7 +70,8 @@ terminals.
 - **ratd**: the MCP server, and the entry point. A standard MCP server (Streamable HTTP): a
   harness written with any MCP SDK connects to it, presenting a client certificate.
 - **rat**: an adapter for the harnesses that can not present a client certificate (most of them
-  today): a stdio MCP server, started by the harness, relaying to ratd.
+  today): a stdio MCP server, started by the harness, relaying to ratd over HTTPS and presenting
+  the client certificate in its place.
 - **rat-tool**: creates and inspects certificate bundles, and checks a running ratd.
 
 A Go program can reach ratd directly with package `connect`, which builds the transport of the Go
@@ -107,8 +110,8 @@ rat-tool bundle generate --tenant prod --client alice --output bundle-prod
 ```
 
 Copy `bundle-prod/server` to the server, and `bundle-prod/clients/alice` to the machine of the
-harness, each directory whole, and to that side only: the key of a client grants a shell. Run
-ratd with the server directory (as a service: see Deployment):
+harness, each directory whole, and to that side only: a client key is what lets its holder in,
+and nothing else does. Run ratd with the server directory (as a service: see Deployment):
 
 ```sh
 ratd --bundle /etc/rat/prod/server
