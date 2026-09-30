@@ -138,7 +138,9 @@ host name, can target `https://host:7281/mcp` directly, without rat.
 
 ## Deployment
 
-ratd is meant to run as a service, under a Unix user of its own (see Security). With systemd:
+ratd is meant to run as a service, under a Unix user of its own (see Security).
+
+### Linux, with systemd
 
 ```sh
 useradd --create-home --shell /bin/bash rat
@@ -185,11 +187,66 @@ journalctl -u ratd-prod -f
 - **Logs** go to the journal: every tool call (the client, the tool, the outcome, never the
   content of what agents type or read), the start and stop, the bundle expiry warnings.
 
+### macOS, with launchd
+
+Create a standard user named `rat` (System Settings, Users & Groups; not an administrator), and
+install the bundle as on Linux. Then, as a daemon of the system running as that user, in
+`/Library/LaunchDaemons/com.github.hekmon.rat.prod.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.github.hekmon.rat.prod</string>
+  <key>UserName</key>
+  <string>rat</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/ratd</string>
+    <string>--bundle</string>
+    <string>/etc/rat/prod/server</string>
+    <string>--listen</string>
+    <string>:7281</string>
+  </array>
+  <!-- launchd starts jobs with /usr/bin:/bin:/usr/sbin:/sbin, whose bash (3.2) ratd refuses:
+       the one of Homebrew must come first. HOME is where terminals start. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/rat</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardErrorPath</key>
+  <string>/Users/rat/Library/Logs/ratd-prod.log</string>
+</dict>
+</plist>
+```
+
+```sh
+sudo chown root:wheel /Library/LaunchDaemons/com.github.hekmon.rat.prod.plist
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.github.hekmon.rat.prod.plist
+tail -f /Users/rat/Library/Logs/ratd-prod.log
+```
+
+- **The kill switch is partial.** `sudo launchctl bootout system/com.github.hekmon.rat.prod`
+  stops ratd, its endpoint first, the terminals and the commands they run in the foreground. But
+  launchd only ends the process group of the service, not what it started: commands detached from
+  their terminals (`nohup`, `setsid`, daemons) outlive it (measured: a `nohup` command started by
+  an agent is left running). macOS has nothing like the control groups of systemd. With a user
+  for rat alone, end them all after the service: `sudo pkill -KILL -u rat`.
+- **No `KeepAlive`, on purpose**, as there is no `Restart=` on Linux.
+- **One plist per tenant**, each with its label, bundle and port.
+
 ## Security
 
 ratd hands out a shell: who gets in is decided by mutual TLS, and what they can do once in by the
-Unix user it runs as. Stopping ratd leaves no terminal and no way in; run as a service, it also
-stops what agents detached from their terminals.
+Unix user it runs as. Stopping ratd leaves no terminal and no way in; run as a service with
+systemd, it also stops what agents detached from their terminals (on macOS, see Deployment).
 
 ### Mutual TLS
 
@@ -267,9 +324,10 @@ leaves the rest to how you deploy it:
   session after the client).
   The terminals are the agents': what you type would reach them, and a window you resize stays so.
 - **What outlives the service.** Stopping the service stops the terminals and whatever agents
-  started, detached or not (see Deployment). What an agent set up to outlive it, as the user
-  (crontab, user services, `~/.ssh/authorized_keys`, files), a dedicated user lets you find all at
-  once, and cut by locking the account.
+  started, detached or not (with systemd; on macOS, end what is left with `pkill -u rat`, see
+  Deployment). What an agent set up to outlive it, as the user (crontab, user services,
+  `~/.ssh/authorized_keys`, files), a dedicated user lets you find all at once, and cut by
+  locking the account.
 
 ## Your shell configuration
 
