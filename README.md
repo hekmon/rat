@@ -146,7 +146,8 @@ ratd is meant to run as a service, under a Unix user of its own (see Security).
 ### Linux, with systemd
 
 ```sh
-useradd --create-home --shell /bin/bash rat
+useradd --create-home --shell /usr/sbin/nologin rat
+echo 'DenyUsers rat' > /etc/ssh/sshd_config.d/rat.conf && systemctl reload sshd
 install -d -m 700 -o rat /etc/rat/prod
 cp -r bundle-prod/server /etc/rat/prod/ && chown -R rat /etc/rat/prod
 ```
@@ -178,6 +179,16 @@ systemctl enable --now ratd-prod
 journalctl -u ratd-prod -f
 ```
 
+- **The only door is ratd's.** `useradd` gives the account no password (nothing matches the locked
+  field it leaves: sshd refuses an empty password and a guess alike, password authentication on
+  or not) and, with `--shell`, no login shell, which the terminals do not need: they run the bash
+  rat finds in its PATH, whatever the shell of the account. What closes ssh is `DenyUsers`: an
+  agent can add a key to `~/.ssh/authorized_keys`, which a login shell turns into a shell, and a
+  `nologin` one still into a tunnel (`ssh -N -L` needs no shell). `DenyUsers` refuses the account
+  before it authenticates, key, password and tunnel alike (measured with OpenSSH 9.2 on Debian 12;
+  leaving it out of an `AllowUsers` list does the same). Check with `sshd -T | grep -i denyusers`.
+  Reach the account with `sudo -u rat`, as the attach command does (see Security): it runs the
+  command itself, where `su -` and `sudo -i` run the login shell, and are refused.
 - **The kill switch.** `systemctl stop ratd-prod` stops ratd, its endpoint first, the terminals
   and the commands they run, and whatever else is left in the service: commands detached from
   their terminals included (measured with systemd 252: a `nohup` command started by an agent is
@@ -193,8 +204,11 @@ journalctl -u ratd-prod -f
 ### macOS, with launchd
 
 Create a standard user named `rat` (System Settings, Users & Groups; not an administrator), and
-install the bundle as on Linux. Then, as a daemon of the system running as that user, in
-`/Library/LaunchDaemons/com.github.hekmon.rat.prod.plist`:
+install the bundle as on Linux. Unlike `useradd`, this gives the user a password and a login
+shell: if Remote Login is on, leave `rat` out of the users it allows (General, Sharing, Remote
+Login), and take its login shell away, which the terminals do not need:
+`sudo dscl . -create /Users/rat UserShell /usr/bin/false`. Then, as a daemon of the system
+running as that user, in `/Library/LaunchDaemons/com.github.hekmon.rat.prod.plist`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -294,8 +308,9 @@ leaves the rest to how you deploy it:
   lost. Unless the machine is meant to be the agent's (a machine you can lose, given to it whole),
   run ratd as an unprivileged user (see Deployment).
 - **A Unix user for rat, and for nothing else.** What agents do is bounded by what this user can
-  do: give it no password, no login but what ratd runs, and none of your own files. Its tenants
-  keep their agents apart from mistakes only (see Users, tenants and sessions).
+  do: give it none of your own files, no password, and no login but ratd (no login shell, and
+  sshd refusing it: see Deployment). Its tenants keep their agents apart from mistakes only (see
+  Users, tenants and sessions).
 - **No sudo, or sudo for named commands only.** When agents must run privileged commands, grant
   the user these commands only, never every command (`ALL`), in a file of `/etc/sudoers.d` edited
   with `visudo -f`, which refuses a file with an error:
@@ -330,7 +345,9 @@ leaves the rest to how you deploy it:
   started, detached or not (with systemd; on macOS, end what is left with `pkill -u rat`, see
   Deployment). What an agent set up to outlive it, as the user (crontab, user services,
   `~/.ssh/authorized_keys`, files), a dedicated user lets you find all at once, and cut by
-  locking the account.
+  locking the account: `usermod --expiredate 1 rat`, which expires the account itself, not only
+  its password (`passwd -l`, which stops neither cron jobs nor ssh keys): cron then runs none of
+  its jobs, and sshd refuses it even without `DenyUsers` (measured with Debian 12).
 
 ## Your shell configuration
 
