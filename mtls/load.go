@@ -19,7 +19,8 @@ import (
 // The checks of Load, in their order. An invalid name wraps names.ErrInvalid.
 var (
 	// ErrFiles is returned for a directory not holding the files of one side of a bundle: ca.crt,
-	// then server.crt and server.key, or client.crt and client.key, each a single PEM block.
+	// then server.crt and server.key, or client.crt and client.key, each a single PEM block. Parse
+	// returns it for a content that is not a single PEM block of its kind.
 	ErrFiles = errors.New("not the directory of a side of a bundle")
 	// ErrKeyPermissions is returned for a private key readable by others than its owner: it is a
 	// credential (a client key grants a shell). Not checked on Windows, where modes mean nothing.
@@ -36,7 +37,8 @@ var (
 	ErrValidity = errors.New("certificate not valid now")
 )
 
-// Check is a check of Load, for a caller reporting each (rat-tool).
+// Check is a check of Load, for a caller reporting each (rat-tool). Parse runs them too, but for
+// the permissions of the key.
 type Check struct {
 	// Name tells what the check requires, for humans.
 	Name string
@@ -58,8 +60,8 @@ func Checks() []Check {
 	}
 }
 
-// Side is the directory of a side of a bundle, loaded and checked: what ratd, or one of its
-// clients, holds.
+// Side is a side of a bundle, loaded from its directory or parsed from its contents, and checked:
+// what ratd, or one of its clients, holds.
 type Side struct {
 	// Role is the side the directory is for, named by its certificate file and carried by its
 	// certificate.
@@ -101,6 +103,38 @@ func Load(dir string) (*Side, error) {
 	return load(dir, time.Now())
 }
 
+// Parse returns the side role of a bundle from the contents of its PEM files: the CA certificate,
+// the certificate of the side and its key. It is Load for credentials that are not in a directory
+// (a secret store, an embedded asset): the same checks, in the same order, apart from what only
+// files have. The first, ErrFiles, checks each content is a single PEM block of its kind; the
+// permissions of a key (ErrKeyPermissions) are its holder's concern. The side is the one role
+// names, which a directory tells by the names of its files.
+func Parse(role Role, ca, certificate, key []byte) (*Side, error) {
+	return parse(role, ca, certificate, key, time.Now())
+}
+
+// parse is Parse at the time now, which tests move.
+func parse(role Role, caPEM, certPEM, keyPEM []byte, now time.Time) (*Side, error) {
+	if role != Server && role != Client {
+		return nil, fmt.Errorf("%w: unknown role %d", ErrRole, role)
+	}
+	// 1. files, as contents
+	labels := sideLabels{ca: "the CA certificate", cert: "the certificate", key: "the key"}
+	ca, err := parseCertificate(caPEM, labels.ca)
+	if err != nil {
+		return nil, err
+	}
+	cert, err := parseCertificate(certPEM, labels.cert)
+	if err != nil {
+		return nil, err
+	}
+	key, err := parseKey(keyPEM, labels.key)
+	if err != nil {
+		return nil, err
+	}
+	return checkSide(role, ca, cert, key, labels, now)
+}
+
 // load is Load at the time now, which tests move.
 func load(dir string, now time.Time) (*Side, error) {
 	// 1. files
@@ -125,26 +159,37 @@ func load(dir string, now time.Time) (*Side, error) {
 	if err = checkKeyPermissions(keyPath); err != nil {
 		return nil, err
 	}
+	return checkSide(role, ca, cert, key, sideLabels{ca: caFile, cert: certFile(role), key: keyPath}, now)
+}
+
+// sideLabels name the parts of a side in errors: file names for Load, their kinds for Parse.
+type sideLabels struct {
+	ca, cert, key string
+}
+
+// checkSide runs the checks of Load after the files (3 to 7) on the parts of a side of role, read
+// and parsed, and returns the side.
+func checkSide(role Role, ca, cert *x509.Certificate, key crypto.Signer, labels sideLabels, now time.Time) (*Side, error) {
 	// 3. key
 	if public, ok := key.Public().(interface{ Equal(crypto.PublicKey) bool }); !ok || !public.Equal(cert.PublicKey) {
-		return nil, fmt.Errorf("%w: %s does not match %s", ErrKeyMismatch, keyPath, certFile(role))
+		return nil, fmt.Errorf("%w: %s does not match %s", ErrKeyMismatch, labels.key, labels.cert)
 	}
 	// 4. CA. CheckSignatureFrom also refuses a signer that is not a CA (basic constraints) or not
 	// allowed to sign certificates (key usage): ca.crt needs no check of its own.
-	if err = cert.CheckSignatureFrom(ca); err != nil {
-		return nil, fmt.Errorf("%w: %s is not signed by %s: %w", ErrNotSignedByCA, certFile(role), caFile, err)
+	if err := cert.CheckSignatureFrom(ca); err != nil {
+		return nil, fmt.Errorf("%w: %s is not signed by %s: %w", ErrNotSignedByCA, labels.cert, labels.ca, err)
 	}
 	// 5. role: exactly the one of the side, so that a client can not run a server with its
 	// certificate, nor the other way round. Stricter than the verification of Go (TLS handshakes),
 	// which accepts a certificate carrying both roles.
 	if len(cert.ExtKeyUsage) != 1 || cert.ExtKeyUsage[0] != role.usage() {
-		return nil, fmt.Errorf("%w: %s is not a %s certificate only", ErrRole, certFile(role), role)
+		return nil, fmt.Errorf("%w: %s is not a %s certificate only", ErrRole, labels.cert, role)
 	}
 	// 6. validity
 	for _, c := range []struct {
 		file string
 		cert *x509.Certificate
-	}{{certFile(role), cert}, {caFile, ca}} {
+	}{{labels.cert, cert}, {labels.ca, ca}} {
 		if now.Before(c.cert.NotBefore) {
 			return nil, fmt.Errorf("%w: %s is not valid before %s", ErrValidity, c.file, c.cert.NotBefore.Format(time.RFC3339))
 		}
@@ -153,11 +198,11 @@ func load(dir string, now time.Time) (*Side, error) {
 		}
 	}
 	// 7. names
-	if err = names.Check(cert.Subject.CommonName); err != nil {
-		return nil, fmt.Errorf("%s: %w", certFile(role), err)
+	if err := names.Check(cert.Subject.CommonName); err != nil {
+		return nil, fmt.Errorf("%s: %w", labels.cert, err)
 	}
-	if err = names.Check(ca.Subject.CommonName); err != nil {
-		return nil, fmt.Errorf("%s: %w", caFile, err)
+	if err := names.Check(ca.Subject.CommonName); err != nil {
+		return nil, fmt.Errorf("%s: %w", labels.ca, err)
 	}
 	return &Side{
 		Role:   role,
@@ -194,48 +239,72 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-// readPEM returns the content of the file at path, which must be a single PEM block of pemType.
-func readPEM(path, pemType string) ([]byte, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrFiles, err)
-	}
+// decodePEM returns the content of the single PEM block of pemType data holds, label naming data
+// in errors.
+func decodePEM(data []byte, pemType, label string) ([]byte, error) {
 	block, rest := pem.Decode(data)
 	if block == nil || block.Type != pemType {
-		return nil, fmt.Errorf("%w: %s does not hold a PEM %s", ErrFiles, path, pemType)
+		return nil, fmt.Errorf("%w: %s does not hold a PEM %s", ErrFiles, label, pemType)
 	}
 	if len(bytes.TrimSpace(rest)) > 0 {
-		return nil, fmt.Errorf("%w: %s holds more than a PEM %s", ErrFiles, path, pemType)
+		return nil, fmt.Errorf("%w: %s holds more than a PEM %s", ErrFiles, label, pemType)
 	}
 	return block.Bytes, nil
 }
 
-func readCertificate(path string) (*x509.Certificate, error) {
-	der, err := readPEM(path, "CERTIFICATE")
+// parseCertificate returns the certificate of the PEM data, label naming it in errors.
+func parseCertificate(data []byte, label string) (*x509.Certificate, error) {
+	der, err := decodePEM(data, "CERTIFICATE", label)
 	if err != nil {
 		return nil, err
 	}
 	cert, err := x509.ParseCertificate(der)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %w", ErrFiles, path, err)
+		return nil, fmt.Errorf("%w: %s: %w", ErrFiles, label, err)
 	}
 	return cert, nil
 }
 
-func readKey(path string) (crypto.Signer, error) {
-	der, err := readPEM(path, "PRIVATE KEY")
+// parseKey returns the signing key of the PEM data, label naming it in errors.
+func parseKey(data []byte, label string) (crypto.Signer, error) {
+	der, err := decodePEM(data, "PRIVATE KEY", label)
 	if err != nil {
 		return nil, err
 	}
 	key, err := x509.ParsePKCS8PrivateKey(der)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %w", ErrFiles, path, err)
+		return nil, fmt.Errorf("%w: %s: %w", ErrFiles, label, err)
 	}
 	signer, ok := key.(crypto.Signer)
 	if !ok {
-		return nil, fmt.Errorf("%w: %s does not hold a signing key", ErrFiles, path)
+		return nil, fmt.Errorf("%w: %s does not hold a signing key", ErrFiles, label)
 	}
 	return signer, nil
+}
+
+// readFile returns the content of the file at path.
+func readFile(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrFiles, err)
+	}
+	return data, nil
+}
+
+func readCertificate(path string) (*x509.Certificate, error) {
+	data, err := readFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return parseCertificate(data, path)
+}
+
+func readKey(path string) (crypto.Signer, error) {
+	data, err := readFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return parseKey(data, path)
 }
 
 // checkKeyPermissions refuses a key readable by others than its owner, as ssh does: a key copied

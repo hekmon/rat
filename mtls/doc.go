@@ -25,12 +25,14 @@
 // check the server certificate the same way with serverAuth, but not the host name they reach:
 // it carries no address. Each side also checks its own directory when loading it ([Load]: files,
 // key permissions, key matching the certificate, CA, role, validity, names), to fail at startup
-// rather than at the first connection; rat-tool runs the same checks for humans.
+// rather than at the first connection; rat-tool runs the same checks for humans. [Parse] runs them
+// on credentials that are not in a directory (a secret store, an embedded asset), but for what
+// only files have.
 //
 // # TLS configurations
 //
-// [ServerConfig] and [ClientConfig] build the TLS configuration of each side from its loaded
-// directory, TLS 1.3 only. The client configuration is exported, for Go clients connecting to
+// [ServerConfig] and [ClientConfig] build the TLS configuration of each side from its checked
+// credentials, TLS 1.3 only. The client configuration is exported, for Go clients connecting to
 // ratd directly. [PeerName] tells the name of the peer of a connection: its session for ratd, the
 // tenant for a client.
 package mtls

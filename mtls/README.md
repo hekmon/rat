@@ -203,3 +203,11 @@ reports one line per check, the ones before a failure having passed:
    verification of Go in TLS handshakes, which accepts a certificate carrying both roles.
 6. **Validity**: the certificate and the CA are valid now.
 7. **Names**: the certificate and the CA carry plain names.
+
+Credentials may live elsewhere than in a directory: a secret store, an embedded asset, for a Go
+program connecting to ratd directly. `Parse` takes the contents of the three files and runs the
+same checks, in the same order, but for what only files have: the first checks each content is a
+single PEM block of its kind, and the permissions of a key are the concern of whoever holds it.
+The side is named by the caller, which a directory tells by the names of its files. Contents
+rather than readers: PEM blocks are small, and the standard library takes them so
+(`tls.X509KeyPair`), each caller reading them from wherever they are.
