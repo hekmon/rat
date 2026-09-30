@@ -92,6 +92,24 @@ The server side needs none of this: servers do not check client certificates aga
 name, and with `RequireAndVerifyClientCert` and the CA as `ClientCAs`, Go checks the chain, the
 validity and the clientAuth role by itself.
 
+The client configuration is exported: a Go client connecting to ratd directly reuses it, rather
+than writing these checks again.
+
+## One bundle, one ratd
+
+With no address, the server key is the identity of the tenant: whoever holds it answers as the
+tenant, wherever it runs. A bundle is meant to be served by a single ratd.
+
+ratd detects a second one on the same machine, for the same Unix user: both would use the same
+tmux socket, which the first one holds (see the startup of ratd). It can not detect the others:
+another Unix user has its own socket directory, another machine shares nothing. Two servers
+then answer as the same tenant, each with its own terminals, and an agent finds different
+windows depending on which one it reaches. Keeping a bundle to one machine and one user is left
+to the admin.
+
+Rejected: a lock file named after the certificate, in a directory shared by every user, which
+any user could create first to block the tenant.
+
 ## Algorithms
 
 - **ECDSA P-256**: the widest support among TLS stacks, including those of harnesses connecting
@@ -99,11 +117,34 @@ validity and the clientAuth role by itself.
 - **TLS 1.3 only**: both ends are recent, and nothing older needs negotiating. Certificates only
   need the digital signature key usage: TLS 1.3 key exchange is always ephemeral Diffie-Hellman,
   never encryption with the certificate key.
-- **Long validity** (years): rotating is generating a new bundle when needed, not a schedule
-  that an expiry would impose.
+- **Valid for 10 years, from a day before generation**: rotating is generating a new bundle
+  when needed, not a schedule that an expiry would impose. Starting a day early absorbs clock
+  skew: a client whose clock runs a few minutes late would otherwise reject a bundle it just
+  received, with an error saying little. Rejected: starting at the generation time.
+
+## Expiry
+
+An expired bundle stops every client at once, years after anyone remembers how it was made.
+Every side warns once less than a year remains: ratd at startup and every day, rat at startup
+(on its stderr, which harnesses log), rat-tool when inspecting a bundle or checking a ratd.
+Sysadmins need reminding, often.
 
 ## One directory per side
 
 A bundle is written as one directory for the server and one per client, each holding the CA
-certificate and that side's certificate and key. Each side copies its own directory: mixing the
-files of two bundles is the likeliest mistake, and it only shows as an opaque handshake error.
+certificate and that side's certificate and key:
+
+```
+<output>/
+  server/            ca.crt  server.crt  server.key
+  clients/<name>/    ca.crt  client.crt  client.key
+```
+
+Each side copies its own directory: mixing the files of two bundles is the likeliest mistake,
+and it only shows as an opaque handshake error. Clients have a directory of their own
+(`clients/`), so that a client named `server` does not collide with the server. Keys are
+readable by their owner only, and so are the directories holding them.
+
+Generating never overwrites: an existing output directory is refused, as replacing a bundle
+silently breaks every client deployed with it. Regenerating is a deliberate act: removing the
+directory, or choosing another one.
