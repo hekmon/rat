@@ -116,7 +116,7 @@ ratd gives a tool call, so that a connection hanging is cut rather than waited f
 
 ## Logs
 
-`log/slog`, text handler, on stderr, which harnesses keep: startup (server, tenant, session,
-bundle expiry), relay failures (the method and identifier, the error), expiry warnings, the stop
+`log/slog`, text handler, on stderr, which harnesses keep: startup (version, server, tenant,
+session, bundle expiry), relay failures (the method and identifier, the error), expiry warnings, the stop
 and its reason. At debug level, one line per message (method, identifier, HTTP status,
 duration), and each call canceled. Never the content of a message.

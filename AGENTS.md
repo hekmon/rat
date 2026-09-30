@@ -208,6 +208,8 @@ tests written in advance do not: most pitfalls described in `tmux/README.md` wer
 
 - Exported errors are sentinels named `ErrXxx`, wrapped with `%w`.
 - The three binaries share their command line conventions: `urfave/cli` v3 (long and short
-  flags, the same help), rather than the standard `flag` package, whose flags and help differ.
+  flags, the same help), rather than the standard `flag` package, whose flags and help differ. A
+  flag is given once (`OnlyOnce`), lists aside (`--client`): the last value silently winning would
+  hide a mistake in a copied command line. `--version` tells the version (`internal/version`).
 - Logs go through `log/slog`, text handler, on stderr: readable in `journalctl` and in a
   terminal.

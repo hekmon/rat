@@ -13,6 +13,7 @@ import (
 	"github.com/hekmon/rat/cmd/ratd/tools"
 	"github.com/hekmon/rat/connect"
 	"github.com/hekmon/rat/internal/flags"
+	"github.com/hekmon/rat/internal/version"
 	"github.com/hekmon/rat/mtls"
 	"github.com/urfave/cli/v3"
 )
@@ -28,12 +29,14 @@ func main() {
 // logging to logs. A new one at each call: a command keeps the state of its last run.
 func command(stdin io.Reader, stdout, logs io.Writer) *cli.Command {
 	return &cli.Command{
-		Name:  "rat",
-		Usage: "relay a harness's stdio MCP messages to ratd, over mutual TLS",
+		Name:    "rat",
+		Usage:   "relay a harness's stdio MCP messages to ratd, over mutual TLS",
+		Version: version.String(),
 		Flags: append(flags.Flags(), &cli.StringFlag{
-			Name:  "log-level",
-			Usage: "the minimum level of the logs: debug, info, warn or error",
-			Value: "info",
+			Name:     "log-level",
+			OnlyOnce: true,
+			Usage:    "the minimum level of the logs: debug, info, warn or error",
+			Value:    "info",
 		}),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			var level slog.Level
@@ -72,7 +75,7 @@ func run(ctx context.Context, logger *slog.Logger, target flags.Target, stdin io
 	if err != nil {
 		return err
 	}
-	logger.Info("relaying", "server", target.Server, "tenant", side.Tenant, "session", side.Name,
+	logger.Info("relaying", "version", version.String(), "server", target.Server, "tenant", side.Tenant, "session", side.Name,
 		"bundle_expiry", side.NotAfter())
 	r := newRelay(logger, client, target, schemas, stdout)
 	reason := r.run(ctx, stdin)

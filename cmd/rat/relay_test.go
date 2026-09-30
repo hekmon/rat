@@ -229,7 +229,7 @@ func TestRelay(t *testing.T) {
 			if tc.method != "" && header.Get("Mcp-Name") != "echo" {
 				t.Errorf("expected the tool named in Mcp-Name, got %v", header)
 			}
-			if !strings.Contains(p.logs.String(), `msg=relaying server=`) || !strings.Contains(p.logs.String(), "tenant=t session=alice") {
+			if !strings.Contains(p.logs.String(), `msg=relaying version=`) || !strings.Contains(p.logs.String(), "tenant=t session=alice") {
 				t.Errorf("expected the startup logged:\n%s", p.logs)
 			}
 		})

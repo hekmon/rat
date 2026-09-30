@@ -15,6 +15,7 @@ import (
 
 	"github.com/hekmon/rat/connect"
 	"github.com/hekmon/rat/internal/flags"
+	"github.com/hekmon/rat/internal/version"
 	"github.com/hekmon/rat/mtls"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/urfave/cli/v3"
@@ -189,7 +190,7 @@ func (c *checker) mcp(ctx context.Context) bool {
 	}
 	ctx, cancel := context.WithTimeout(ctx, mcpTimeout)
 	defer cancel()
-	client := mcp.NewClient(&mcp.Implementation{Name: "rat-tool", Version: version()}, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: "rat-tool", Version: version.Module()}, nil)
 	if c.session, err = client.Connect(ctx, transport, nil); err != nil {
 		return c.fail("%v", err)
 	}

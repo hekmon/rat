@@ -54,3 +54,13 @@ func TestFlagsRefused(t *testing.T) {
 		}
 	}
 }
+
+// TestFlagsOnce guards that a flag given twice is refused, rather than the last value silently
+// winning: a copied command line with two servers would check another ratd than the one meant.
+func TestFlagsOnce(t *testing.T) {
+	for _, args := range [][]string{{"-s", "a:1", "-s", "b:2", "-b", "dir"}, {"-s", "a:1", "-b", "one", "--bundle", "two"}} {
+		if _, err := parse(args...); err == nil || !strings.Contains(err.Error(), "can't duplicate this flag") {
+			t.Errorf("%v: expected the repeated flag refused, got %v", args, err)
+		}
+	}
+}

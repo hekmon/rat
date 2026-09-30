@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"runtime/debug"
 
+	"github.com/hekmon/rat/internal/version"
 	"github.com/urfave/cli/v3"
 )
 
@@ -20,19 +20,12 @@ func main() {
 // of its last run.
 func command() *cli.Command {
 	return &cli.Command{
-		Name:  "rat-tool",
-		Usage: "the utility of rat: certificate bundles, and checking a running ratd",
+		Name:    "rat-tool",
+		Usage:   "the utility of rat: certificate bundles, and checking a running ratd",
+		Version: version.String(),
 		Commands: []*cli.Command{
 			bundleCommand(),
 			checkCommand(),
 		},
 	}
-}
-
-// version returns the version of rat-tool, from its build.
-func version() string {
-	if info, ok := debug.ReadBuildInfo(); ok {
-		return info.Main.Version
-	}
-	return "unknown"
 }

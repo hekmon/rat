@@ -499,8 +499,8 @@ answering, an internal error): the session (the client name), the tool, the wind
 plus what tells the action without its content: the size of a text and whether Enter was
 pressed, the number of keys, the rows of history asked and read (and the size of a screen
 refused), the path and size of a file. Never the content: neither text, nor keys (they can spell
-a password one key at a time), nor files. And the lifecycle: startup (tenant, address, read
-budget, bundle expiry), the bracketed paste check, tmux exits and restarts, the crash budget,
+a password one key at a time), nor files. And the lifecycle: startup (version, tenant, address,
+read budget, bundle expiry), the bracketed paste check, tmux exits and restarts, the crash budget,
 shutdown.
 
 At debug level, one line per MCP request (the session, the method, the duration), whatever the

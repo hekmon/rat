@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hekmon/rat/connect"
+	"github.com/hekmon/rat/internal/version"
 	"github.com/hekmon/rat/mtls"
 	"github.com/hekmon/rat/tmux"
 	"github.com/urfave/cli/v3"
@@ -37,31 +38,36 @@ const expiryCheckInterval = 24 * time.Hour
 // keeps the state of its last run.
 func command(logs io.Writer) *cli.Command {
 	return &cli.Command{
-		Name:  "ratd",
-		Usage: "serve persistent terminals to agents over MCP, with mutual TLS",
+		Name:    "ratd",
+		Usage:   "serve persistent terminals to agents over MCP, with mutual TLS",
+		Version: version.String(),
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:     "bundle",
+				OnlyOnce: true,
 				Aliases:  []string{"b"},
 				Usage:    "the server directory of the bundle of the tenant (rat-tool bundle generate)",
 				Required: true,
 			},
 			&cli.StringFlag{
-				Name:    "listen",
-				Aliases: []string{"l"},
-				Usage:   "the address to listen on",
-				Value:   defaultListen,
+				Name:     "listen",
+				OnlyOnce: true,
+				Aliases:  []string{"l"},
+				Usage:    "the address to listen on",
+				Value:    defaultListen,
 			},
 			&cli.StringFlag{
-				Name:    "read-budget",
-				Aliases: []string{"r"},
-				Usage:   "the most a read of a window or a file sends back, with its unit, 32KiB at least",
-				Value:   "64KiB",
+				Name:     "read-budget",
+				OnlyOnce: true,
+				Aliases:  []string{"r"},
+				Usage:    "the most a read of a window or a file sends back, with its unit, 32KiB at least",
+				Value:    "64KiB",
 			},
 			&cli.StringFlag{
-				Name:  "log-level",
-				Usage: "the minimum level of the logs: debug, info, warn or error",
-				Value: "info",
+				Name:     "log-level",
+				OnlyOnce: true,
+				Usage:    "the minimum level of the logs: debug, info, warn or error",
+				Value:    "info",
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -126,7 +132,7 @@ func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int
 	if err != nil {
 		return err
 	}
-	logger.Info("serving", "tenant", side.Tenant, "address", listener.Addr().String(), "endpoint", connect.Path,
+	logger.Info("serving", "version", version.String(), "tenant", side.Tenant, "address", listener.Addr().String(), "endpoint", connect.Path,
 		"read_budget", sizeText(readBudget), "bundle_expiry", side.NotAfter())
 	serving, stopServing := context.WithCancel(ctx)
 	defer stopServing()

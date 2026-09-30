@@ -29,6 +29,7 @@ func bundleCommand() *cli.Command {
 				Flags: []cli.Flag{
 					&cli.StringFlag{
 						Name:     "tenant",
+						OnlyOnce: true,
 						Aliases:  []string{"t"},
 						Usage:    "the tenant ratd serves with the bundle",
 						Required: true,
@@ -41,6 +42,7 @@ func bundleCommand() *cli.Command {
 					},
 					&cli.StringFlag{
 						Name:     "output",
+						OnlyOnce: true,
 						Aliases:  []string{"o"},
 						Usage:    "the directory to write the bundle to, which must not exist",
 						Required: true,

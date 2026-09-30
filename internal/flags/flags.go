@@ -28,6 +28,7 @@ func Flags() []cli.Flag {
 	return []cli.Flag{
 		&cli.StringFlag{
 			Name:      ServerFlag,
+			OnlyOnce:  true,
 			Aliases:   []string{"s"},
 			Usage:     "the address of ratd, HOST:PORT (an IPv6 address between brackets)",
 			Required:  true,
@@ -35,6 +36,7 @@ func Flags() []cli.Flag {
 		},
 		&cli.StringFlag{
 			Name:     BundleFlag,
+			OnlyOnce: true,
 			Aliases:  []string{"b"},
 			Usage:    "the client directory of a bundle, which names the session (clients/NAME, from rat-tool bundle generate)",
 			Required: true,

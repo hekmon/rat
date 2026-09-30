@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/user"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +18,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/hekmon/rat/cmd/ratd/tools"
 	"github.com/hekmon/rat/connect"
+	"github.com/hekmon/rat/internal/version"
 	"github.com/hekmon/rat/mtls"
 	"github.com/hekmon/rat/tmux"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -211,7 +211,7 @@ func (d *daemon) newServer(session string) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "ratd",
 		Title:   fmt.Sprintf("rat %s on %s", d.side.Tenant, d.host),
-		Version: version(),
+		Version: version.Module(),
 	}, &mcp.ServerOptions{
 		Instructions: d.instructions,
 		SchemaCache:  d.schemas,
@@ -240,14 +240,6 @@ func (d *daemon) logRequests(session string) mcp.Middleware {
 			return result, err
 		}
 	}
-}
-
-// version returns the version of ratd, from its build.
-func version() string {
-	if info, ok := debug.ReadBuildInfo(); ok {
-		return info.Main.Version
-	}
-	return "unknown"
 }
 
 // errorLog receives what net/http logs (http.Server.ErrorLog), and logs it through slog. Refused

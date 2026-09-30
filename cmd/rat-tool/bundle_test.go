@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hekmon/rat/internal/version"
 	"github.com/urfave/cli/v3"
 )
 
@@ -91,5 +92,22 @@ func TestBundleRefuses(t *testing.T) {
 	out, err := run(t, "bundle", "inspect", filepath.Join(dir, "server"), filepath.Join(other, "clients", "bob"))
 	if err == nil || !strings.Contains(out, "belong to 2 different bundles") {
 		t.Errorf("inspecting directories of different bundles: expected an error, got %v:\n%s", err, out)
+	}
+}
+
+// TestCommandFlags guards the command line of rat-tool: a flag given twice is refused, but for the
+// clients of a bundle, and the version is told.
+func TestCommandFlags(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "b")
+	if _, err := run(t, "bundle", "generate", "-t", "prod", "-t", "staging", "-c", "alice", "-o", dir); err == nil ||
+		!strings.Contains(err.Error(), "can't duplicate this flag") {
+		t.Errorf("expected the repeated tenant refused, got %v", err)
+	}
+	if out, err := run(t, "bundle", "generate", "-t", "prod", "-c", "alice", "-c", "bob", "-o", dir); err != nil ||
+		!strings.Contains(out, "client bob") {
+		t.Errorf("expected several clients, got %v:\n%s", err, out)
+	}
+	if out, err := run(t, "--version"); err != nil || out != "rat-tool version "+version.String()+"\n" {
+		t.Errorf("expected the version, got %q, %v", out, err)
 	}
 }
