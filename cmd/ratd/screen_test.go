@@ -76,7 +76,8 @@ func TestReadWindowBudget(t *testing.T) {
 	session, controller, logs, _ := connectTools(t, "test-ratd-budget")
 	expectTool(t, session, "list_windows", nil, false)
 	waitPrompt(t, session, controller, tmux.FirstWindow)
-	cutHeader := "[history cut to fit the read budget (64 KiB): redirect long output to a file and use read_file]\n"
+	cutHeader := "[history cut to fit the read budget (64 KiB): tee long output to a file (command 2>&1 | tee " +
+		"/tmp/name.log) and use read_file]\n"
 
 	expectTool(t, session, "send_text", map[string]any{"window": "main", "enter": true,
 		"text": `seq 1 20000 | sed 's/$/ padding padding padding/'`}, false)

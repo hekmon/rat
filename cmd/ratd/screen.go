@@ -23,8 +23,9 @@ func (d *daemon) addScreenTools(server *mcp.Server, session string) {
 		Name:        tools.ReadWindow,
 		InputSchema: d.inputSchemas[tools.ReadWindow],
 		Description: fmt.Sprintf("Read what a window displays now: its screen (%d columns, %d rows), preceded by up to "+
-			"scrollback_rows rows of history (0 by default). The result holds at most %s: for a long output, redirect "+
-			"it to a file and use read_file.", tmux.ScreenColumns, tmux.ScreenRows, sizeText(d.readBudget)),
+			"scrollback_rows rows of history (0 by default). The result holds at most %s: for a long output, run the "+
+			"command with | tee /tmp/name.log and use read_file.", tmux.ScreenColumns, tmux.ScreenRows,
+			sizeText(d.readBudget)),
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: ptr(false)},
 	}, tool(d, session, tools.ReadWindow, func(in tools.ReadWindowInput) string { return in.Window },
 		func(ctx context.Context, in tools.ReadWindowInput) result { return d.readWindow(ctx, session, in) }))
@@ -78,8 +79,8 @@ func (d *daemon) readWindow(ctx context.Context, session string, in tools.ReadWi
 	if len(text) > d.readBudget {
 		// The history is cut, keeping the end that fits: the screen, whole, and the rows closest
 		// to it. Once cut, lines could be counted, not rows: the header tells no number.
-		header = fmt.Sprintf("[history cut to fit the read budget (%s): redirect long output to a file and use "+
-			"read_file]", sizeText(d.readBudget))
+		header = fmt.Sprintf("[history cut to fit the read budget (%s): tee long output to a file (command "+
+			"2>&1 | tee /tmp/name.log) and use read_file]", sizeText(d.readBudget))
 		room := d.readBudget - len(header) - len("\n")
 		if snapshot.ExtraLines == 0 || snapshot.ScreenBytes > room {
 			// A screen cut would be read as the whole screen, and one sent whole would flood the
