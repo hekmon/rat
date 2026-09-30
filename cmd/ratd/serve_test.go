@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hekmon/rat/cmd/ratd/connect"
 	"github.com/hekmon/rat/mtls"
 	"github.com/hekmon/rat/tmux"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -133,7 +134,7 @@ func TestServe(t *testing.T) {
 	addr, logs := startRatd(t, bundle, slog.LevelDebug)
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 	session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{
-		Endpoint:   "https://" + addr + endpoint,
+		Endpoint:   "https://" + addr + connect.Path,
 		HTTPClient: httpClient(t, bundle, "alice"),
 	}, nil)
 	if err != nil {
@@ -149,7 +150,7 @@ func TestServe(t *testing.T) {
 		t.Errorf("expected the tenant and the host in the title, the host in the instructions, got %q and %q",
 			result.ServerInfo.Title, result.Instructions)
 	}
-	if resp, err := post(t, httpClient(t, bundle, "alice"), addr, addr, endpoint); err != nil || resp.StatusCode != http.StatusOK {
+	if resp, err := post(t, httpClient(t, bundle, "alice"), addr, addr, connect.Path); err != nil || resp.StatusCode != http.StatusOK {
 		t.Fatalf("initialize: expected 200, got %v, %v", resp, err)
 	}
 	for _, method := range []string{"server/discover", "initialize"} {
@@ -165,7 +166,7 @@ func TestServeLogs(t *testing.T) {
 	bundle := newBundle(t, "t")
 	for _, level := range []slog.Level{slog.LevelInfo, slog.LevelDebug} {
 		addr, logs := startRatd(t, bundle, level)
-		if resp, err := post(t, httpClient(t, bundle, "alice"), addr, addr, endpoint); err != nil || resp.StatusCode != http.StatusOK {
+		if resp, err := post(t, httpClient(t, bundle, "alice"), addr, addr, connect.Path); err != nil || resp.StatusCode != http.StatusOK {
 			t.Fatalf("initialize: expected 200, got %v, %v", resp, err)
 		}
 		if logged := strings.Contains(logs.String(), "server session connected"); logged != (level == slog.LevelDebug) {
@@ -182,7 +183,7 @@ func TestServeHosts(t *testing.T) {
 	addr, _ := startRatd(t, bundle, slog.LevelInfo)
 	client := httpClient(t, bundle, "alice")
 	for _, host := range []string{addr, "localhost", "tunnel-alias:7281"} {
-		if resp, err := post(t, client, addr, host, endpoint); err != nil || resp.StatusCode != http.StatusOK {
+		if resp, err := post(t, client, addr, host, connect.Path); err != nil || resp.StatusCode != http.StatusOK {
 			t.Errorf("host %s: expected 200, got %v, %v", host, resp, err)
 		}
 	}
@@ -197,7 +198,7 @@ func TestServeRefuses(t *testing.T) {
 
 	// http.Server.TLSConfig alone would be ignored by Serve, which would then serve plain HTTP: the
 	// refusal must come from the TLS listener, not from getServer finding no certificate
-	resp, err := http.Post("http://"+addr+endpoint, "application/json", strings.NewReader(initialize))
+	resp, err := http.Post("http://"+addr+connect.Path, "application/json", strings.NewReader(initialize))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,10 +209,10 @@ func TestServeRefuses(t *testing.T) {
 	}
 
 	noCertificate := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
-	if resp, err := post(t, noCertificate, addr, addr, endpoint); err == nil {
+	if resp, err := post(t, noCertificate, addr, addr, connect.Path); err == nil {
 		t.Errorf("no client certificate: expected an error, got %s", resp.Status)
 	}
-	if resp, err := post(t, httpClient(t, newBundle(t, "t"), "alice"), addr, addr, endpoint); err == nil {
+	if resp, err := post(t, httpClient(t, newBundle(t, "t"), "alice"), addr, addr, connect.Path); err == nil {
 		t.Errorf("client of another bundle: expected an error, got %s", resp.Status)
 	}
 	if !strings.Contains(logs.String(), `msg="TLS handshake refused"`) {
@@ -222,7 +223,7 @@ func TestServeRefuses(t *testing.T) {
 	if resp, err := post(t, client, addr, addr, "/other"); err != nil || resp.StatusCode != http.StatusNotFound {
 		t.Errorf("another path: expected 404, got %v, %v", resp, err)
 	}
-	if resp, err := post(t, client, addr, addr, endpoint); err != nil || resp.ProtoMajor != 1 {
+	if resp, err := post(t, client, addr, addr, connect.Path); err != nil || resp.ProtoMajor != 1 {
 		t.Errorf("expected HTTP/1.1, got %v, %v", resp, err)
 	}
 }

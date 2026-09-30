@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hekmon/rat/cmd/ratd/connect"
 	"github.com/hekmon/rat/mtls"
 	"github.com/hekmon/rat/tmux"
 	"github.com/urfave/cli/v3"
@@ -26,8 +27,8 @@ func main() {
 
 // defaultListen is the default listen address: every interface, which mutual TLS makes safe. An
 // empty host rather than [::]: Go then listens on IPv6 and IPv4 at once, where a literal [::]
-// fails on machines with IPv6 disabled. 7281 reads "RAT!" on a phone keypad.
-const defaultListen = ":7281"
+// fails on machines with IPv6 disabled.
+const defaultListen = ":" + connect.DefaultPort
 
 // expiryCheckInterval is how often ratd checks whether its bundle expires within a year.
 const expiryCheckInterval = 24 * time.Hour
@@ -125,7 +126,7 @@ func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int
 	if err != nil {
 		return err
 	}
-	logger.Info("serving", "tenant", side.Tenant, "address", listener.Addr().String(), "endpoint", endpoint,
+	logger.Info("serving", "tenant", side.Tenant, "address", listener.Addr().String(), "endpoint", connect.Path,
 		"read_budget", sizeText(readBudget), "bundle_expiry", side.NotAfter())
 	serving, stopServing := context.WithCancel(ctx)
 	defer stopServing()

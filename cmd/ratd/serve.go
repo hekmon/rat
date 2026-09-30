@@ -16,14 +16,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hekmon/rat/cmd/ratd/connect"
 	"github.com/hekmon/rat/mtls"
 	"github.com/hekmon/rat/tmux"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
-	// endpoint is the only path served: the convention of the MCP specification and of the SDK.
-	endpoint = "/mcp"
 	// readHeaderTimeout bounds reading the headers of a request, and the TLS handshake with it
 	// (net/http bounds the handshake by the smallest of its timeouts). There is no timeout on the
 	// body nor on the response: a 4 MiB request on a slow link must not be cut.
@@ -136,7 +135,7 @@ func (d *daemon) serve(ctx context.Context, listener net.Listener) error {
 	// HTTP/1.1 only: requests are short JSON exchanges, which HTTP/2 would not speed up
 	tlsConfig.NextProtos = []string{"http/1.1"}
 	mux := http.NewServeMux()
-	mux.Handle(endpoint, mcp.NewStreamableHTTPHandler(d.getServer, &mcp.StreamableHTTPOptions{
+	mux.Handle(connect.Path, mcp.NewStreamableHTTPHandler(d.getServer, &mcp.StreamableHTTPOptions{
 		// Each request names its session by its client certificate, and tmux is the only state:
 		// nothing is kept per connection (no Mcp-Session-Id).
 		Stateless: true,

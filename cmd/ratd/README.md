@@ -474,6 +474,9 @@ warn about.
   with an empty host rather than `[::]`: Go then listens on IPv6 and IPv4 at once, where a
   literal `[::]` fails on machines with IPv6 disabled. 7281 reads "RAT!" on a phone keypad; IANA
   lists it for an obscure product (`itactionserver2`), and it is configurable.
+
+The path and the default port are declared in package `cmd/ratd/connect`, with the flags of
+the clients reaching them: both sides of the contract in one place.
 - **TLS**: served through a TLS listener built from the checked bundle. `http.Server.TLSConfig`
   alone would be silently ignored by `ListenAndServe`, serving plain HTTP: a test must guard that
   a client without a certificate is refused. HTTP/1.1 only (no `h2` offered): requests are short

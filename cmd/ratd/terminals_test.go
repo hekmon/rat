@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hekmon/rat/cmd/ratd/connect"
 	"github.com/hekmon/rat/mtls"
 	"github.com/hekmon/rat/tmux"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -76,7 +77,7 @@ func TestRun(t *testing.T) {
 	const tenant = "test-ratd-run"
 	bundle := newBundle(t, tenant)
 	addr, logs, stop := runRatd(t, bundle)
-	if resp, err := post(t, httpClient(t, bundle, "alice"), addr, addr, endpoint); err != nil || resp.StatusCode != http.StatusOK {
+	if resp, err := post(t, httpClient(t, bundle, "alice"), addr, addr, connect.Path); err != nil || resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected ratd to serve, got %v, %v\n%s", resp, err, logs)
 	}
 
@@ -119,7 +120,7 @@ func TestRunCallInFlight(t *testing.T) {
 	bundle := newBundle(t, tenant)
 	addr, logs, stop := runRatd(t, bundle)
 	// serving: the tmux server runs
-	if resp, err := post(t, httpClient(t, bundle, "alice"), addr, addr, endpoint); err != nil || resp.StatusCode != http.StatusOK {
+	if resp, err := post(t, httpClient(t, bundle, "alice"), addr, addr, connect.Path); err != nil || resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected ratd to serve, got %v, %v\n%s", resp, err, logs)
 	}
 	out, err := exec.Command("tmux", "-L", "rat-"+tenant, "display-message", "-p", "#{pid}").Output()
@@ -140,7 +141,7 @@ func TestRunCallInFlight(t *testing.T) {
 	responses := make(chan response, 1)
 	go func() {
 		call := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_windows","arguments":{}}}`
-		req, err := http.NewRequest(http.MethodPost, "https://"+addr+endpoint, strings.NewReader(call))
+		req, err := http.NewRequest(http.MethodPost, "https://"+addr+connect.Path, strings.NewReader(call))
 		if err != nil {
 			responses <- response{err: err}
 			return
@@ -191,7 +192,7 @@ func TestRunGivesUp(t *testing.T) {
 	const tenant = "test-ratd-gives-up"
 	bundle := newBundle(t, tenant)
 	addr, logs, stop := runRatd(t, bundle)
-	if resp, err := post(t, httpClient(t, bundle, "alice"), addr, addr, endpoint); err != nil || resp.StatusCode != http.StatusOK {
+	if resp, err := post(t, httpClient(t, bundle, "alice"), addr, addr, connect.Path); err != nil || resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected ratd to serve, got %v, %v\n%s", resp, err, logs)
 	}
 	// killed from outside ratd, on the socket of the tenant (rat-<tenant>, see the tmux README)
@@ -230,7 +231,7 @@ func TestRunPasteWarning(t *testing.T) {
 			addr, logs, _ := runRatd(t, bundle)
 			client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 			session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{
-				Endpoint:   "https://" + addr + endpoint,
+				Endpoint:   "https://" + addr + connect.Path,
 				HTTPClient: httpClient(t, bundle, "alice"),
 			}, nil)
 			if err != nil {

@@ -17,8 +17,8 @@ rat --server HOST:PORT --bundle DIR [--log-level info]
   certificate names the session.
 - Nothing else: no configuration file, no environment variable.
 
-These flags are declared once, in a package internal to the module, shared with
-`rat-tool check`: a harness command line is checked by copying it, with the same names.
+These flags are declared once, in package `cmd/ratd/connect`, shared with `rat-tool check`:
+a harness command line is checked by copying it, with the same names and the same checks.
 
 At startup, rat loads and checks its client directory (key matching the certificate, CA, role,
 validity, name, see package `mtls`): a failure is written on stderr before it exits, and the
