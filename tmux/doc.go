@@ -35,7 +35,8 @@
 // bracketed paste, which startup files can defeat: [Controller.CheckBracketedPaste] tells.
 // [Controller.SendKeys] presses keys by their tmux names (C-c, Escape, Up…).
 // [Controller.Capture] returns a [Snapshot] of what a window displays, with optional scrollback
-// above it, and what is needed to interpret it.
+// above it, and what is needed to interpret it: whether a full-screen program runs, captured as
+// displayed then, and where its cursor is.
 //
 // # Errors
 //

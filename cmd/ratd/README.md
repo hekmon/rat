@@ -165,8 +165,9 @@ rat fit long running commands: an agent starts one, carries on, and comes back t
 - **`read_window`** `{window, scrollback_rows}`: the screen (200×24), preceded by up to
   `scrollback_rows` rows of history (0 by default). The header tells how many rows it holds and
   why fewer than asked (a shorter history, a full-screen program, the read budget), copy mode,
-  and a full-screen program, with the cursor position. Under a full-screen program, the history
-  belongs to the terminal before the program started: it is never included.
+  and a full-screen program, with its cursor position unless the program hides it. Under a
+  full-screen program, the history belongs to the terminal before the program started: it is
+  never included.
 
 Text and keys are two tools rather than one `send_input` taking either: JSON Schema can not say
 "exactly one of", so a small model would learn it by failing, where two tools each have a schema
@@ -183,11 +184,12 @@ tells where input goes (a field, a position in a file). Row 1 of the content is 
 the screen, and the cursor exact. On the normal screen, joined rows and trimmed empty ones would
 make screen coordinates point at the wrong line, for a cursor that tells little there: it sits
 at the end of the prompt, the last line. Rejected: mapping the cursor to joined lines by
-capturing twice, heavier, and wrong when output arrives in between.
+capturing twice, heavier, and wrong when output arrives in between. A program hiding its cursor
+(`htop`) gets no position, only a header saying so: a human sees no cursor either.
 
-Copy mode and the cursor position are not exposed by the controller yet. Copy mode matters: a
-human inspecting a window can leave it in copy mode, and every key then goes to tmux, not to the
-program. ratd shows it rather than leaving it, which would pull the view from under the human.
+Copy mode is not handled by the controller yet. It matters: a human inspecting a window can
+leave it in copy mode, and every key then goes to tmux, not to the program. ratd shows it rather
+than leaving it, which would pull the view from under the human.
 
 ### Files
 

@@ -201,8 +201,9 @@ terminal could still create a duplicate.
 
 `display-message` does not fail on a missing target: for a missing session it prints empty
 fields, and for a missing window it silently describes the current window of the session
-instead. Windows are therefore described from `list-windows`, looking the name up. The only
-`display-message` left is the readiness probe, which has no target.
+instead. Windows are therefore described from `list-windows`, looking the name up. Two
+`display-message` are left: the readiness probe, which has no target, and the state read with a
+capture, in an invocation that fails with the capture on a missing target (see Capture).
 
 ### Missing targets: ask tmux, do not parse its messages
 
@@ -351,8 +352,12 @@ printable ASCII characters and the usual named keys, with the `C-`, `M-` and `S-
 
 ## Capture
 
-A capture (`capture-pane -p -J`) returns the screen as displayed, preceded on demand by rows of
-scrollback (`-S -n`, rows above the screen).
+A capture returns the screen as displayed, preceded on demand by rows of scrollback, with what is
+needed to interpret it. How the screen is captured depends on what the terminal shows.
+
+### The normal screen
+
+`capture-pane -p -J`, with `-S -n` for `n` rows of scrollback above the screen.
 
 - `-J` joins the rows tmux wrapped at the terminal width, so a long line comes back whole. It
   also keeps trailing spaces, which rat removes, with the empty lines at the end of the screen:
@@ -360,15 +365,56 @@ scrollback (`-S -n`, rows above the screen).
 - The snapshot tells how many scrollback rows it includes: the ones requested, fewer if the
   scrollback is shorter. They are rows: a line wrapped over several rows is joined, so the
   content may show fewer lines than that.
-- Under a full-screen program (`less`, `vim`, `top`), the terminal shows its alternate screen,
-  and the scrollback above belongs to the terminal before the program started: included, it
-  would be mistaken for the program output. It is never included then, and the snapshot says a
+- A request beyond the scrollback starts at its first row, but tmux silently captures no
+  scrollback at all for a number out of its range (a C `int`, `cmd-capture-pane.c`): rat bounds
+  the request by the history limit it sets, beyond which no scrollback is kept.
+- The cursor is not told: its position is in screen rows, which joined rows and removed empty
+  lines make point at the wrong line, and it sits at the end of the prompt anyway.
+
+### A full-screen program
+
+Under a full-screen program (`less`, `vim`, `top`), the terminal shows its alternate screen.
+
+- The scrollback above belongs to the terminal before the program started: included, it would
+  be mistaken for the program output. It is never included then, and the snapshot says a
   full-screen program is running. What such a program displays disappears when it quits.
+- The screen is captured as displayed, without `-J`: a full-screen program lays out its own
+  screen, and may let the terminal wrap a row it fills (`less` does): joined, that row would
+  shift every row below it. Line N of the content is row N of the screen. Empty lines at the end
+  are still removed, and tmux removes trailing spaces itself without `-J`.
+- The cursor is told, counted from 1 (tmux counts from 0): it tells where the input of the
+  program goes (a field, a position in a file). It may be below the last line of the content,
+  empty lines at the end being removed. Columns count terminal cells, a wide character taking
+  two. A program may hide its cursor (`htop` does, `less` and `vim` do not), which tmux tells
+  (`cursor_flag`): no position is told then, as a human sees no cursor, and the one tmux keeps
+  is a leftover.
 
 The snapshot carries these properties rather than failing (asking for scrollback under a
 full-screen program is not an error): an agent reads in the result itself what it got and why,
 without a failed round trip, which small models handle worst.
 
-The window is described just before being captured, which costs a second tmux command: a
-program starting or quitting in between makes the properties slightly outdated, as any output
-after the capture would.
+### State and screen, in one invocation
+
+The state of the terminal (alternate screen, scrollback size, cursor) must describe the very
+screen captured: read apart, a program starting or quitting in between would get its screen
+captured the wrong way, and a cursor could come from another frame than the content, for a
+program redrawing. Both are read in a single invocation, which tmux runs whole (see Input):
+
+```
+display-message -p -t T '#{alternate_on} #{history_size} #{cursor_flag} #{cursor_x} #{cursor_y}' ;
+if-shell -F -t T '#{alternate_on}' 'capture-pane -p -t T' 'capture-pane -p -J -S -n -t T'
+```
+
+- `if-shell -F` evaluates its condition in tmux, without running a shell, and queues the command
+  chosen right after itself (`cmd-if-shell.c`): it never waits, and the queue is drained in one
+  go.
+- The program output can not change the screen in between: tmux reads it in its event loop
+  (`window_pane_read_callback` in `window.c`), and drains client queues between two iterations
+  of that loop (`proc_loop` in `proc.c`, `server_loop` in `server.c`).
+- The commands of `if-shell` are strings parsed by tmux: only the target, made of validated
+  names, and a number go in them.
+- For a missing window, `display-message` describes another one (see Targets and names), but the
+  capture fails, and so does the invocation: its output is discarded.
+
+Rejected: describing the window, then capturing it, in two invocations: simpler, but the
+properties and the capture were a few milliseconds apart.
