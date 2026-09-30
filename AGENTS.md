@@ -44,6 +44,11 @@ An agent closing all its windows simply finds a fresh `main` on its next call.
   paste text and press keys. Pressing Enter is optional (e.g. "press y to confirm"), and the
   input may answer a prompt rather than start a command. rat does not know when a command
   finishes, only which process is in the foreground.
+- **Humans peek, they do not take over.** The terminals are the agents'. A human may attach to
+  rat's tmux server to watch them work, and what a peek leaves behind must not change what agents
+  get: a window keeps its size, and a mode left on (copy mode, to scroll back) is left before the
+  next input. Disturbing the terminals beyond a peek is on the human: rat does not guard against
+  it.
 - **Files, as a human copies them.** Agents also move whole files to and from the machine,
   without a terminal: exact content, nothing on a screen, whatever the terminals are doing.
   Files are read and written on ratd's machine, as its user, never inside an ssh session or a
