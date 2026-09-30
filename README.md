@@ -280,8 +280,10 @@ to a server; the bundle stands for `authorized_keys`, but closed:
 - **Nothing on the server lets a client in.** ratd holds its own key and the certificate of the
   bundle's authority, which is public. The key of that authority existed only while generating
   the bundle, and was never written: no one can issue a certificate afterwards, not even someone
-  controlling the server. A password or a token would instead sit next to the terminals, readable
-  by the agents running there.
+  controlling the server. Nor does the certificate of ratd stand for a client: each certificate
+  carries one extended key usage, server or client authentication, which each side requires of
+  its peer (`openssl x509 -in server.crt -noout -text` shows it). A password or a token would
+  instead sit next to the terminals, readable by the agents running there.
 - **Modern and fixed:** TLS 1.3 only, with keys that change at each connection (what is captured
   today can not be decrypted with a key stolen tomorrow), ECDSA P-256 certificates.
 - **On every address, loopback included**: other users of the machine reach loopback too.
