@@ -163,9 +163,9 @@ rat fit long running commands: an agent starts one, carries on, and comes back t
   `End`, `PageUp`, `PageDown`, `Insert`, `Delete`, `F1` to `F12`, with the `C-`, `M-` and `S-`
   modifiers, combinable. An unknown name is refused with a pointer to `send_text`.
 - **`read_window`** `{window, scrollback_rows}`: the screen (200×24), preceded by up to
-  `scrollback_rows` rows of history (0 by default). The header tells the cursor position, how
-  many rows it holds and why fewer than asked (a shorter history, a full-screen program, the
-  read budget), a full-screen program, copy mode. Under a full-screen program, the history
+  `scrollback_rows` rows of history (0 by default). The header tells how many rows it holds and
+  why fewer than asked (a shorter history, a full-screen program, the read budget), copy mode,
+  and a full-screen program, with the cursor position. Under a full-screen program, the history
   belongs to the terminal before the program started: it is never included.
 
 Text and keys are two tools rather than one `send_input` taking either: JSON Schema can not say
@@ -173,8 +173,17 @@ Text and keys are two tools rather than one `send_input` taking either: JSON Sch
 the SDK validates. One call stays one act either way: which keys to press usually depends on
 what the text caused on the screen.
 
-Rows, not lines: captures join the lines tmux wrapped (`-J`), so a result holds whole lines while
-its history is counted in terminal rows. A long line wrapped over several rows counts for each.
+Rows, not lines: on the normal screen, captures join the lines tmux wrapped (`-J`), so a result
+holds whole lines while its history is counted in terminal rows. A long line wrapped over several
+rows counts for each.
+
+The cursor is only told under a full-screen program, whose screen is captured as displayed,
+without joining rows: a full-screen program lays out its own screen to the width, and its cursor
+tells where input goes (a field, a position in a file). Row 1 of the content is then row 1 of
+the screen, and the cursor exact. On the normal screen, joined rows and trimmed empty ones would
+make screen coordinates point at the wrong line, for a cursor that tells little there: it sits
+at the end of the prompt, the last line. Rejected: mapping the cursor to joined lines by
+capturing twice, heavier, and wrong when output arrives in between.
 
 Copy mode and the cursor position are not exposed by the controller yet. Copy mode matters: a
 human inspecting a window can leave it in copy mode, and every key then goes to tmux, not to the
