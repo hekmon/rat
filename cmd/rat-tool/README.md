@@ -18,19 +18,26 @@ rat-tool check --server HOST:PORT --bundle DIR
 Generates the bundle of a tenant (see package `mtls`): the tenant and at least one client are
 required, validated as tmux names, the client names unique. It runs wherever the admin trusts:
 nothing in a bundle is tied to the server nor to a client. The output directory must not exist,
-as replacing a bundle silently breaks every client deployed with it. It prints the tenant, the
-clients, the CA fingerprint and the expiry.
+as replacing a bundle silently breaks every client deployed with it: the error says so, and how
+to regenerate (remove it, or choose another one). It prints the tenant, the directory of each
+side and what it is for, the CA fingerprint and the expiry, and reminds to copy each directory
+to its side only.
 
 ## bundle inspect
 
-Offline, for each directory: which side it is (from the role of its certificate), the checks ratd
-and rat run at startup, one line per check (files present, key matching the certificate, signed
-by the CA, role, validity, name), then the name (the tenant, or the client, which is its
-session), the CA fingerprint and the remaining validity, with a warning under a year.
+Offline, for each directory: the checks ratd and rat run at startup, one line per check until
+one fails (`mtls.Checks`: files of a side, key readable by its owner only, key matching the
+certificate, certificate signed by the CA, of its role only, certificates valid now, plain
+names), then which side it is (from its certificate), its name (the tenant, or the client, which
+is its session), the CA fingerprint and the remaining validity, with a warning under a year.
 
 Given several directories, it tells whether they belong to the same bundle (the same CA): mixing
 the files of two bundles is the likeliest mistake, and a handshake only reports it as an opaque
 error.
+
+Its exit code is not zero when a directory fails a check, or when the directories belong to
+several bundles: checking that directories go together is what inspecting several is for, and
+scripts rely on the exit code.
 
 ## check
 

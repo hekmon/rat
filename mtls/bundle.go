@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -37,6 +38,17 @@ func (r Role) usage() x509.ExtKeyUsage {
 		return x509.ExtKeyUsageServerAuth
 	}
 	return x509.ExtKeyUsageClientAuth
+}
+
+// ServerDir returns the directory of the server side, in the bundle written to dir.
+func ServerDir(dir string) string {
+	return filepath.Join(dir, Server.String())
+}
+
+// ClientDir returns the directory of client, in the bundle written to dir. Clients have a
+// directory of their own, so that a client named "server" does not collide with the server.
+func ClientDir(dir, client string) string {
+	return filepath.Join(dir, "clients", client)
 }
 
 // caFile is the name of the CA certificate in the directory of each side.

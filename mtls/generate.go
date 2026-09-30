@@ -109,17 +109,11 @@ func generate(dir, tenant string, clients []string, now time.Time) (bundle Bundl
 			_ = os.RemoveAll(dir)
 		}
 	}()
-	if err = writeSide(filepath.Join(dir, Server.String()), ca.cert, server, Server); err != nil {
+	if err = writeSide(ServerDir(dir), ca.cert, server, Server); err != nil {
 		return bundle, err
 	}
-	// Clients have a directory of their own, so that a client named "server" does not collide
-	// with the server.
-	clientsDir := filepath.Join(dir, "clients")
-	if err = os.Mkdir(clientsDir, 0o700); err != nil {
-		return bundle, fmt.Errorf("failed to create the clients directory: %w", err)
-	}
 	for i, client := range clients {
-		if err = writeSide(filepath.Join(clientsDir, client), ca.cert, clientCredentials[i], Client); err != nil {
+		if err = writeSide(ClientDir(dir, client), ca.cert, clientCredentials[i], Client); err != nil {
 			return bundle, err
 		}
 	}
@@ -196,9 +190,10 @@ func create(template *x509.Certificate, parent *credential) (c credential, err e
 }
 
 // writeSide writes the directory of a side: the CA certificate, and the certificate and key of the
-// side. dir must not exist.
+// side. Missing parents are created with the same mode, as the directory holding client
+// directories is. No file is written over an existing one.
 func writeSide(dir string, ca *x509.Certificate, c credential, role Role) error {
-	if err := os.Mkdir(dir, 0o700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("failed to create the %s directory: %w", role, err)
 	}
 	key, err := x509.MarshalPKCS8PrivateKey(c.key)

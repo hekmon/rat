@@ -187,8 +187,8 @@ silently.
 Each side loads its directory at startup, and checks it, to fail while the admin is still there
 rather than at the first connection, with an opaque handshake error. The side is the one whose
 certificate the directory holds (`server.crt` or `client.crt`). The checks run in a fixed order,
-each with its own error, so that `rat-tool` reports one line per check, the ones before a
-failure having passed:
+each with its own error (`Checks` lists them, for callers to name each), so that `rat-tool`
+reports one line per check, the ones before a failure having passed:
 
 1. **Files**: the files of one side are present, each a single PEM block. Several certificates
    in `ca.crt` would all be trusted, as a certificate pool built from the file takes each of

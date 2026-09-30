@@ -36,6 +36,28 @@ var (
 	ErrValidity = errors.New("certificate not valid now")
 )
 
+// Check is a check of Load, for a caller reporting each (rat-tool).
+type Check struct {
+	// Name tells what the check requires, for humans.
+	Name string
+	// Err is the sentinel the error of Load wraps when the check fails.
+	Err error
+}
+
+// Checks returns the checks of Load, in the order it runs them: when Load fails, the checks
+// before the one whose Err its error wraps have passed.
+func Checks() []Check {
+	return []Check{
+		{"files of a side", ErrFiles},
+		{"key readable by its owner only", ErrKeyPermissions},
+		{"key matching the certificate", ErrKeyMismatch},
+		{"certificate signed by the CA", ErrNotSignedByCA},
+		{"certificate of its role only", ErrRole},
+		{"certificates valid now", ErrValidity},
+		{"plain names", names.ErrInvalid},
+	}
+}
+
 // Side is the directory of a side of a bundle, loaded and checked: what ratd, or one of its
 // clients, holds.
 type Side struct {
@@ -149,6 +171,10 @@ func load(dir string, now time.Time) (*Side, error) {
 
 // sideRole returns the role whose certificate file dir holds.
 func sideRole(dir string) (Role, error) {
+	// a missing directory would read as holding no certificate
+	if _, err := os.Stat(dir); err != nil {
+		return 0, fmt.Errorf("%w: %w", ErrFiles, err)
+	}
 	server := fileExists(filepath.Join(dir, certFile(Server)))
 	client := fileExists(filepath.Join(dir, certFile(Client)))
 	switch {

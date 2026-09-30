@@ -40,9 +40,25 @@ func appendFile(t *testing.T, src, dst string) {
 	}
 }
 
+// checkOf returns the index, in Checks, of the one check whose sentinel err wraps, or -1 if it
+// wraps none or several: a caller could not tell which check failed.
+func checkOf(err error) int {
+	index := -1
+	for i, check := range Checks() {
+		if errors.Is(err, check.Err) {
+			if index >= 0 {
+				return -1
+			}
+			index = i
+		}
+	}
+	return index
+}
+
 // TestLoadChecks guards each check of Load, and their order: a broken directory is refused with
-// the sentinel of the first check it fails. Each case breaks the directory of client alice of a
-// bundle, generated age ago; other is another bundle, for files that do not belong.
+// the sentinel of the first check it fails, and of that check only (see Checks). Each case breaks
+// the directory of client alice of a bundle, generated age ago; other is another bundle, for files
+// that do not belong.
 func TestLoadChecks(t *testing.T) {
 	now := time.Now()
 	other := newBundle(t, now)
@@ -105,8 +121,12 @@ func TestLoadChecks(t *testing.T) {
 			bundle := newBundle(t, now.Add(-tc.age))
 			alice := filepath.Join(bundle, "clients", "alice")
 			tc.breakIt(t, bundle, alice)
-			if _, err := load(alice, now); !errors.Is(err, tc.expected) {
+			_, err := load(alice, now)
+			if !errors.Is(err, tc.expected) {
 				t.Errorf("expected an error wrapping %v, got %v", tc.expected, err)
+			}
+			if checkOf(err) < 0 {
+				t.Errorf("the error matches no check of Checks, or several: %v", err)
 			}
 		})
 	}
@@ -129,8 +149,8 @@ func TestLoadNames(t *testing.T) {
 		if err = writeSide(dir, ca.cert, client, Client); err != nil {
 			t.Fatal(err)
 		}
-		if _, err = load(dir, now); !errors.Is(err, names.ErrInvalid) {
-			t.Errorf("tenant %q, client %q: expected names.ErrInvalid, got %v", tc.tenant, tc.client, err)
+		if _, err = load(dir, now); !errors.Is(err, names.ErrInvalid) || checkOf(err) != len(Checks())-1 {
+			t.Errorf("tenant %q, client %q: expected names.ErrInvalid, the last check, got %v", tc.tenant, tc.client, err)
 		}
 	}
 }

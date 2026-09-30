@@ -1,12 +1,28 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+
+	"github.com/urfave/cli/v3"
 )
 
 func main() {
-	// Not implemented yet: fail rather than pretend to succeed.
-	fmt.Fprintln(os.Stderr, "rat-tool: not implemented yet")
-	os.Exit(1)
+	if err := command().Run(context.Background(), os.Args); err != nil {
+		fmt.Fprintln(os.Stderr, "rat-tool:", err)
+		os.Exit(1)
+	}
+}
+
+// command returns the command line of rat-tool, a new one at each call: a command keeps the state
+// of its last run.
+func command() *cli.Command {
+	return &cli.Command{
+		Name:  "rat-tool",
+		Usage: "the utility of rat: certificate bundles, and checking a running ratd",
+		Commands: []*cli.Command{
+			bundleCommand(),
+		},
+	}
 }
