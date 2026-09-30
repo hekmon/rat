@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hekmon/rat/mtls"
+	"github.com/hekmon/rat/tmux"
 	"github.com/urfave/cli/v3"
 )
 
@@ -63,14 +65,21 @@ func command(logs io.Writer) *cli.Command {
 			logger := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: level}))
 			ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, os.Interrupt)
 			defer stop()
-			return run(ctx, logger, cmd.String("bundle"), cmd.String("listen"))
+			listen := cmd.String("listen")
+			return run(ctx, logger, cmd.String("bundle"), func() (net.Listener, error) {
+				return net.Listen("tcp", listen)
+			})
 		},
 	}
 }
 
-// run starts ratd with the server directory of a bundle, listening on listen, and serves until
-// ctx is done. A failure to start is returned while the admin is still there.
-func run(ctx context.Context, logger *slog.Logger, bundle, listen string) error {
+// run starts ratd with the server directory of a bundle, then listens with listen, and serves
+// until ctx is done. The steps of the startup run in order, a failure making ratd exit while the
+// admin is still there: loading the bundle, starting the tmux server of its tenant, checking
+// bracketed paste, listening. A second ratd for the same tenant thus fails before listening.
+// Stopping closes the door first (no call gets in anymore), then stops the terminals.
+// It also returns an error when the tmux server died too often: ratd then shows as failed.
+func run(ctx context.Context, logger *slog.Logger, bundle string, listen func() (net.Listener, error)) error {
 	side, err := mtls.Load(bundle)
 	if err != nil {
 		return fmt.Errorf("bundle: %w", err)
@@ -78,19 +87,55 @@ func run(ctx context.Context, logger *slog.Logger, bundle, listen string) error 
 	if side.Role != mtls.Server {
 		return fmt.Errorf("bundle: %w: %s is the directory of a client, not of the server", mtls.ErrRole, bundle)
 	}
-	d, err := newDaemon(logger, side)
+	controller, err := tmux.New(side.Tenant)
 	if err != nil {
 		return err
 	}
-	listener, err := net.Listen("tcp", listen)
+	// The terminals outlive ctx, which SIGTERM cancels: they stop once the door is closed, not with
+	// it. Their context only terminates a server ratd would leave running.
+	terminals, stopTerminals := context.WithCancel(context.WithoutCancel(ctx))
+	defer stopTerminals()
+	if err = controller.StartServer(terminals); err != nil {
+		// tmux.ErrServerSocketInUse: another ratd serves the tenant on this machine
+		return fmt.Errorf("failed to start the tmux server of tenant %s: %w", side.Tenant, err)
+	}
+	defer func() {
+		// with the controller's own escalation: SIGTERM, then SIGKILL
+		if err := controller.StopServer(context.Background()); err != nil && !errors.Is(err, tmux.ErrServerNotRunning) {
+			logger.Warn("tmux server stopped forcibly", "error", err)
+		}
+		logger.Info("terminals stopped")
+	}()
+	warnPaste := checkBracketedPaste(ctx, logger, controller)
+	d, err := newDaemon(logger, side, warnPaste)
+	if err != nil {
+		return err
+	}
+	listener, err := listen()
 	if err != nil {
 		return err
 	}
 	logger.Info("serving", "tenant", side.Tenant, "address", listener.Addr().String(), "endpoint", endpoint,
 		"bundle_expiry", side.NotAfter())
-	go warnExpiry(ctx, logger, side)
-	err = d.serve(ctx, listener)
-	logger.Info("stopped")
+	serving, stopServing := context.WithCancel(ctx)
+	defer stopServing()
+	supervised := make(chan struct{})
+	var supervisorErr error
+	go func() {
+		defer close(supervised)
+		if supervisorErr = supervise(serving, logger, controller, terminals, defaultRestartPolicy); supervisorErr != nil {
+			stopServing()
+		}
+	}()
+	go warnExpiry(serving, logger, side)
+	err = d.serve(serving, listener)
+	logger.Info("door closed")
+	// no restart once stopping: the terminals are stopped next
+	stopServing()
+	<-supervised
+	if supervisorErr != nil {
+		return supervisorErr
+	}
 	return err
 }
 

@@ -37,7 +37,7 @@ const (
 // instructions are sent to each client when it initializes (or discovers the server, from
 // protocol 2026-07-28 on), host being the machine ratd runs on: an agent with a local shell too
 // must know where commands run.
-const instructions = `rat gives you persistent terminals on %s: commands run there, not where you run. ` +
+const instructionsFormat = `rat gives you persistent terminals on %s: commands run there, not where you run. ` +
 	`It is asynchronous by design: sending a command returns at once, without waiting for it to finish. ` +
 	`Start long running commands (builds, tests, deployments), carry on with other work, and come back to ` +
 	`check them: rat does not know when a command finishes, list_windows shows the foreground command ` +
@@ -47,6 +47,10 @@ const instructions = `rat gives you persistent terminals on %s: commands run the
 	`when you start. To move a whole file, or to read a long output (redirect it to a file), use write_file ` +
 	`and read_file rather than the terminal. If the terminals restart after a failure, every window ` +
 	`disappears and you find a fresh main.`
+
+// pasteWarning ends the instructions when bash startup files defeat bracketed paste, or when that
+// could not be checked (see checkBracketedPaste).
+const pasteWarning = ` Multi-line text may run line by line even at a prompt: send one line at a time.`
 
 // daemon is ratd serving a tenant: what every request needs, fixed at startup. Terminals are not
 // held here: tmux is their only source of truth.
@@ -58,16 +62,23 @@ type daemon struct {
 	side *mtls.Side
 	// host is the name of the machine, told to agents
 	host string
+	// instructions are sent to every client
+	instructions string
 	// schemas spares building the schemas of the tools again for each request, which builds its
 	// own MCP server
 	schemas *mcp.SchemaCache
 }
 
-// newDaemon returns ratd serving the tenant of side, the server directory of its bundle.
-func newDaemon(logger *slog.Logger, side *mtls.Side) (*daemon, error) {
+// newDaemon returns ratd serving the tenant of side, the server directory of its bundle, warning
+// agents that pasted text may run line by line if warnPaste.
+func newDaemon(logger *slog.Logger, side *mtls.Side, warnPaste bool) (*daemon, error) {
 	host, err := os.Hostname()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read the host name: %w", err)
+	}
+	instructions := fmt.Sprintf(instructionsFormat, host)
+	if warnPaste {
+		instructions += pasteWarning
 	}
 	// The SDK logs every stateless request at info level (a session connecting, then
 	// disconnecting): only its warnings and errors are kept, unless ratd logs at debug level.
@@ -75,7 +86,8 @@ func newDaemon(logger *slog.Logger, side *mtls.Side) (*daemon, error) {
 	if !logger.Enabled(context.Background(), slog.LevelDebug) {
 		sdkLogger = slog.New(minLevel{Handler: logger.Handler(), min: slog.LevelWarn})
 	}
-	return &daemon{logger: logger, sdkLogger: sdkLogger, side: side, host: host, schemas: mcp.NewSchemaCache()}, nil
+	return &daemon{logger: logger, sdkLogger: sdkLogger, side: side, host: host, instructions: instructions,
+		schemas: mcp.NewSchemaCache()}, nil
 }
 
 // minLevel passes on the records of its handler from a minimum level only.
@@ -175,7 +187,7 @@ func (d *daemon) newServer(session string) *mcp.Server {
 		Title:   fmt.Sprintf("rat %s on %s", d.side.Tenant, d.host),
 		Version: version(),
 	}, &mcp.ServerOptions{
-		Instructions: fmt.Sprintf(instructions, d.host),
+		Instructions: d.instructions,
 		SchemaCache:  d.schemas,
 		Logger:       d.sdkLogger,
 	})

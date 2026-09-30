@@ -156,7 +156,10 @@ func fixedSize(target string) []string {
 }
 
 // StartServer starts the tmux server and returns once it is ready and configured.
-// ctx should be the application context, as an exit safe guard (kill).
+// ctx bounds the life of the server: once canceled, the server is terminated (SIGTERM, then
+// SIGKILL), as a safeguard for a caller leaving it running. A caller stopping the server in
+// order (StopServer) must pass a context that outlives that stop, such as one a signal does not
+// cancel.
 // The server does not load any tmux configuration and its terminals run bash, which must be
 // installed (the returned error then wraps exec.ErrNotFound) in version bashMinVersion or later
 // (the error then wraps ErrUnsupportedBash). It refuses a socket another server answers on,

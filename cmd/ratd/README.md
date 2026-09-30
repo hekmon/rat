@@ -370,6 +370,11 @@ gives the calls in flight 10 seconds, then stops the tmux server (with the contr
 escalation, SIGTERM then SIGKILL). The other order would answer calls arriving in between that
 the terminals are restarting.
 
+The controller terminates its server when the context it was started with ends: ratd starts it
+with a context the signal does not cancel, which would otherwise stop the terminals with the
+door rather than after it. The supervisor is stopped before the server, so that it does not
+restart what ratd stops.
+
 ### Timeouts
 
 - **A tool call: 10 seconds.** No call waits for a command, and tmux answers in milliseconds even

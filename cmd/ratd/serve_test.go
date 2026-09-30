@@ -39,11 +39,12 @@ func (b *logBuffer) String() string {
 	return b.buf.String()
 }
 
-// newBundle generates the bundle of tenant t, with client alice, and returns its directory.
-func newBundle(t *testing.T) string {
+// newBundle generates the bundle of tenant, with client alice, and returns its directory. Tests
+// starting a tmux server use a tenant of their own, named test-ratd-*: a tenant is a tmux socket.
+func newBundle(t *testing.T, tenant string) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "bundle")
-	if _, err := mtls.Generate(dir, "t", []string{"alice"}); err != nil {
+	if _, err := mtls.Generate(dir, tenant, []string{"alice"}); err != nil {
 		t.Fatal(err)
 	}
 	return dir
@@ -58,7 +59,7 @@ func startRatd(t *testing.T, bundle string, level slog.Level) (string, *logBuffe
 		t.Fatal(err)
 	}
 	logs := &logBuffer{}
-	d, err := newDaemon(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: level})), side)
+	d, err := newDaemon(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: level})), side, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +123,7 @@ func post(t *testing.T, client *http.Client, addr, host, path string) (*http.Res
 // discovers the server, 2026-07-28; older clients initialize). The client opens its optional
 // standalone stream, which a stateless ratd refuses (405): the client carries on.
 func TestServe(t *testing.T) {
-	bundle := newBundle(t)
+	bundle := newBundle(t, "t")
 	addr, logs := startRatd(t, bundle, slog.LevelDebug)
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 	session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{
@@ -155,7 +156,7 @@ func TestServe(t *testing.T) {
 // TestServeLogs guards that the logs of the SDK, a few lines at info level for each stateless
 // request, are only kept from warnings on, unless ratd logs at debug level.
 func TestServeLogs(t *testing.T) {
-	bundle := newBundle(t)
+	bundle := newBundle(t, "t")
 	for _, level := range []slog.Level{slog.LevelInfo, slog.LevelDebug} {
 		addr, logs := startRatd(t, bundle, level)
 		if resp, err := post(t, httpClient(t, bundle, "alice"), addr, addr, endpoint); err != nil || resp.StatusCode != http.StatusOK {
@@ -171,7 +172,7 @@ func TestServeLogs(t *testing.T) {
 // being off: on a loopback address, it refuses any other host name than localhost, such as the
 // alias of an ssh tunnel.
 func TestServeHosts(t *testing.T) {
-	bundle := newBundle(t)
+	bundle := newBundle(t, "t")
 	addr, _ := startRatd(t, bundle, slog.LevelInfo)
 	client := httpClient(t, bundle, "alice")
 	for _, host := range []string{addr, "localhost", "tunnel-alias:7281"} {
@@ -185,7 +186,7 @@ func TestServeHosts(t *testing.T) {
 // another bundle, and other paths are refused, refused handshakes are logged, and HTTP/2 is not
 // negotiated.
 func TestServeRefuses(t *testing.T) {
-	bundle := newBundle(t)
+	bundle := newBundle(t, "t")
 	addr, logs := startRatd(t, bundle, slog.LevelInfo)
 
 	// http.Server.TLSConfig alone would be ignored by Serve, which would then serve plain HTTP: the
@@ -204,7 +205,7 @@ func TestServeRefuses(t *testing.T) {
 	if resp, err := post(t, noCertificate, addr, addr, endpoint); err == nil {
 		t.Errorf("no client certificate: expected an error, got %s", resp.Status)
 	}
-	if resp, err := post(t, httpClient(t, newBundle(t), "alice"), addr, addr, endpoint); err == nil {
+	if resp, err := post(t, httpClient(t, newBundle(t, "t"), "alice"), addr, addr, endpoint); err == nil {
 		t.Errorf("client of another bundle: expected an error, got %s", resp.Status)
 	}
 	if !strings.Contains(logs.String(), `msg="TLS handshake refused"`) {
@@ -223,8 +224,9 @@ func TestServeRefuses(t *testing.T) {
 // TestRunClientDirectory guards that ratd refuses to start with the directory of a client: a
 // client can not run a server with its certificate.
 func TestRunClientDirectory(t *testing.T) {
-	bundle := newBundle(t)
-	err := run(context.Background(), slog.New(slog.DiscardHandler), mtls.ClientDir(bundle, "alice"), "127.0.0.1:0")
+	bundle := newBundle(t, "t")
+	err := run(context.Background(), slog.New(slog.DiscardHandler), mtls.ClientDir(bundle, "alice"),
+		func() (net.Listener, error) { return nil, errors.New("not expected to listen") })
 	if !errors.Is(err, mtls.ErrRole) {
 		t.Errorf("expected mtls.ErrRole, got %v", err)
 	}
