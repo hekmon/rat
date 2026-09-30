@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/hekmon/rat/cmd/ratd/tools"
 )
 
 // numberedLines returns the lines "line 1" to "line count", each ending with a new line.
@@ -158,12 +160,12 @@ func TestReadFileTooFar(t *testing.T) {
 	path := writeTestFile(t, t.TempDir(), "f", numberedLines(10))
 	d := &daemon{readBudget: defaultReadBudget}
 	past := time.Now().Add(-time.Second)
-	if r := d.readFileNow(path, readFileInput{StartLine: 5}, past); r.outcome != failed ||
+	if r := d.readFileNow(path, tools.ReadFileInput{StartLine: 5}, past); r.outcome != failed ||
 		r.text != "Line 5 of "+path+" (71 B) is too far to reach in time: count from the end (negative start_line), "+
 			"or use the terminal (sed -n)." {
 		t.Errorf("from the start: unexpected result %+v", r)
 	}
-	if r := d.readFileNow(path, readFileInput{StartLine: -5}, past); r.outcome != failed ||
+	if r := d.readFileNow(path, tools.ReadFileInput{StartLine: -5}, past); r.outcome != failed ||
 		!strings.HasSuffix(r.text, "is too far to reach in time: use the terminal (tail -n).") {
 		t.Errorf("from the end: unexpected result %+v", r)
 	}
@@ -194,7 +196,7 @@ func TestReadFileTimeout(t *testing.T) {
 	timeout, reader := toolTimeout, fileReader
 	toolTimeout = 200 * time.Millisecond
 	stuck := make(chan struct{})
-	fileReader = func(*daemon, string, readFileInput, time.Time) result {
+	fileReader = func(*daemon, string, tools.ReadFileInput, time.Time) result {
 		<-stuck
 		return result{}
 	}

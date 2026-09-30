@@ -16,7 +16,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/hekmon/rat/cmd/ratd/connect"
+	"github.com/hekmon/rat/cmd/ratd/tools"
 	"github.com/hekmon/rat/mtls"
 	"github.com/hekmon/rat/tmux"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -74,7 +76,10 @@ type daemon struct {
 	// readBudget bounds what a read sends back, in bytes: once in the context of a model, it can
 	// not be taken back
 	readBudget int
-	// schemas spares building the schemas of the tools again for each request, which builds its
+	// inputSchemas are the input schemas of the tools, by name, built once: the schema cache keys
+	// them by pointer
+	inputSchemas map[string]*jsonschema.Schema
+	// schemas spares resolving the schemas of the tools again for each request, which builds its
 	// own MCP server
 	schemas *mcp.SchemaCache
 }
@@ -87,6 +92,10 @@ func newDaemon(logger *slog.Logger, side *mtls.Side, controller *tmux.Controller
 	host, err := os.Hostname()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read the host name: %w", err)
+	}
+	inputSchemas, err := tools.Schemas()
+	if err != nil {
+		return nil, err
 	}
 	username := strconv.Itoa(os.Getuid())
 	if u, err := user.Current(); err == nil {
@@ -103,7 +112,8 @@ func newDaemon(logger *slog.Logger, side *mtls.Side, controller *tmux.Controller
 		sdkLogger = slog.New(minLevel{Handler: logger.Handler(), min: slog.LevelWarn})
 	}
 	return &daemon{logger: logger, sdkLogger: sdkLogger, side: side, controller: controller, host: host, user: username,
-		instructions: instructions, readBudget: readBudget, schemas: mcp.NewSchemaCache()}, nil
+		instructions: instructions, readBudget: readBudget, inputSchemas: inputSchemas,
+		schemas: mcp.NewSchemaCache()}, nil
 }
 
 // minLevel passes on the records of its handler from a minimum level only.

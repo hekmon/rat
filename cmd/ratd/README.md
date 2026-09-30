@@ -188,6 +188,12 @@ rat fit long running commands: an agent starts one, carries on, and comes back t
   header says so when history was asked. `scrollback_rows` is unsigned, so that the schema
   refuses a negative number.
 
+The inputs of the tools (names, types, JSON schemas) are declared in package `cmd/ratd/tools`,
+which rat imports: from protocol 2026-07-28 on, an argument whose schema carries an
+`x-mcp-header` annotation travels in an HTTP header too (SEP-2243), which rat computes from the
+same schemas. A rat and a ratd of the same version agree on them, and rat never learns the tools
+from ratd. ratd builds the schemas once, at startup, and serves the same ones to every request.
+
 Text and keys are two tools rather than one `send_input` taking either: JSON Schema can not say
 "exactly one of", so a small model would learn it by failing, where two tools each have a schema
 the SDK validates. One call stays one act either way: which keys to press usually depends on

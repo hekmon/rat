@@ -11,27 +11,23 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/hekmon/rat/cmd/ratd/tools"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
-
-// writeFileInput is the input of write_file. The content is required, and may be empty.
-type writeFileInput struct {
-	Path    string `json:"path" jsonschema:"absolute, or starting with ~/ for the home directory"`
-	Content string `json:"content" jsonschema:"the whole content of the file, written as is"`
-}
 
 // addFileTools adds the tools moving files on the machine of ratd, which reads and writes them
 // itself, as its user: tmux, its terminal backend, would only add a round trip. They act on files
 // of rat's machine only: no open world.
 func (d *daemon) addFileTools(server *mcp.Server, session string) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "write_file",
+		Name:        tools.WriteFile,
+		InputSchema: d.inputSchemas[tools.WriteFile],
 		Description: "Write a whole text file on the machine of the terminals, creating or replacing it, with exactly " +
 			"the content given: nothing is added, end it with a new line if the file needs one. The path is absolute " +
 			"or starts with ~/. Missing directories are created. For binary content, use the terminal (base64 -d).",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(true), IdempotentHint: true, OpenWorldHint: ptr(false)},
-	}, tool(d, session, "write_file", func(writeFileInput) string { return "" },
-		func(ctx context.Context, in writeFileInput) result { return d.writeFile(ctx, in) }))
+	}, tool(d, session, tools.WriteFile, func(tools.WriteFileInput) string { return "" },
+		func(ctx context.Context, in tools.WriteFileInput) result { return d.writeFile(ctx, in) }))
 	d.addReadFileTool(server, session)
 }
 
@@ -64,7 +60,7 @@ const fileTimeoutText = "The file system did not answer in time: %s may still be
 // operations can not be interrupted: on a file system not answering (a stale NFS mount), the call
 // returns at the end of its context, logged as a warning, while the write stays blocked until the
 // file system answers.
-func (d *daemon) writeFile(ctx context.Context, in writeFileInput) result {
+func (d *daemon) writeFile(ctx context.Context, in tools.WriteFileInput) result {
 	attrs := []any{"path", in.Path, "bytes", len(in.Content)}
 	path, err := absolutePath(in.Path)
 	if err != nil {

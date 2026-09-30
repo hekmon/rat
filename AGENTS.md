@@ -30,6 +30,8 @@ at once, and to know what they leave behind.
 - **`cmd/ratd/connect`**: how a client reaches ratd, as ratd defines it: the path and default
   port it serves, and the flags naming a ratd and a client directory, shared by rat and
   `rat-tool check`.
+- **`cmd/ratd/tools`**: the inputs of ratd's tools (names, types, schemas), which ratd serves and
+  rat reads to build the requests it relays.
 
 A tmux session can not exist without a window: the controller creates sessions with a first
 window named `main`, and a session disappears with its last window. ratd hides this from agents:

@@ -15,30 +15,22 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/hekmon/rat/cmd/ratd/tools"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
-
-// readFileInput is the input of read_file. start_line 0 is no start: lines count from 1, and the
-// schema can not tell 0 from a missing number. max_lines is unsigned: the schema then refuses a
-// negative number.
-type readFileInput struct {
-	Path        string `json:"path" jsonschema:"absolute, or starting with ~/ for the home directory"`
-	StartLine   int    `json:"start_line,omitempty" jsonschema:"the first line to read, from 1; negative counts from the end (-1 is the last line)"`
-	MaxLines    uint   `json:"max_lines,omitempty" jsonschema:"the most lines to read, all by default"`
-	LineNumbers bool   `json:"line_numbers,omitempty" jsonschema:"prefix each line with its number and a tab, as cat -n does: to refer to lines, not to write the content back"`
-}
 
 // addReadFileTool adds read_file.
 func (d *daemon) addReadFileTool(server *mcp.Server, session string) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "read_file",
+		Name:        tools.ReadFile,
+		InputSchema: d.inputSchemas[tools.ReadFile],
 		Description: fmt.Sprintf("Read a text file on the machine of the terminals: whole lines, from start_line (1 by "+
 			"default, negative counts from the end: -100 for the last 100 lines), at most max_lines (all by default). "+
 			"The result holds at most %s: a larger file read without a range tells its size and line count, for you "+
 			"to pick a range. The path is absolute or starts with ~/.", sizeText(d.readBudget)),
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: ptr(false)},
-	}, tool(d, session, "read_file", func(readFileInput) string { return "" },
-		func(ctx context.Context, in readFileInput) result { return d.readFile(ctx, in) }))
+	}, tool(d, session, tools.ReadFile, func(tools.ReadFileInput) string { return "" },
+		func(ctx context.Context, in tools.ReadFileInput) result { return d.readFile(ctx, in) }))
 }
 
 // fileReader reads a file for read_file: readFileNow. A variable for tests, which need a file
@@ -50,7 +42,7 @@ var fileReader = (*daemon).readFileNow
 // 80 ms from the page cache, but in seconds from a disk. As for write_file, a file system not
 // answering fails the call at the end of its context, logged as a warning, the read staying
 // blocked until it answers.
-func (d *daemon) readFile(ctx context.Context, in readFileInput) result {
+func (d *daemon) readFile(ctx context.Context, in tools.ReadFileInput) result {
 	attrs := []any{"path", in.Path}
 	path, err := absolutePath(in.Path)
 	if err != nil {
@@ -79,7 +71,7 @@ type fileRead struct {
 	d    *daemon
 	path string
 	file *os.File
-	in   readFileInput
+	in   tools.ReadFileInput
 	// size is the size of the file when opened, which bounds the read: a file growing meanwhile
 	// (a log) is read as it was, consistently with the size told. Zero for files showing no size
 	// (/proc), read to their end within the deadline.
@@ -99,7 +91,7 @@ var errDeadline = errors.New("scan deadline reached")
 // readFileNow reads the lines of in from the regular file at path, an absolute clean path,
 // scanning it until deadline at most. What it sends is checked first, as it can not be taken back
 // from the context of a model: a regular file, a bounded read, text, the read budget.
-func (d *daemon) readFileNow(path string, in readFileInput, deadline time.Time) result {
+func (d *daemon) readFileNow(path string, in tools.ReadFileInput, deadline time.Time) result {
 	info, err := os.Stat(path)
 	if err != nil {
 		return d.fileFailure(err, "Reading "+path, read, false)

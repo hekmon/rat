@@ -7,6 +7,7 @@ import (
 	"math"
 	"unicode/utf8"
 
+	"github.com/hekmon/rat/cmd/ratd/tools"
 	"github.com/hekmon/rat/tmux"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -15,24 +16,18 @@ import (
 // learns its terminals did not exist, rather than finding a lone main.
 const freshMainHeader = "[your terminals did not exist: main was just created, bash is starting]"
 
-// readWindowInput is the input of read_window. The rows are unsigned: the schema then refuses a
-// negative number.
-type readWindowInput struct {
-	Window         string `json:"window" jsonschema:"the name of the window"`
-	ScrollbackRows uint   `json:"scrollback_rows,omitempty" jsonschema:"rows of history to include above the screen"`
-}
-
 // addScreenTools adds the tool reading the windows of session. It reads rat's terminals only: no
 // open world.
 func (d *daemon) addScreenTools(server *mcp.Server, session string) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "read_window",
+		Name:        tools.ReadWindow,
+		InputSchema: d.inputSchemas[tools.ReadWindow],
 		Description: fmt.Sprintf("Read what a window displays now: its screen (%d columns, %d rows), preceded by up to "+
 			"scrollback_rows rows of history (0 by default). The result holds at most %s: for a long output, redirect "+
 			"it to a file and use read_file.", tmux.ScreenColumns, tmux.ScreenRows, sizeText(d.readBudget)),
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: ptr(false)},
-	}, tool(d, session, "read_window", func(in readWindowInput) string { return in.Window },
-		func(ctx context.Context, in readWindowInput) result { return d.readWindow(ctx, session, in) }))
+	}, tool(d, session, tools.ReadWindow, func(in tools.ReadWindowInput) string { return in.Window },
+		func(ctx context.Context, in tools.ReadWindowInput) result { return d.readWindow(ctx, session, in) }))
 }
 
 // readWindow returns what window displays in session, preceded by the rows of history asked, with
@@ -40,7 +35,7 @@ func (d *daemon) addScreenTools(server *mcp.Server, session string) {
 // and its cursor, a cut. A missing session is created, the agent then reading its fresh main.
 // The result fits the read budget: the history is cut to the end that fits, and a screen over the
 // budget alone is refused rather than cut. The log line tells the rows read, never the content.
-func (d *daemon) readWindow(ctx context.Context, session string, in readWindowInput) result {
+func (d *daemon) readWindow(ctx context.Context, session string, in tools.ReadWindowInput) result {
 	rows := int(min(in.ScrollbackRows, math.MaxInt))
 	attrs := []any{"scrollback_rows", rows}
 	snapshot, err := d.controller.Capture(ctx, session, in.Window, rows)

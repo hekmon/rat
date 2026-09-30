@@ -8,43 +8,39 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hekmon/rat/cmd/ratd/tools"
 	"github.com/hekmon/rat/tmux"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
-
-// noInput is the input of a tool taking no argument.
-type noInput struct{}
-
-// nameInput is the input of a tool acting on a window it names.
-type nameInput struct {
-	Name string `json:"name" jsonschema:"the name of the window: letters, digits, '_' and '-', up to 32 characters"`
-}
 
 // addWindowTools adds the tools listing, creating and closing the windows of session. They act on
 // rat's terminals only: no open world.
 func (d *daemon) addWindowTools(server *mcp.Server, session string) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "list_windows",
+		Name:        tools.ListWindows,
+		InputSchema: d.inputSchemas[tools.ListWindows],
 		Description: "List your terminals: each window with its foreground command, working directory and last " +
 			"activity. The cheap way to check whether a command finished: bash in the foreground means the " +
 			"terminal waits for input (bash builtins and loops show as bash too, and ssh shows as ssh even when idle).",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: ptr(false)},
-	}, tool(d, session, "list_windows", func(noInput) string { return "" },
-		func(ctx context.Context, _ noInput) result { return d.listWindows(ctx, session) }))
+	}, tool(d, session, tools.ListWindows, func(tools.NoInput) string { return "" },
+		func(ctx context.Context, _ tools.NoInput) result { return d.listWindows(ctx, session) }))
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "create_window",
+		Name:        tools.CreateWindow,
+		InputSchema: d.inputSchemas[tools.CreateWindow],
 		Description: "Create a terminal: a window running bash, in your home directory. Windows persist across " +
 			"your restarts: call list_windows first, a window named main already exists. Wait for the prompt of a " +
 			"new window (read_window) before sending text to it.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(false), IdempotentHint: true, OpenWorldHint: ptr(false)},
-	}, tool(d, session, "create_window", func(in nameInput) string { return in.Name },
-		func(ctx context.Context, in nameInput) result { return d.createWindow(ctx, session, in.Name) }))
+	}, tool(d, session, tools.CreateWindow, func(in tools.NameInput) string { return in.Name },
+		func(ctx context.Context, in tools.NameInput) result { return d.createWindow(ctx, session, in.Name) }))
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "close_window",
+		Name:        tools.CloseWindow,
+		InputSchema: d.inputSchemas[tools.CloseWindow],
 		Description: "Close a window, terminating what runs in it.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(true), IdempotentHint: true, OpenWorldHint: ptr(false)},
-	}, tool(d, session, "close_window", func(in nameInput) string { return in.Name },
-		func(ctx context.Context, in nameInput) result { return d.closeWindow(ctx, session, in.Name) }))
+	}, tool(d, session, tools.CloseWindow, func(in tools.NameInput) string { return in.Name },
+		func(ctx context.Context, in tools.NameInput) result { return d.closeWindow(ctx, session, in.Name) }))
 }
 
 // listWindows lists the windows of session, one per line. A missing session is created, the
