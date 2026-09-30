@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -105,6 +106,79 @@ func TestRun(t *testing.T) {
 		t.Errorf("expected no tmux server left, got %v", err)
 	}
 	_ = c.StopServer(context.Background())
+}
+
+// TestRunCallInFlight guards the order of the shutdown: the door closes before the terminals
+// stop, so that a call in flight when ratd stops still reaches them, rather than being told they
+// are restarting. The call is held in flight inside tmux, its server stopped by SIGSTOP until the
+// door is closed. Were the terminals stopped with the door, the SIGTERM sent to the server would
+// end it as soon as it resumes, failing the call.
+func TestRunCallInFlight(t *testing.T) {
+	requireTmux(t)
+	const tenant = "test-ratd-inflight"
+	bundle := newBundle(t, tenant)
+	addr, logs, stop := runRatd(t, bundle)
+	// serving: the tmux server runs
+	if resp, err := post(t, httpClient(t, bundle, "alice"), addr, addr, endpoint); err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected ratd to serve, got %v, %v\n%s", resp, err, logs)
+	}
+	out, err := exec.Command("tmux", "-L", "rat-"+tenant, "display-message", "-p", "#{pid}").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := strings.TrimSpace(string(out))
+	if err = exec.Command("kill", "-STOP", pid).Run(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = exec.Command("kill", "-CONT", pid).Run() })
+
+	type response struct {
+		status int
+		body   string
+		err    error
+	}
+	responses := make(chan response, 1)
+	go func() {
+		call := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_windows","arguments":{}}}`
+		req, err := http.NewRequest(http.MethodPost, "https://"+addr+endpoint, strings.NewReader(call))
+		if err != nil {
+			responses <- response{err: err}
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		req.Header.Set("Mcp-Protocol-Version", "2025-06-18")
+		resp, err := httpClient(t, bundle, "alice").Do(req)
+		if err != nil {
+			responses <- response{err: err}
+			return
+		}
+		defer resp.Body.Close()
+		data, err := io.ReadAll(resp.Body)
+		responses <- response{status: resp.StatusCode, body: string(data), err: err}
+	}()
+	eventually(t, "call blocked in tmux", func() bool {
+		return exec.Command("pgrep", "-f", "rat-"+tenant+" .*list-windows").Run() == nil
+	})
+	stopped := make(chan error, 1)
+	go func() { stopped <- stop() }()
+	eventually(t, "door closed to new connections", func() bool {
+		conn, err := net.Dial("tcp", addr)
+		if err == nil {
+			_ = conn.Close()
+		}
+		return err != nil
+	})
+	if err = exec.Command("kill", "-CONT", pid).Run(); err != nil {
+		t.Fatal(err)
+	}
+	resp := <-responses
+	if resp.err != nil || resp.status != http.StatusOK || !strings.Contains(resp.body, "main: bash in ") {
+		t.Errorf("expected the call in flight to reach the terminals, got %d, %v: %s\n%s", resp.status, resp.err, resp.body, logs)
+	}
+	if err = <-stopped; err != nil {
+		t.Error(err)
+	}
 }
 
 // TestRunGivesUp guards that ratd exits with an error, closing the door, when its tmux server dies

@@ -170,12 +170,15 @@ rat fit long running commands: an agent starts one, carries on, and comes back t
   defaults: false (small models forget it), true (runs text meant to wait, against "Enter only
   when asked"). The description tells what the text meets: at a bash prompt it waits on the
   command line, new lines included, until Enter; while a command runs, or before a new window
-  shows its prompt, it is read as typed, each line running.
+  shows its prompt, it is read as typed, each line running. An empty text only presses Enter; an
+  empty text without Enter sends nothing, a message rather than an error.
 - **`send_keys`** `{window, keys}`: presses keys in order. The description lists the names the
   controller accepts, one per key (aliases are accepted, not shown): a printable character,
   `Space`, `Enter`, `Tab`, `BTab`, `BSpace`, `Escape`, `Up`, `Down`, `Left`, `Right`, `Home`,
   `End`, `PageUp`, `PageDown`, `Insert`, `Delete`, `F1` to `F12`, with the `C-`, `M-` and `S-`
-  modifiers, combinable. An unknown name is refused with a pointer to `send_text`.
+  modifiers, combinable. An unknown name is refused, naming it (`tmux.CheckKey`), with a pointer
+  to `send_text`, and nothing is sent; so is an empty list of keys. The result repeats the keys
+  pressed, which the logs never hold.
 - **`read_window`** `{window, scrollback_rows}`: the screen (200×24), preceded by up to
   `scrollback_rows` rows of history (0 by default). The header tells how many rows it holds and
   why fewer than asked (a shorter history, a full-screen program, the read budget), and a

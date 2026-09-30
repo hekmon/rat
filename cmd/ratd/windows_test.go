@@ -183,9 +183,9 @@ func TestToolFailures(t *testing.T) {
 		"The terminals are restarting after a failure, and every window was lost.")
 }
 
-// TestWindowToolsAnnotations guards the hints of the window tools, set explicitly: the
-// specification reads a missing destructive or open world hint as true.
-func TestWindowToolsAnnotations(t *testing.T) {
+// TestToolsAnnotations guards the hints of the tools, set explicitly: the specification reads a
+// missing destructive or open world hint as true. Only the inputs reach an open world.
+func TestToolsAnnotations(t *testing.T) {
 	session, _, _, _ := connectTools(t, "test-ratd-hints")
 	tools, err := session.ListTools(context.Background(), nil)
 	if err != nil {
@@ -195,6 +195,8 @@ func TestWindowToolsAnnotations(t *testing.T) {
 		"list_windows":  {ReadOnlyHint: true, OpenWorldHint: ptr(false)},
 		"create_window": {DestructiveHint: ptr(false), IdempotentHint: true, OpenWorldHint: ptr(false)},
 		"close_window":  {DestructiveHint: ptr(true), IdempotentHint: true, OpenWorldHint: ptr(false)},
+		"send_text":     {DestructiveHint: ptr(true), OpenWorldHint: ptr(true)},
+		"send_keys":     {DestructiveHint: ptr(true), OpenWorldHint: ptr(true)},
 	}
 	for _, tool := range tools.Tools {
 		want, ok := expected[tool.Name]

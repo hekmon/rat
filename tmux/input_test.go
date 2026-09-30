@@ -170,13 +170,13 @@ func TestSendKeys(t *testing.T) {
 	}
 	eventually(t, "sleep interrupted", foregroundIs(c, "s", FirstWindow, "bash"))
 	for _, key := range []string{"Enter", "Escape", "Up", "F12", "M-x", "C-S-Left", "y", "^"} {
-		if !keyFormat.MatchString(key) {
-			t.Errorf("key %q refused", key)
+		if err := CheckKey(key); err != nil {
+			t.Errorf("key %q refused: %v", key, err)
 		}
 	}
 	for _, key := range []string{"", "Ctrl-C", "ab", "F13", "C-", "enter"} {
-		if keyFormat.MatchString(key) {
-			t.Errorf("key %q accepted", key)
+		if err := CheckKey(key); !errors.Is(err, ErrInvalidKey) {
+			t.Errorf("key %q: expected ErrInvalidKey, got %v", key, err)
 		}
 	}
 }

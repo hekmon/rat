@@ -196,6 +196,7 @@ func (d *daemon) newServer(session string) *mcp.Server {
 	})
 	server.AddReceivingMiddleware(d.logRequests(session))
 	d.addWindowTools(server, session)
+	d.addInputTools(server, session)
 	return server
 }
 

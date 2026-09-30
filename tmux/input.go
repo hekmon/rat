@@ -85,6 +85,16 @@ func (c *Controller) SendText(ctx context.Context, session, window, text string,
 	return nil
 }
 
+// CheckKey returns an error wrapping ErrInvalidKey if key is not a key name SendKeys accepts: a
+// printable ASCII character or a named key (Enter, Escape, Up, F5…), with optional modifiers (C-,
+// M-, S-). It is the rule SendKeys applies, for callers to find which key is refused.
+func CheckKey(key string) error {
+	if !keyFormat.MatchString(key) {
+		return fmt.Errorf("%w: %q", ErrInvalidKey, key)
+	}
+	return nil
+}
+
 // SendKeys presses keys in window of session, in order. Keys are tmux key names, such as
 // "C-c", "Escape", "Up" or "F5"; the error wraps ErrInvalidKey for an unknown one, and nothing
 // is sent. A tmux mode a human left the window in (copy mode, to scroll back) is left first: in a
@@ -95,8 +105,8 @@ func (c *Controller) SendKeys(ctx context.Context, session, window string, keys 
 		return err
 	}
 	for _, key := range keys {
-		if !keyFormat.MatchString(key) {
-			return fmt.Errorf("%w: %q", ErrInvalidKey, key)
+		if err := CheckKey(key); err != nil {
+			return err
 		}
 	}
 	tg := target(session, window)
