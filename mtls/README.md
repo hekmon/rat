@@ -52,9 +52,13 @@ its client, which is its tmux session in the tenant: ratd keeps each client to i
 logs its name with each call. Agents meant to share terminals share a client certificate.
 
 Names are carried in the subject common name, and are plain names, validated as tmux names are
-(letters, digits, `_` and `-`), when generating and when loading. They are required: the tmux
-controller accepts an empty tenant for its default socket, but a tenant served by ratd is always
-named.
+(package `tmux/names`: letters, digits, `_` and `-`), when generating and when loading. They are
+required: the tmux controller accepts an empty tenant for its default socket, but a tenant
+served by ratd is always named.
+
+The CA names the tenant too, so that a client directory tells which tenant it reaches. Its
+subject also carries the organization `rat CA`, which keeps it distinct from the subject of the
+server certificate: equal to its issuer, the server certificate would be self-issued (RFC 5280).
 
 Clients are fixed when the bundle is generated: adding one, hence a session, means a new bundle
 for everyone. A tenant has a handful of clients, and regenerating is cheap.
@@ -145,6 +149,33 @@ and it only shows as an opaque handshake error. Clients have a directory of thei
 (`clients/`), so that a client named `server` does not collide with the server. Keys are
 readable by their owner only, and so are the directories holding them.
 
-Generating never overwrites: an existing output directory is refused, as replacing a bundle
-silently breaks every client deployed with it. Regenerating is a deliberate act: removing the
-directory, or choosing another one.
+Generating never overwrites: an existing output directory is refused, even empty, as replacing
+a bundle silently breaks every client deployed with it. Regenerating is a deliberate act:
+removing the directory, or choosing another one. Missing parents are created, as `mkdir -p`
+does, and a failure removes the output directory, which did not exist before. Everything is
+issued in memory first, so that only writing can fail halfway.
+
+Rejected: writing into a temporary directory, then renaming it to the output directory at the
+end, which a failure would leave untouched. A rename replaces an existing empty directory,
+silently.
+
+## Loading a side
+
+Each side loads its directory at startup, and checks it, to fail while the admin is still there
+rather than at the first connection, with an opaque handshake error. The side is the one whose
+certificate the directory holds (`server.crt` or `client.crt`). The checks run in a fixed order,
+each with its own error, so that `rat-tool` reports one line per check, the ones before a
+failure having passed:
+
+1. **Files**: the files of one side are present, each a single PEM block. Several certificates
+   in `ca.crt` would all be trusted, as a certificate pool built from the file takes each of
+   them (and skips the blocks it can not parse).
+2. **Key permissions**: the key is readable by its owner only, as ssh requires: a key copied
+   without its mode gets the one of the umask, usually readable by every user, and a client key
+   grants a shell. Not checked on Windows, where harnesses may run and modes mean nothing.
+3. **Key**: the key matches the certificate.
+4. **CA**: `ca.crt` is a CA, which signed the certificate.
+5. **Role**: the certificate authenticates the side its file names, and only it: a certificate
+   with both roles could stand for the other side.
+6. **Validity**: the certificate and the CA are valid now.
+7. **Names**: the certificate and the CA carry plain names.
