@@ -1,8 +1,9 @@
 # RAT: Remote Agent Terminal
 
-RAT is an MCP server giving agents persistent terminals on a remote machine. Agents can run
+RAT gives agents shell access over MCP: persistent terminals on a remote machine. Agents can run
 several long running commands in parallel without being blocked, and find them back after a
-restart or a context compaction.
+restart or a context compaction. It uses tmux as its terminal emulator, but it is not a tmux MCP
+server: agents see a few tools, each serving a purpose, never tmux itself.
 
 In effect, rat hands agents persistent remote shells: a human operator must be able to cut them
 at once, and to know what they leave behind.
@@ -50,6 +51,10 @@ An agent closing all its windows simply finds a fresh `main` on its next call.
 - **What reaches a model is bounded.** Window captures and file reads are checked (text, a
   regular file) and bounded (the read budget) before being sent: what reaches a model's context
   can not be taken back.
+- **ratd is the entry point, and a standard MCP server.** A harness written with any MCP SDK must
+  be able to use it, with a client certificate as the only addition. rat adapts ratd for the
+  harnesses that can not present one: it is never a requirement, and nothing is added to it
+  that ratd would lack.
 - **KISS.** Prefer what tmux already provides over rebuilding it.
 
 ## Isolation model
