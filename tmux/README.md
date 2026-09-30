@@ -337,6 +337,19 @@ load-buffer -b rat-input-N - ; copy-mode -q -t =session:=window ; paste-buffer -
 
 Nothing is added nor removed, and Enter is only pressed when asked, as a separate key.
 
+### A paste is all or nothing
+
+A command ended by its context kills its tmux client. Killed while `load-buffer` still reads the
+text, the invocation fails whole: nothing is pasted, and no buffer is left (measured with a
+client killed after 1 MB of a stream, tmux 3.3a and 3.7c; the same stream not killed pastes all
+of it). Killed once the text is read, the server holds every command of the invocation, and
+`paste-buffer` writes the buffer at once. A caller canceling an input (a timeout, an agent
+abandoning its call) therefore never pastes part of a text. `TestSendTextAllOrNothing` guards it.
+
+This holds because the text is held in memory, whole: a text streamed from a source ending early
+would be pasted as far as it went, `load-buffer` taking the end of its input for the end of the
+text.
+
 ### Pasted as a human pastes
 
 A terminal program receives bytes, and can not tell a paste from typing: pasting `rm -rf x`

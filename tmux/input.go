@@ -36,7 +36,19 @@ var keyFormat = regexp.MustCompile(`^(?:[CMS]-)*(?:[!-~]|Enter|Escape|Tab|BTab|B
 // terminal whole: no other input can interleave with it. A tmux mode a human left the window in
 // (copy mode, to scroll back) is left first: in a mode, tmux would paste the text unmarked.
 // The error wraps ErrSessionNotFound or ErrWindowNotFound if they do not exist.
+//
+// A paste is all or nothing: a command ended by its context while the text streams to tmux pastes
+// none of it, and leaves no buffer behind.
 func (c *Controller) SendText(ctx context.Context, session, window, text string, enter bool) error {
+	var stdin io.Reader
+	if text != "" {
+		stdin = strings.NewReader(text)
+	}
+	return c.sendText(ctx, session, window, stdin, enter)
+}
+
+// sendText is SendText, the text read from text, nil when empty: tests stream it.
+func (c *Controller) sendText(ctx context.Context, session, window string, text io.Reader, enter bool) error {
 	if err := checkNames(session, window); err != nil {
 		return err
 	}
@@ -48,12 +60,10 @@ func (c *Controller) SendText(ctx context.Context, session, window, text string,
 	// inputs from interleaving, and why a text and its Enter are sent together.
 	tg := target(session, window)
 	var buffer string
-	var stdin io.Reader
 	var args []string
-	if text != "" {
+	if text != nil {
 		// load-buffer creates no buffer from an empty input, and paste-buffer would then fail
 		buffer = "rat-input-" + strconv.FormatUint(c.inputBuffers.Add(1), 10)
-		stdin = strings.NewReader(text)
 		// copy stdin ("-") into a buffer of its own
 		args = []string{"load-buffer", "-b", buffer, "-", ";"}
 	}
@@ -61,7 +71,7 @@ func (c *Controller) SendText(ctx context.Context, session, window, text string,
 	// load-buffer, which waits while reading stdin and lets other clients run meanwhile: a mode
 	// entered then would still be on for the paste.
 	args = append(args, leaveModes(tg)...)
-	if text != "" {
+	if text != nil {
 		// paste the buffer into the window, where:
 		//  -r keeps new lines as is (tmux would replace them with carriage returns)
 		//  -d deletes the buffer once pasted
@@ -71,7 +81,7 @@ func (c *Controller) SendText(ctx context.Context, session, window, text string,
 	if enter {
 		args = append(args, ";", "send-keys", "-t", tg, "Enter")
 	}
-	if _, err := c.runWithStdin(ctx, stdin, args...); err != nil {
+	if _, err := c.runWithStdin(ctx, text, args...); err != nil {
 		if buffer != "" {
 			// -d only deletes the buffer once pasted: a failed paste leaves the text in tmux.
 			// Not ctx: when it is canceled (which may be why the paste failed), the cleanup would

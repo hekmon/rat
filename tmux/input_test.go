@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -339,5 +341,70 @@ func TestCheckBracketedPaste(t *testing.T) {
 		if got := errors.Is(err, ErrBracketedPasteOverridden); got != overridden || !got && err != nil {
 			t.Errorf("profile %s: expected overridden %v, got %v", profile, overridden, err)
 		}
+	}
+}
+
+// stallingReader serves data, then signals stalled and blocks until release is closed: a text
+// still streaming to tmux. Released before the tmux client is killed, it would end the text
+// early, and tmux would paste what it received: a text held in memory never ends early.
+type stallingReader struct {
+	data             *strings.Reader
+	stalled, release chan struct{}
+}
+
+func (r *stallingReader) Read(p []byte) (int, error) {
+	if r.data.Len() > 0 {
+		return r.data.Read(p)
+	}
+	close(r.stalled)
+	<-r.release
+	return 0, io.EOF
+}
+
+// TestSendTextAllOrNothing guards that a paste is all or nothing: a command ended by its context
+// while its text streams to tmux (killing the tmux client in load-buffer) pastes none of it, and
+// leaves no buffer. The window runs cat on a raw terminal, which writes all it receives to a file:
+// the line discipline of a cooked one would keep a few KiB of a line without a new line. A paste
+// afterwards shows the file receives what is pasted. The text is released once the client is
+// gone: until then, the command waits for the goroutine copying it (os/exec), which WaitDelay
+// only frees from a pipe, not from a reader blocking by itself.
+func TestSendTextAllOrNothing(t *testing.T) {
+	c := startTestServer(t, "sendtextcut")
+	ctx := context.Background()
+	if err := c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "pasted")
+	typeCommand(t, c, "s", FirstWindow, "stty raw -echo; cat > "+out)
+	eventually(t, "cat in the foreground", foregroundIs(c, "s", FirstWindow, "cat"))
+
+	text := &stallingReader{data: strings.NewReader(strings.Repeat("a", 1<<20)), stalled: make(chan struct{}),
+		release: make(chan struct{})}
+	sendCtx, cancel := context.WithCancel(ctx)
+	sent := make(chan error, 1)
+	go func() { sent <- c.sendText(sendCtx, "s", FirstWindow, text, false) }()
+	<-text.stalled
+	cancel()
+	eventually(t, "tmux client killed", func() (bool, string) {
+		err := exec.Command("pgrep", "-f", c.socketName()+" .*load-buffer").Run()
+		return err != nil, fmt.Sprintf("pgrep: %v", err)
+	})
+	close(text.release)
+	if err := <-sent; err == nil {
+		t.Fatal("expected the canceled paste to fail")
+	}
+
+	if err := c.SendText(ctx, "s", FirstWindow, "after", false); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "control paste received", func() (bool, string) {
+		data, err := os.ReadFile(out)
+		return err == nil && len(data) > 0, fmt.Sprintf("%d bytes, %v", len(data), err)
+	})
+	if data, _ := os.ReadFile(out); string(data) != "after" {
+		t.Errorf("expected nothing of the canceled paste, got %d bytes before the control one", len(data)-len("after"))
+	}
+	if buffers, err := c.run(ctx, "list-buffers", "-F", "#{buffer_name}"); err != nil || buffers != "" {
+		t.Errorf("expected no buffer left, got %q, %v", buffers, err)
 	}
 }
