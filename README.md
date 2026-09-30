@@ -323,9 +323,9 @@ leaves the rest to how you deploy it:
 - **Restrict who reaches the port.** Mutual TLS refuses whoever has no client certificate, but a
   firewall letting only the machines of the agents in costs nothing.
 - **Watch, read-only.** Attach to the terminals of a tenant as its user, in read-only mode:
-  `sudo -u rat tmux -L rat-prod attach -r -t alice` (the socket is named after the tenant, the
-  session after the client).
-  The terminals are the agents': what you type would reach them, and a window you resize stays so.
+  `sudo -u rat tmux -L rat-prod attach -r -t alice` (the socket is named after the tenant, here
+  `prod`, and the session after the client, here `alice`: the terminals of that client). The
+  terminals are the agents': what you type would reach them, and a window you resize stays so.
 - **What outlives the service.** Stopping the service stops the terminals and whatever agents
   started, detached or not (with systemd; on macOS, end what is left with `pkill -u rat`, see
   Deployment). What an agent set up to outlive it, as the user (crontab, user services,
