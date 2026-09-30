@@ -156,9 +156,10 @@ cp -r bundle-prod/server /etc/rat/prod/ && chown -R rat /etc/rat/prod
 # /etc/systemd/system/ratd-prod.service
 [Unit]
 Description=rat: persistent terminals for agents, tenant prod
-# ratd only listens: binding every interface needs no configured address
-# (binding a given one would need network-online.target)
-After=network.target
+# the address of --listen must be up when ratd binds it, or ratd exits: a VPN address needs
+# the unit of the VPN before this one as well (After=wg-quick@wg0.service)
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 # a Unix user for rat alone: what agents do is bounded by it
@@ -337,8 +338,12 @@ leaves the rest to how you deploy it:
 - **Client keys are credentials.** A client key grants a shell as that user: give each harness its
   own (logs then tell who did what), never copy one elsewhere, and generate a new bundle to revoke
   one (bundles are closed: no certificate can be added nor removed).
-- **Restrict who reaches the port.** Mutual TLS refuses whoever has no client certificate, but a
-  firewall letting only the machines of the agents in costs nothing.
+- **Choose who can reach the port.** `--listen :7281`, the default, answers on every address of
+  the machine, the internet included when the machine is on it, and mutual TLS is made for
+  that: whoever holds no client certificate is refused during the handshake. What stays exposed
+  is the handshake itself, to a flaw yet unknown in Go's TLS or in ratd. A firewall letting only
+  the machines of the agents in removes most of that exposure at no cost, and a private or VPN
+  address (`--listen 10.8.0.2:7281`) all of it.
 - **Watch, read-only.** Attach to the terminals of a tenant as its user, in read-only mode:
   `sudo -u rat tmux -L rat-prod attach -r -t alice` (the socket is named after the tenant, here
   `prod`, and the session after the client, here `alice`: the terminals of that client). The
