@@ -440,6 +440,14 @@ needed to interpret it. How the screen is captured depends on what the terminal 
   the request by the history limit it sets, beyond which no scrollback is kept.
 - The cursor is not told: its position is in screen rows, which joined rows and removed empty
   lines make point at the wrong line, and it sits at the end of the prompt anyway.
+- The size of the screen alone is told, for the caller to bound what it sends (a screen over a
+  budget can then be refused rather than cut). The content can not tell it once it includes
+  scrollback: a line wrapped from the scrollback onto the screen is joined into one line (a line
+  of 100000 characters then comes whole, the screen included). The screen is therefore captured
+  a second time, alone and unjoined, before the content: tmux prints exactly one line per row,
+  empty rows included (3.3a and 3.7c), so the output splits at the height of the pane. It costs
+  a screen more of output, about 5 KB. Rejected: capturing the screen alone only when needed, in
+  a second invocation, which would measure another frame than the content.
 
 ### A full-screen program
 
@@ -471,11 +479,11 @@ captured the wrong way, and a cursor could come from another frame than the cont
 program redrawing. Both are read in a single invocation, which tmux runs whole (see Input):
 
 ```
-display-message -p -t T '#{alternate_on} #{history_size} #{cursor_flag} #{cursor_x} #{cursor_y}' ;
-if-shell -F -t T '#{alternate_on}' 'capture-pane -p -t T' 'capture-pane -p -J -S -n -t T'
+display-message -p -t T '#{alternate_on} #{history_size} #{cursor_flag} #{cursor_x} #{cursor_y} #{pane_height}' ;
+if-shell -F -t T '#{alternate_on}' 'capture-pane -p -t T' 'capture-pane -p -t T ; capture-pane -p -J -S -n -t T'
 ```
 
-- `if-shell -F` evaluates its condition in tmux, without running a shell, and queues the command
+- `if-shell -F` evaluates its condition in tmux, without running a shell, and queues the commands
   chosen right after itself (`cmd-if-shell.c`): it never waits, and the queue is drained in one
   go.
 - The program output can not change the screen in between: tmux reads it in its event loop

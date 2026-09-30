@@ -140,10 +140,12 @@ func TestCaptureFullScreenAsDisplayed(t *testing.T) {
 		t.Fatal(err)
 	}
 	// the cursor on row 6 is below the last line: the empty rows at the end are removed
+	content := "\n\n" + strings.Repeat("a", 200) + "\n" + strings.Repeat("a", 50)
 	expected := Snapshot{
-		Content:    "\n\n" + strings.Repeat("a", 200) + "\n" + strings.Repeat("a", 50),
-		FullScreen: true,
-		Cursor:     Position{Row: 6, Column: 10},
+		Content:     content,
+		FullScreen:  true,
+		ScreenBytes: len(content),
+		Cursor:      Position{Row: 6, Column: 10},
 	}
 	if snapshot != expected {
 		t.Errorf("expected the screen as displayed:\n%+v\ngot:\n%+v", expected, snapshot)
@@ -159,26 +161,60 @@ func TestCaptureFullScreenAsDisplayed(t *testing.T) {
 	}
 }
 
+// TestCaptureScreenBytes guards the size of the screen alone, on the normal screen, where a
+// capture with scrollback can not tell it: a line of 100000 characters, wrapped over the screen
+// and the scrollback, is a single line of the content. The screen alone is the same whatever the
+// scrollback included, and its size counts its rows as displayed: the joined screen differs by the
+// new lines of the rows joined.
+func TestCaptureScreenBytes(t *testing.T) {
+	c := startTestServer(t, "capturescreenbytes")
+	ctx := context.Background()
+	if err := c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	typeCommand(t, c, "s", FirstWindow, `head -c 100000 /dev/zero | tr '\0' x; echo; printf 'done\n'`)
+	eventually(t, "output displayed", screenContains(c, "s", FirstWindow, "\ndone\n"))
+	screen, err := c.Capture(ctx, "s", FirstWindow, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withScrollback, err := c.Capture(ctx, "s", FirstWindow, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(withScrollback.Content, strings.Repeat("x", 100000)+"\n") || withScrollback.ScreenBytes != screen.ScreenBytes {
+		t.Errorf("expected the long line whole, and the size of the screen alone (%d), got %d:\n%s", screen.ScreenBytes,
+			withScrollback.ScreenBytes, withScrollback.Content)
+	}
+	// the screen: the end of the long line on 22 rows, done, and the prompt
+	firstLine, _, _ := strings.Cut(screen.Content, "\n")
+	if firstLine != strings.Repeat("x", 22*200) || screen.ScreenBytes != len(screen.Content)+21 {
+		t.Errorf("expected 22 rows of the long line joined, and 21 more new lines in the screen alone, got %d bytes for:\n%s",
+			screen.ScreenBytes, screen.Content)
+	}
+}
+
 // TestParseCaptureState guards the reading of the pane state captured with the screen: the
-// scrollback bounds the extra lines on the normal screen only, and the cursor, counted from 1, is
-// only told under a full-screen program showing it.
+// scrollback bounds the extra lines on the normal screen only, the cursor, counted from 1, is
+// only told under a full-screen program showing it, and the height of the screen is told apart.
 func TestParseCaptureState(t *testing.T) {
 	for _, tc := range []struct {
 		state      string
 		extraLines int
 		expected   Snapshot
 	}{
-		{"0 42 1 5 23", 10, Snapshot{ExtraLines: 10}},
-		{"0 42 1 5 23", 100, Snapshot{ExtraLines: 42}},
-		{"1 42 1 9 4", 10, Snapshot{FullScreen: true, Cursor: Position{Row: 5, Column: 10}}},
-		{"1 42 0 9 4", 10, Snapshot{FullScreen: true}},
+		{"0 42 1 5 23 24", 10, Snapshot{ExtraLines: 10}},
+		{"0 42 1 5 23 24", 100, Snapshot{ExtraLines: 42}},
+		{"1 42 1 9 4 24", 10, Snapshot{FullScreen: true, Cursor: Position{Row: 5, Column: 10}}},
+		{"1 42 0 9 4 24", 10, Snapshot{FullScreen: true}},
 	} {
-		if snapshot, err := parseCaptureState(tc.state, tc.extraLines); err != nil || snapshot != tc.expected {
-			t.Errorf("%q, %d extra lines: expected %+v, got %+v, %v", tc.state, tc.extraLines, tc.expected, snapshot, err)
+		if snapshot, height, err := parseCaptureState(tc.state, tc.extraLines); err != nil || snapshot != tc.expected || height != 24 {
+			t.Errorf("%q, %d extra lines: expected %+v and 24 rows, got %+v and %d, %v", tc.state, tc.extraLines, tc.expected,
+				snapshot, height, err)
 		}
 	}
-	for _, state := range []string{"", "0 42 1 5", "0 42 1 5 23 7", "0 42 1 x 23", "0  42 1 5 23"} {
-		if _, err := parseCaptureState(state, 0); err == nil {
+	for _, state := range []string{"", "0 42 1 5 23", "0 42 1 5 23 24 7", "0 42 1 x 23 24", "0  42 1 5 23 24"} {
+		if _, _, err := parseCaptureState(state, 0); err == nil {
 			t.Errorf("%q: expected an error", state)
 		}
 	}

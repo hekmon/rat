@@ -38,8 +38,8 @@
 // validates without tmux. Both first leave any tmux mode (copy mode…) a human peeking at the
 // terminals left the window in, where input would not reach the program as sent.
 // [Controller.Capture] returns a [Snapshot] of what a window displays, with optional scrollback
-// above it, and what is needed to interpret it: whether a full-screen program runs, captured as
-// displayed then, and where its cursor is.
+// above it, and what is needed to interpret and bound it: whether a full-screen program runs,
+// captured as displayed then, where its cursor is, and the size of the screen alone.
 //
 // # Errors
 //

@@ -22,6 +22,12 @@ type Snapshot struct {
 	// screen: the scrollback above belongs to the terminal before it started, so it is not
 	// included, and what the program displays disappears when it quits.
 	FullScreen bool
+	// ScreenBytes is the size of the screen alone, in bytes: its rows as displayed, trailing spaces
+	// and empty rows at the end removed. It tells whether the screen fits a budget when Content
+	// includes scrollback, where the screen can not be told apart: a line wrapped from the
+	// scrollback onto the screen is joined. On the normal screen, it may exceed what the screen
+	// takes in Content by the new lines of the rows joined, one per row at most.
+	ScreenBytes int
 	// Cursor is where the cursor of a full-screen program is, telling where its input goes (a
 	// field, a position in a file). It may be below the last line of the content, empty lines at
 	// the end being removed. It is the zero Position on the normal screen, where joined rows and
@@ -38,9 +44,9 @@ type Position struct {
 }
 
 // captureStateFormat is the tmux format describing a pane in the invocation capturing it (see
-// Capture): alternate screen, scrollback rows, cursor visibility, and cursor position counted
-// from 0. Numbers only, separated by spaces.
-const captureStateFormat = "#{alternate_on} #{history_size} #{cursor_flag} #{cursor_x} #{cursor_y}"
+// Capture): alternate screen, scrollback rows, cursor visibility, cursor position counted from 0,
+// and height of the screen. Numbers only, separated by spaces.
+const captureStateFormat = "#{alternate_on} #{history_size} #{cursor_flag} #{cursor_x} #{cursor_y} #{pane_height}"
 
 // Capture returns the content of window in session, as currently displayed, preceded by up to
 // extraLines rows of scrollback.
@@ -55,8 +61,10 @@ func (c *Controller) Capture(ctx context.Context, session, window string, extraL
 	// scrollback at all for a number out of its range: bounded by the history limit, beyond which
 	// no scrollback is kept.
 	extraLines = max(0, min(extraLines, serverHistoryLimit))
-	// -J joins wrapped lines, but also keeps trailing spaces: removed below
-	normalScreen := "capture-pane -p -J -t " + tg
+	// The screen alone first, one line per row as displayed, only to tell its size: in the joined
+	// capture, a line wrapped from the scrollback onto the screen is one line. Then the content,
+	// where -J joins wrapped lines, but also keeps trailing spaces: removed below.
+	normalScreen := "capture-pane -p -t " + tg + " ; capture-pane -p -J -t " + tg
 	if extraLines > 0 {
 		// -S: first row to capture, negative numbers being the scrollback above the screen
 		normalScreen += " -S " + strconv.Itoa(-extraLines)
@@ -78,39 +86,56 @@ func (c *Controller) Capture(ctx context.Context, session, window string, extraL
 		return Snapshot{}, fmt.Errorf("%w: server shut down while capturing %s:%s", ErrServerNotRunning, session, window)
 	}
 	state, content, _ := strings.Cut(out, "\n")
-	snapshot, err := parseCaptureState(state, extraLines)
+	snapshot, height, err := parseCaptureState(state, extraLines)
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("failed to capture %s:%s: %w", session, window, err)
 	}
-	lines := strings.Split(content, "\n")
-	for i, line := range lines {
-		lines[i] = strings.TrimRight(line, " ")
+	if snapshot.FullScreen {
+		snapshot.Content = trimCapture(content)
+		snapshot.ScreenBytes = len(snapshot.Content)
+		return snapshot, nil
 	}
-	snapshot.Content = strings.TrimRight(strings.Join(lines, "\n"), "\n")
+	// the screen alone: exactly one line per row, empty rows included
+	rows := strings.SplitAfterN(content, "\n", height+1)
+	if len(rows) != height+1 {
+		return Snapshot{}, fmt.Errorf("failed to capture %s:%s: %d rows of screen expected, got %d", session, window,
+			height, len(rows)-1)
+	}
+	snapshot.ScreenBytes = len(trimCapture(strings.Join(rows[:height], "")))
+	snapshot.Content = trimCapture(rows[height])
 	return snapshot, nil
 }
 
+// trimCapture returns a capture without trailing spaces on its lines, nor empty lines at its end.
+func trimCapture(capture string) string {
+	lines := strings.Split(capture, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " ")
+	}
+	return strings.TrimRight(strings.Join(lines, "\n"), "\n")
+}
+
 // parseCaptureState returns the snapshot properties told by state (captureStateFormat), for a
-// capture asking for extraLines rows of scrollback.
-func parseCaptureState(state string, extraLines int) (Snapshot, error) {
+// capture asking for extraLines rows of scrollback, and the height of the screen.
+func parseCaptureState(state string, extraLines int) (snapshot Snapshot, height int, err error) {
 	fields := strings.Split(state, " ")
-	var numbers [5]int
+	var numbers [6]int
 	if len(fields) != len(numbers) {
-		return Snapshot{}, fmt.Errorf("unexpected pane state %q", state)
+		return Snapshot{}, 0, fmt.Errorf("unexpected pane state %q", state)
 	}
 	for i, field := range fields {
-		var err error
 		if numbers[i], err = strconv.Atoi(field); err != nil {
-			return Snapshot{}, fmt.Errorf("unexpected pane state %q: %w", state, err)
+			return Snapshot{}, 0, fmt.Errorf("unexpected pane state %q: %w", state, err)
 		}
 	}
-	alternateOn, scrollback, cursorVisible, cursorX, cursorY := numbers[0] == 1, numbers[1], numbers[2] == 1, numbers[3], numbers[4]
+	alternateOn, scrollback, cursorVisible, cursorX, cursorY, height := numbers[0] == 1, numbers[1], numbers[2] == 1,
+		numbers[3], numbers[4], numbers[5]
 	if !alternateOn {
-		return Snapshot{ExtraLines: min(extraLines, scrollback)}, nil
+		return Snapshot{ExtraLines: min(extraLines, scrollback)}, height, nil
 	}
-	snapshot := Snapshot{FullScreen: true}
+	snapshot = Snapshot{FullScreen: true}
 	if cursorVisible {
 		snapshot.Cursor = Position{Row: cursorY + 1, Column: cursorX + 1}
 	}
-	return snapshot, nil
+	return snapshot, height, nil
 }
