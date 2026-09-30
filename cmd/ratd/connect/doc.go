@@ -1,5 +1,5 @@
-// Package connect is how a client reaches ratd: the address and path ratd serves, and the flags
-// naming the ratd to reach and the client directory to present to it.
+// Package connect is how a client reaches ratd: the address and path ratd serves, the flags naming
+// the ratd to reach and the client directory to present to it, and the HTTP client presenting it.
 //
 // The flags are declared once, here, for rat and rat-tool check: a harness command line is checked
 // by copying it, with the same names and the same checks. They take HOST:PORT rather than a URL:
