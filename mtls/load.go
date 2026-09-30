@@ -107,11 +107,14 @@ func load(dir string, now time.Time) (*Side, error) {
 	if public, ok := key.Public().(interface{ Equal(crypto.PublicKey) bool }); !ok || !public.Equal(cert.PublicKey) {
 		return nil, fmt.Errorf("%w: %s does not match %s", ErrKeyMismatch, keyPath, certFile(role))
 	}
-	// 4. CA: CheckSignatureFrom also checks the signer is a CA, allowed to sign certificates
+	// 4. CA. CheckSignatureFrom also refuses a signer that is not a CA (basic constraints) or not
+	// allowed to sign certificates (key usage): ca.crt needs no check of its own.
 	if err = cert.CheckSignatureFrom(ca); err != nil {
 		return nil, fmt.Errorf("%w: %s is not signed by %s: %w", ErrNotSignedByCA, certFile(role), caFile, err)
 	}
-	// 5. role: exactly the one of the side, so that the certificate can not stand for the other
+	// 5. role: exactly the one of the side, so that a client can not run a server with its
+	// certificate, nor the other way round. Stricter than the verification of Go (TLS handshakes),
+	// which accepts a certificate carrying both roles.
 	if len(cert.ExtKeyUsage) != 1 || cert.ExtKeyUsage[0] != role.usage() {
 		return nil, fmt.Errorf("%w: %s is not a %s certificate only", ErrRole, certFile(role), role)
 	}

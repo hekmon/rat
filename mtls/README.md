@@ -175,7 +175,8 @@ failure having passed:
    grants a shell. Not checked on Windows, where harnesses may run and modes mean nothing.
 3. **Key**: the key matches the certificate.
 4. **CA**: `ca.crt` is a CA, which signed the certificate.
-5. **Role**: the certificate authenticates the side its file names, and only it: a certificate
-   with both roles could stand for the other side.
+5. **Role**: the certificate authenticates the side its file names, and only it: a client must
+   not run a server with its certificate, nor the other way round. Stricter than the
+   verification of Go in TLS handshakes, which accepts a certificate carrying both roles.
 6. **Validity**: the certificate and the CA are valid now.
 7. **Names**: the certificate and the CA carry plain names.
