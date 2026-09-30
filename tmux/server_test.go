@@ -37,6 +37,9 @@ func TestServerLifecycle(t *testing.T) {
 	}
 }
 
+// TestServerSocketInUse guards that StartServer refuses a socket another server answers on (another
+// rat serving the same tenant): right away, as ErrServerSocketInUse naming that server, and
+// leaving it untouched.
 func TestServerSocketInUse(t *testing.T) {
 	c := newTestController(t, "inuse")
 	// another server already listening on our socket
@@ -56,6 +59,12 @@ func TestServerSocketInUse(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > serverStartTimeout/2 {
 		t.Errorf("early exit detected after %s, expected the watcher to report it right away", elapsed)
+	}
+	if !errors.Is(err, ErrServerSocketInUse) {
+		t.Errorf("expected ErrServerSocketInUse, got: %v", err)
+	}
+	if foreignPID := strconv.Itoa(foreign.Process.Pid); !strings.Contains(err.Error(), "pid "+foreignPID) {
+		t.Errorf("expected the pid of the other server (%s) in the error, got: %v", foreignPID, err)
 	}
 	if !strings.Contains(err.Error(), "not a terminal") {
 		t.Errorf("expected tmux stderr in the error, got: %v", err)

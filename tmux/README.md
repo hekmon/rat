@@ -53,8 +53,11 @@ socket: a leftover of a previous run, or another rat on the same tenant.
 
 - If a server already runs on the socket, `tmux -D` does not start a second one: it connects to
   it as a client, fails (`open terminal failed: not a terminal`) and exits. The watcher reports
-  that exit within milliseconds, with the tmux message: its stderr is kept (bounded) for that
-  purpose, as tmux only writes there when failing at startup.
+  that exit within milliseconds. The message tells nothing of the cause, so rather than parsing
+  it, `StartServer` asks the socket: a server answering there, ours being gone, is another one,
+  reported as `ErrServerSocketInUse` with its PID. This is what keeps a tenant to a single rat
+  on a machine (for a user). The tmux stderr is still kept (bounded) and included in the error,
+  for the other startup failures: tmux only writes there when failing at startup.
 - A stale socket (its server died without cleaning it) is simply taken over by the new server.
 
 Rejected: checking the socket is free before starting. It could be taken right after the

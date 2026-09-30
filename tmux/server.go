@@ -18,6 +18,9 @@ import (
 var (
 	// ErrServerAlreadyStarted is returned by StartServer while its server is running.
 	ErrServerAlreadyStarted = errors.New("server already started")
+	// ErrServerSocketInUse is returned by StartServer when another tmux server answers on the
+	// socket of the tenant: another rat serving the same tenant, or a server left behind.
+	ErrServerSocketInUse = errors.New("socket already served by another tmux server")
 	// ErrServerNotRunning is returned by commands and StopServer when the server has not been
 	// started, has been stopped, or has exited on its own. StartServer can start a new one.
 	ErrServerNotRunning = errors.New("server not running")
@@ -156,7 +159,8 @@ func fixedSize(target string) []string {
 // ctx should be the application context, as an exit safe guard (kill).
 // The server does not load any tmux configuration and its terminals run bash, which must be
 // installed (the returned error then wraps exec.ErrNotFound) in version bashMinVersion or later
-// (the error then wraps ErrUnsupportedBash).
+// (the error then wraps ErrUnsupportedBash). It refuses a socket another server answers on,
+// leaving that server untouched: the error then wraps ErrServerSocketInUse, with its PID.
 func (c *Controller) StartServer(ctx context.Context) (err error) {
 	defer c.serverAction.Unlock()
 	c.serverAction.Lock()
@@ -226,13 +230,13 @@ func (c *Controller) StartServer(ctx context.Context) (err error) {
 readiness:
 	for {
 		// probe server, checking it is ours answering (and not a leftover one on the same socket)
-		out, err := c.cmd(readyCtx, []string{"display-message", "-p", "#{pid}"}).Output()
+		pid, err := c.socketServerPID(readyCtx)
 		if err == nil {
-			pid := strings.TrimSpace(string(out))
 			if pid == serverPID {
 				break readiness
 			}
-			err = fmt.Errorf("socket answered by another server (pid %s, ours is %s)", pid, serverPID)
+			err = fmt.Errorf("%w: socket %s, tmux server pid %s (ours is %s)",
+				ErrServerSocketInUse, c.socketName(), pid, serverPID)
 		}
 		if readyCtx.Err() == nil {
 			// keep the last meaningful probe error, not the one of a probe interrupted by readyCtx
@@ -241,6 +245,15 @@ readiness:
 		select {
 		case <-ticker.C:
 		case <-done:
+			// A server already answering on the socket makes tmux -D connect to it as a client,
+			// fail and exit ("not a terminal", which tells nothing): ask the socket instead. Ours
+			// has exited, so a server answering is another one.
+			inUseCtx, inUseCtxCancel := context.WithTimeout(ctx, serverStartTimeout)
+			defer inUseCtxCancel()
+			if pid, err := c.socketServerPID(inUseCtx); err == nil {
+				return fmt.Errorf("server exited during startup: %w: socket %s, tmux server pid %s: %w",
+					ErrServerSocketInUse, c.socketName(), pid, p.waitErr)
+			}
 			return fmt.Errorf("server exited during startup: %w", p.waitErr)
 		case <-readyCtx.Done():
 			if probeErr == nil {
@@ -276,6 +289,16 @@ readiness:
 		return fmt.Errorf("failed to configure server: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return
+}
+
+// socketServerPID returns the PID of the tmux server answering on the socket of the tenant, if
+// any answers: ours once started, or another one.
+func (c *Controller) socketServerPID(ctx context.Context) (string, error) {
+	out, err := c.cmd(ctx, []string{"display-message", "-p", "#{pid}"}).Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // StopServer stops the current server if running, asking it to exit with kill-server.

@@ -90,17 +90,21 @@ func checkNames(names ...string) error {
 	return nil
 }
 
-func (c *Controller) cmd(ctx context.Context, args []string) (cmd *exec.Cmd) {
-	socketName := "rat"
-	if c.tenant != "" {
-		socketName += "-" + c.tenant
+// socketName returns the name of the tmux socket of the tenant (-L).
+func (c *Controller) socketName() string {
+	if c.tenant == "" {
+		return "rat"
 	}
+	return "rat-" + c.tenant
+}
+
+func (c *Controller) cmd(ctx context.Context, args []string) (cmd *exec.Cmd) {
 	// -f /dev/null: never load the user (nor system) configuration, rat must behave the same
 	// everywhere. It only matters when the command starts a server, but is harmless otherwise
 	// and ensures a server started by any command is configuration free.
 	// -u: output UTF-8 whatever rat's locale. Without a UTF-8 locale (common for services), tmux
 	// replaces non ASCII characters by '_' in what it prints: captures, paths.
-	return exec.CommandContext(ctx, "tmux", append([]string{"-L", socketName, "-f", "/dev/null", "-u"}, args...)...)
+	return exec.CommandContext(ctx, "tmux", append([]string{"-L", c.socketName(), "-f", "/dev/null", "-u"}, args...)...)
 }
 
 // tmuxArg protects an argument ending with ';': tmux reads it as the end of the command (the ';'
