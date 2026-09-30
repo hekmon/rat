@@ -218,15 +218,32 @@ in `AGENTS.md`): tmux, its terminal backend, would only add a round trip, and re
 errors with its messages.
 
 - **`write_file`** `{path, content}`: creates the file or replaces it, and says which (with the
-  former size). A replaced file keeps its mode, a new one gets 0644 minus ratd's umask. Missing
-  directories are created, as `mkdir -p` does (0755 minus ratd's umask), sparing a round trip
-  through the terminal, and the result names them: a typo in a path creates directories the
-  agent did not mean. Only a regular file is written: a FIFO would block, and a device is not a
-  file to replace.
+  former size). A new file gets 0644 minus ratd's umask. Missing directories are created, as
+  `mkdir -p` does (0755 minus ratd's umask), sparing a round trip through the terminal, and the
+  result names them: a typo in a path creates directories the agent did not mean. The content is
+  text (a JSON string), written as is: binary content goes through the terminal (`base64 -d`).
 - **`read_file`** `{path, start_line, max_lines}`: whole lines of a text file, from `start_line`
   (1 by default, negative counts from the end: -100 for the last 100 lines), at most `max_lines`
   (all by default). The header tells the lines returned out of how many, the size and the last
   modification ("modified 3s ago": a command may still be writing).
+
+A file is written in place, as `cp` does: truncated, then written. It keeps its mode, owner,
+hard links and extended attributes, and a symbolic link is followed, writing its target, as a
+human editing it would. The cost: a write failing midway (no space left) leaves the file partial,
+which the error says, the agent still holding the content to write again; and two writes of the
+same file at once can mix. Rejected: writing a temporary file renamed over the target, atomic,
+but breaking hard links, turning a symbolic link into a file, possibly changing the owner, and
+needing to write in the directory.
+
+Only a regular file is written: a FIFO would block, and a device is not a file to replace. The
+file is checked before opening (opening some devices has effects), opened without blocking (a
+FIFO without a reader then fails at once), and checked again once opened, as the file opened may
+not be the one checked. Whether it is created or replaced is told by opening: exclusively first,
+then the existing file.
+
+Errors of the file system are told as the system gives them ("no space left on device",
+"read-only file system"), unlike tmux messages: an agent expects a low level operation to fail
+this way, and can act upon it. A denied permission names the user ratd runs as.
 
 Paths are absolute or start with `~/`. Rejected: paths relative to a window, whose directory is
 that of its foreground process: under ssh, the local ssh client's, so the file would silently
@@ -324,6 +341,8 @@ message tells an outcome the agent may act upon, such as nothing to close.
 | tmux restarting | yes | every window was lost, retry in a few seconds to find a fresh `main` |
 | tmux not answering in time | yes | logged, retrying may work |
 | file refused (not regular, not text, missing, denied, relative path, a range too far into a huge file to reach in time) | yes | why, and the terminal when it can do better |
+| file system failing (no space left, read-only…) | yes | the reason of the system, and whether the file may be partial |
+| file system not answering in time | yes | logged, the file may still be written: check it before writing again |
 | anything else | yes | internal error, logged, retrying may work |
 | nothing to close | no | nothing to close |
 | window already existing | no | not created, what it runs and where |
@@ -412,7 +431,10 @@ warn about.
 
 - **A tool call: 10 seconds.** No call waits for a command, and tmux answers in milliseconds even
   for the largest inputs (47 ms for a 4 MiB paste, 11 ms for a capture of 10000 rows): beyond,
-  tmux is stuck, and the agent is told so.
+  tmux is stuck, and the agent is told so. File operations can not be interrupted: on a file
+  system not answering (a stale NFS mount, which blocks a human as well), the call returns at the
+  end of its time, logged as a warning, while the operation stays blocked until the file system
+  answers, one per call.
 - **HTTP**: `ReadHeaderTimeout` 10 seconds, which also bounds the TLS handshake (net/http bounds
   it by the smallest of its read and write timeouts), and `IdleTimeout` 2 minutes. No
   `ReadTimeout` nor `WriteTimeout`: a 4 MiB request on a slow link must not be cut.

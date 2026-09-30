@@ -24,22 +24,38 @@ const toolsSession = "alice"
 func connectTools(t *testing.T, tenant string) (*mcp.ClientSession, *tmux.Controller, *logBuffer, string) {
 	t.Helper()
 	requireTmux(t)
+	home := testHome(t)
+	controller, err := tmux.New(tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = controller.StartServer(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = controller.StopServer(context.Background()) })
+	session, logs := connectDaemon(t, controller)
+	return session, controller, logs, home
+}
+
+// testHome sets HOME to a fresh directory until the test ends, and returns it, symbolic links
+// resolved (the temporary directory of macOS is behind one).
+func testHome(t *testing.T) string {
+	t.Helper()
 	home, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", home)
+	return home
+}
+
+// connectDaemon returns an MCP client connected in memory to the tools of session alice, for
+// ratd with the terminals of controller, and the logs of ratd. All is stopped when the test ends.
+func connectDaemon(t *testing.T, controller *tmux.Controller) (*mcp.ClientSession, *logBuffer) {
+	t.Helper()
 	ctx := context.Background()
-	controller, err := tmux.New(tenant)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = controller.StartServer(ctx); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = controller.StopServer(ctx) })
 	logs := &logBuffer{}
-	d, err := newDaemon(slog.New(slog.NewTextHandler(logs, nil)), &mtls.Side{Tenant: tenant}, controller, false, defaultReadBudget)
+	d, err := newDaemon(slog.New(slog.NewTextHandler(logs, nil)), &mtls.Side{Tenant: "t"}, controller, false, defaultReadBudget)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +70,7 @@ func connectTools(t *testing.T, tenant string) (*mcp.ClientSession, *tmux.Contro
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = session.Close() })
-	return session, controller, logs, home
+	return session, logs
 }
 
 // callTool calls tool with args, and returns the text of its result and whether it is an error.
@@ -198,6 +214,7 @@ func TestToolsAnnotations(t *testing.T) {
 		"send_text":     {DestructiveHint: ptr(true), OpenWorldHint: ptr(true)},
 		"send_keys":     {DestructiveHint: ptr(true), OpenWorldHint: ptr(true)},
 		"read_window":   {ReadOnlyHint: true, OpenWorldHint: ptr(false)},
+		"write_file":    {DestructiveHint: ptr(true), IdempotentHint: true, OpenWorldHint: ptr(false)},
 	}
 	for _, tool := range tools.Tools {
 		want, ok := expected[tool.Name]

@@ -9,7 +9,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/user"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -65,6 +67,9 @@ type daemon struct {
 	controller *tmux.Controller
 	// host is the name of the machine, told to agents
 	host string
+	// user is the name of the user ratd runs as, and the terminals with it, told to agents denied a
+	// permission
+	user string
 	// instructions are sent to every client
 	instructions string
 	// readBudget bounds what a read sends back, in bytes: once in the context of a model, it can
@@ -84,6 +89,10 @@ func newDaemon(logger *slog.Logger, side *mtls.Side, controller *tmux.Controller
 	if err != nil {
 		return nil, fmt.Errorf("failed to read the host name: %w", err)
 	}
+	username := strconv.Itoa(os.Getuid())
+	if u, err := user.Current(); err == nil {
+		username = u.Username
+	}
 	instructions := fmt.Sprintf(instructionsFormat, host)
 	if warnPaste {
 		instructions += pasteWarning
@@ -94,7 +103,7 @@ func newDaemon(logger *slog.Logger, side *mtls.Side, controller *tmux.Controller
 	if !logger.Enabled(context.Background(), slog.LevelDebug) {
 		sdkLogger = slog.New(minLevel{Handler: logger.Handler(), min: slog.LevelWarn})
 	}
-	return &daemon{logger: logger, sdkLogger: sdkLogger, side: side, controller: controller, host: host,
+	return &daemon{logger: logger, sdkLogger: sdkLogger, side: side, controller: controller, host: host, user: username,
 		instructions: instructions, readBudget: readBudget, schemas: mcp.NewSchemaCache()}, nil
 }
 
@@ -203,6 +212,7 @@ func (d *daemon) newServer(session string) *mcp.Server {
 	d.addWindowTools(server, session)
 	d.addInputTools(server, session)
 	d.addScreenTools(server, session)
+	d.addFileTools(server, session)
 	return server
 }
 
