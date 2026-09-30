@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/hekmon/rat/mtls"
+	"github.com/hekmon/rat/tmux"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -60,6 +61,8 @@ type daemon struct {
 	sdkLogger *slog.Logger
 	// side is the server directory of the bundle, which names the tenant
 	side *mtls.Side
+	// controller runs the tmux server of the tenant, where each client works in its session
+	controller *tmux.Controller
 	// host is the name of the machine, told to agents
 	host string
 	// instructions are sent to every client
@@ -69,9 +72,9 @@ type daemon struct {
 	schemas *mcp.SchemaCache
 }
 
-// newDaemon returns ratd serving the tenant of side, the server directory of its bundle, warning
-// agents that pasted text may run line by line if warnPaste.
-func newDaemon(logger *slog.Logger, side *mtls.Side, warnPaste bool) (*daemon, error) {
+// newDaemon returns ratd serving the tenant of side, the server directory of its bundle, with the
+// terminals of controller, warning agents that pasted text may run line by line if warnPaste.
+func newDaemon(logger *slog.Logger, side *mtls.Side, controller *tmux.Controller, warnPaste bool) (*daemon, error) {
 	host, err := os.Hostname()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read the host name: %w", err)
@@ -86,8 +89,8 @@ func newDaemon(logger *slog.Logger, side *mtls.Side, warnPaste bool) (*daemon, e
 	if !logger.Enabled(context.Background(), slog.LevelDebug) {
 		sdkLogger = slog.New(minLevel{Handler: logger.Handler(), min: slog.LevelWarn})
 	}
-	return &daemon{logger: logger, sdkLogger: sdkLogger, side: side, host: host, instructions: instructions,
-		schemas: mcp.NewSchemaCache()}, nil
+	return &daemon{logger: logger, sdkLogger: sdkLogger, side: side, controller: controller, host: host,
+		instructions: instructions, schemas: mcp.NewSchemaCache()}, nil
 }
 
 // minLevel passes on the records of its handler from a minimum level only.
@@ -192,6 +195,7 @@ func (d *daemon) newServer(session string) *mcp.Server {
 		Logger:       d.sdkLogger,
 	})
 	server.AddReceivingMiddleware(d.logRequests(session))
+	d.addWindowTools(server, session)
 	return server
 }
 

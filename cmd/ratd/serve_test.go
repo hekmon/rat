@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/hekmon/rat/mtls"
+	"github.com/hekmon/rat/tmux"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -59,7 +60,12 @@ func startRatd(t *testing.T, bundle string, level slog.Level) (string, *logBuffe
 		t.Fatal(err)
 	}
 	logs := &logBuffer{}
-	d, err := newDaemon(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: level})), side, false)
+	// the terminals are not started: these tests call no tool
+	controller, err := tmux.New(side.Tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := newDaemon(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: level})), side, controller, false)
 	if err != nil {
 		t.Fatal(err)
 	}

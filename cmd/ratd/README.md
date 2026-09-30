@@ -153,14 +153,17 @@ rat fit long running commands: an agent starts one, carries on, and comes back t
   Activity is relative ("12s ago"): models do not know the current time. The description tells
   it is the cheap way to check whether a command finished: bash in the foreground means the
   terminal waits for input, with its caveats (bash builtins and loops show as bash, ssh shows as
-  ssh even when idle).
+  ssh even when idle). When it creates the session (see Plumbing), a header says so: the agent
+  learns its terminals did not exist, rather than finding a lone `main`.
 - **`create_window`** `{name}`: makes sure the session exists, then the window. Asking for
   `main` in a missing session is a success: creating the session made it. An existing window is
   not an error but a message saying it was not created, with what it runs and where: the agent
   must not believe it got a fresh terminal. The description invites to list windows first (they
   persist, `main` exists), and to wait for the prompt of a new window before sending text.
 - **`close_window`** `{name}`: terminates what runs in the window. Nothing to close (missing
-  window or session) is a message, not an error, and creates nothing.
+  window or session) is a message, not an error, and creates nothing. Closing the last window
+  closes the session: the result says a fresh `main` comes next, at the cost of a tmux command
+  checking it, sparing the agent the surprise.
 - **`send_text`** `{window, text, enter}`: pastes the text as a human pastes, then presses Enter
   if asked. `enter` is required, with no default: the agent decides every time whether the text
   runs, and forgetting it fails validation instead of silently leaving a command unrun. Rejected
@@ -258,13 +261,17 @@ number).
 
 ### Annotations
 
-| Tool | Read only | Destructive | Idempotent |
-|---|---|---|---|
-| `list_windows`, `read_window`, `read_file` | yes | | |
-| `create_window` | | | yes (an existing window is reported, not recreated) |
-| `close_window` | | yes | yes |
-| `send_text`, `send_keys` | | yes | |
-| `write_file` | | yes (it replaces) | yes |
+| Tool | Read only | Destructive | Idempotent | Open world |
+|---|---|---|---|---|
+| `list_windows`, `read_window`, `read_file` | yes | | | |
+| `create_window` | | | yes (an existing window is reported, not recreated) | |
+| `close_window` | | yes | yes | |
+| `send_text`, `send_keys` | | yes | | yes |
+| `write_file` | | yes (it replaces) | yes | |
+
+Every hint is set explicitly: the specification reads a missing destructive or open world hint
+as true. Only the inputs reach beyond rat: what runs in a terminal can reach anything, where the
+other tools act on rat's terminals and on files of its machine.
 
 ### Plumbing
 
@@ -403,9 +410,11 @@ restart what ratd stops.
 
 ## Logs
 
-One line per tool call: the session (the client name), the tool, the window, the outcome and the
-duration, plus what tells the action without its content: the size of a text and whether Enter
-was pressed, the number of keys, the rows read, the path and size of a file. Never the content:
+One line per tool call, at info level, or warning for a failure the agent did not cause (tmux not
+answering, an internal error): the session (the client name), the tool, the window, the outcome
+(`ok`, `message` for a result that is not an error, `error` with its cause) and the duration,
+plus what tells the action without its content: the size of a text and whether Enter was
+pressed, the number of keys, the rows read, the path and size of a file. Never the content:
 neither text, nor keys (they can spell a password one key at a time), nor files. And the
 lifecycle: startup (tenant, address, bundle expiry), the bracketed paste check, tmux exits and
 restarts, the crash budget, shutdown.

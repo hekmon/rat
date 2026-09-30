@@ -107,7 +107,7 @@ func run(ctx context.Context, logger *slog.Logger, bundle string, listen func() 
 		logger.Info("terminals stopped")
 	}()
 	warnPaste := checkBracketedPaste(ctx, logger, controller)
-	d, err := newDaemon(logger, side, warnPaste)
+	d, err := newDaemon(logger, side, controller, warnPaste)
 	if err != nil {
 		return err
 	}
