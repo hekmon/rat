@@ -121,6 +121,25 @@ Download the three binaries from the [releases](https://github.com/hekmon/rat/re
 install them in the PATH: ratd on the server, rat where the harness runs, rat-tool anywhere (see
 Requirements).
 
+Each release comes with a file of SHA-256 sums: download it next to the archives, and check them
+before installing (`--ignore-missing` skips the archives of the other platforms):
+
+```sh
+shasum -a 256 -c --ignore-missing rat_v1.0.0_SHA256SUMS   # sha256sum on Linux, same flags
+```
+
+On Windows, with PowerShell, which has no such command:
+
+```powershell
+Get-Content rat_v1.0.0_SHA256SUMS | ForEach-Object {
+    $hash, $file = $_ -split '\s+', 2
+    if (Test-Path $file) {
+        $ok = (Get-FileHash -Algorithm SHA256 $file).Hash -eq $hash
+        "${file}: $(if ($ok) { 'OK' } else { 'FAILED' })"
+    }
+}
+```
+
 Generate the bundle of a tenant, with a client per harness:
 
 ```sh

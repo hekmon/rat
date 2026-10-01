@@ -33,3 +33,10 @@ go.work.sum
 
 # Tidet resources are synced by Tidet Cloud, never by Git.
 .tidet/
+
+# Build
+/ratd
+/rat
+/rat-tool
+/rat*.zip
+/rat_*_SHA256SUMS
