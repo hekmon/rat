@@ -31,10 +31,28 @@ with it.
 
 RAT uses tmux as its terminal emulator: tmux renders what programs display, and RAT reads the
 rendered screen. That is all agents get from tmux. They see no tmux session, pane, option nor
-command, but a few tools, each serving a purpose, which RAT composes out of tmux (and out of its
-own file access) rather than forwarding tmux and leaving agents to assemble it: fewer tools,
-fewer options, less context spent. The tmux server is RAT's own, started with no user
-configuration, for the same terminals on every machine, and stopped with RAT.
+command, and need to know nothing about tmux to use RAT.
+
+A tmux MCP server passes tmux through, and agents have to put it together themselves. To run a
+command and read its output, an agent has to know that a window lives in a session, which must
+exist first; that a target is written `session:window.pane`; that `send-keys` reads `Enter` or
+`C-c` in its text as key names unless given `-l`; that multi-line text sent this way runs line
+by line, as it is typed; and that `capture-pane` returns the visible screen only, wrapped lines
+split, unless given `-S` and `-J`. Each of these is a command, a flag or a pitfall to learn, and
+each mistake costs a call and some context.
+
+RAT takes these on, and agents get a terminal as they already know it: a keyboard and a screen.
+Windows are found by name, and their session is created on first use. Text is pasted as is,
+never read as keys, and keys are a tool of their own. `read_window` returns the screen with
+wrapped lines joined, the same size every time, with history on request. And a human watching
+does not get in the way: attaching does not resize the windows, and a copy mode left on is left
+before the agent's next input.
+
+The result is eight tools with few parameters, explained in a few lines of instructions. Less
+context goes to describing the tools, and the agent needs fewer tries to get a command right:
+there is no tmux syntax to get wrong, and nothing to check after each call. The tmux server
+belongs to RAT: it starts with no user configuration, so terminals are the same on every
+machine, and it stops with RAT.
 
 ## Tools
 
@@ -79,7 +97,7 @@ MCP SDK from a client directory (package `mtls` loads it, or parses credentials 
 
 ## Users, tenants and sessions
 
-rat keeps agents apart in layers, from the widest to the narrowest:
+RAT keeps agents apart in layers, from the widest to the narrowest:
 
 | Layer | What it is | Set by | Keeps apart |
 |---|---|---|---|
@@ -183,7 +201,7 @@ journalctl -u ratd-prod -f
 - **The only door is ratd's.** `useradd` gives the account no password (nothing matches the locked
   field it leaves: sshd refuses an empty password and a guess alike, password authentication on
   or not) and, with `--shell`, no login shell, which the terminals do not need: they run the bash
-  rat finds in its PATH, whatever the shell of the account. What closes ssh is `DenyUsers`: an
+  ratd finds in its PATH, whatever the shell of the account. What closes ssh is `DenyUsers`: an
   agent can add a key to `~/.ssh/authorized_keys`, which a login shell turns into a shell, and a
   `nologin` one still into a tunnel (`ssh -N -L` needs no shell). `DenyUsers` refuses the account
   before it authenticates, key, password and tunnel alike (measured with OpenSSH 9.2 on Debian 12;
@@ -301,7 +319,7 @@ the service stops.
 
 ### Deploying safely
 
-rat is not a sandbox: terminals run as the user running ratd, and an agent can do whatever that
+RAT is not a sandbox: terminals run as the user running ratd, and an agent can do whatever that
 user can. Tenants and sessions keep agents apart from mistakes, not from a malicious agent. RAT
 enforces what it can (mutual TLS, bounded reads, terminals free of your configuration), and
 leaves the rest to how you deploy it:
@@ -371,4 +389,4 @@ is only checked at its next start.
 - **tmux 3.3 or later.** 3.3a (Debian 12) is the oldest version RAT is tested with: older ones
   behave differently in ways RAT relies on, and are not supported.
 - **bash 4.4 or later**, which terminals run. macOS ships bash 3.2: install a recent one
-  (`brew install bash`) and make sure it comes first in the PATH of rat.
+  (`brew install bash`) and make sure it comes first in the PATH of ratd.
