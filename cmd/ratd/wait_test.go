@@ -94,7 +94,8 @@ func TestWaitWindowWithoutPrompts(t *testing.T) {
 		if tool.Name == "create_window" && !strings.Contains(tool.Description, "(read_window)") {
 			t.Errorf("expected create_window to point to read_window, got %q", tool.Description)
 		}
-		if tool.Name == "send_text" && !strings.Contains(tool.Description, "(&, nohup): list_windows tells whether") {
+		if tool.Name == "send_text" && (!strings.Contains(tool.Description, "(&, nohup): list_windows tells whether") ||
+			!strings.Contains(tool.Description, "wait for the prompt (read_window)")) {
 			t.Errorf("expected send_text not to point to wait_window, got %q", tool.Description)
 		}
 	}

@@ -31,7 +31,8 @@ func waitPrompt(t *testing.T, session *mcp.ClientSession, controller *tmux.Contr
 // runs it, enter is required, and the log line tells the size of the text, never the text. Its
 // description points to a window per long running command rather than the background, telling
 // why, as the instructions do: clients may not pass the instructions on. wait_window is among the
-// tools following the command.
+// tools following the command, and the one to wait for the prompt with before pasting several
+// lines, which run line by line otherwise.
 func TestSendText(t *testing.T) {
 	session, controller, logs, _ := connectTools(t, "test-ratd-sendtext")
 	list, err := session.ListTools(context.Background(), nil)
@@ -44,6 +45,10 @@ func TestSendText(t *testing.T) {
 			!strings.Contains(tool.Description, "with no need for a script to check jobs or their logs.")) {
 			t.Errorf("expected send_text to point to a window rather than the background, telling why, got %q",
 				tool.Description)
+		}
+		if tool.Name == "send_text" && !strings.Contains(tool.Description,
+			"before pasting several lines, wait for the prompt (wait_window).") {
+			t.Errorf("expected send_text to point to wait_window before pasting several lines, got %q", tool.Description)
 		}
 	}
 	expectTool(t, session, "list_windows", nil, false)

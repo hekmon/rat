@@ -204,11 +204,18 @@ once.
   if asked. `enter` is required, with no default: the agent decides every time whether the text
   runs, and forgetting it fails validation instead of silently leaving a command unrun. Rejected
   defaults: false (small models forget it), true (runs text meant to wait, against "Enter only
-  when asked"). The description tells what the text meets: at a bash prompt it waits on the
-  command line, new lines included, until Enter; while a command runs, or before a new window
-  shows its prompt, it is read as typed, each line running. It points to a window of its own for
-  each long running command, rather than the background, telling how the tools then follow it
-  (see above): `wait_window` where the terminals record prompts, `list_windows` and `read_window`.
+  when asked"). The description tells it returns at once, then what the text meets, the case to
+  aim for first: at a bash prompt it waits on the command line, new lines included, and nothing
+  runs until Enter. Otherwise (a command running, a new window before its prompt), it is read as
+  typed, a new line as Enter: the running program gets it first (a `read` takes the first line),
+  then bash runs the rest line by line once back at its prompt. Then the rule this calls for:
+  before pasting several lines, wait for the prompt (`wait_window`, `read_window` where it is not
+  offered). Rejected: the exception told as "each line runs", right before "returns at once":
+  inexact (a program reading its input takes lines, a last line without a new line waits on the
+  command line), and a model summarizing the description merged the two, telling its user that
+  pasted text runs line by line. It points to a window of its own for each long running command,
+  rather than the background, telling how the tools then follow it (see above): `wait_window`
+  where the terminals record prompts, `list_windows` and `read_window`.
   An empty text only presses Enter; an empty text without Enter sends nothing, a message rather
   than an error.
 - **`send_keys`** `{window, keys}`: presses keys in order. The description lists the names the
