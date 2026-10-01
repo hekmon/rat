@@ -150,12 +150,19 @@ else being tmux defaults:
   capture returns, and agents capture repeatedly while waiting for a command. Not shorter than
   24 though, the classic height full-screen programs are designed for: below it some refuse to
   run or cut their menus, `top` shows few processes, and pagers kick in more often.
-- `window-size manual`: with the default (`latest`), a human attaching to inspect the terminals
-  resizes them to their own terminal, and they keep that size once the human detaches. It is set
-  on each window, in the invocation creating it, not globally: tmux 3.3 to 3.6 crash (segfault,
-  killing every terminal) when a session is created while the global value is `manual`. Fixed in
-  tmux 3.7 (commit `7d41761e`, GitHub issue 4849), without a changelog entry. The global value
-  stays at the default, and a test guards it.
+- `window-size manual`, with the size of terminals: with the default (`latest`), a human
+  attaching to inspect the terminals resizes them to their own terminal, and they keep that size
+  once the human detaches. The policy alone is not enough: a window created while a client is
+  attached, to any session, is created at the size of that client (`default-size` only applies
+  when none is), and `manual` keeps the size the window has. A client attached read-only
+  (`attach -r`, flagged `ignore-size`) counts all the same when it is the only one, and
+  `new-session -x -y` only sets the `default-size` of the session, not the size of its window
+  (measured with tmux 3.4, a read-only client in a terminal of 120x40: windows of 120x39). Both
+  are set on each window, in the invocation creating it, by `resize-window -x 200 -y 24`, which
+  sets the policy to `manual` as well. Not globally: tmux 3.3 to 3.6 crash (segfault, killing
+  every terminal) when a session is created while the global value is `manual`. Fixed in tmux
+  3.7 (commit `7d41761e`, GitHub issue 4849), without a changelog entry. The global value stays
+  at the default, and a test guards it.
 - `allow-rename off`: already the default, but window names are how agents find their
   terminals: programs must not rename them (escape sequences).
 

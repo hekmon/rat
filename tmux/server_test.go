@@ -383,7 +383,9 @@ func fakeBash(t *testing.T, version string) string {
 
 // TestServerWindowSizeFixed guards that a client attaching, such as a human inspecting the
 // terminals, does not resize them: neither while attached, nor once detached. This holds for the
-// first window of a session as for the ones created after it.
+// first window of a session as for the ones created after it, and for the windows and sessions
+// created while the client is attached, to any session, which tmux creates at the size of that
+// client.
 func TestServerWindowSizeFixed(t *testing.T) {
 	c := startTestServer(t, "windowsize")
 	ctx := context.Background()
@@ -393,18 +395,23 @@ func TestServerWindowSizeFixed(t *testing.T) {
 	if err := c.NewWindow(ctx, "s", "w"); err != nil {
 		t.Fatal(err)
 	}
-	checkSize := func(when string) {
+	// checkSize checks that the server holds windows (session:window), in order, each of the size
+	// of terminals
+	checkSize := func(when string, windows ...string) {
 		t.Helper()
-		out, err := c.run(ctx, "list-windows", "-t", "=s", "-F", "#{window_name} #{window_width}x#{window_height}")
+		out, err := c.run(ctx, "list-windows", "-a", "-F", "#{session_name}:#{window_name} #{window_width}x#{window_height}")
 		if err != nil {
 			t.Fatal(err)
 		}
-		expected := FirstWindow + " " + serverDefaultSize + "\nw " + serverDefaultSize
-		if got := strings.TrimSpace(out); got != expected {
+		expected := make([]string, 0, len(windows))
+		for _, window := range windows {
+			expected = append(expected, window+" "+serverDefaultSize)
+		}
+		if got := strings.TrimSpace(out); got != strings.Join(expected, "\n") {
 			t.Errorf("%s: sizes are %q, expected %q", when, got, expected)
 		}
 	}
-	checkSize("before attach")
+	checkSize("before attach", "s:"+FirstWindow, "s:w")
 	// a control mode client acting as a human terminal of 100x30
 	client := c.cmd(context.Background(), []string{"-C", "attach-session", "-t", "=s"})
 	stdin, err := client.StdinPipe()
@@ -418,13 +425,21 @@ func TestServerWindowSizeFixed(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(300 * time.Millisecond)
-	checkSize("client attached")
+	checkSize("client attached", "s:"+FirstWindow, "s:w")
+	if err = c.NewWindow(ctx, "s", "late"); err != nil {
+		t.Fatal(err)
+	}
+	if err = c.NewSession(ctx, "t"); err != nil {
+		t.Fatal(err)
+	}
+	created := []string{"s:" + FirstWindow, "s:w", "s:late", "t:" + FirstWindow}
+	checkSize("created while a client is attached", created...)
 	if _, err = io.WriteString(stdin, "detach-client\n"); err != nil {
 		t.Fatal(err)
 	}
 	_ = stdin.Close()
 	_ = client.Wait()
-	checkSize("client detached")
+	checkSize("client detached", created...)
 }
 
 // TestServerReadOnlyWindowKeys guards that a human watching read-only (attach -r), as the README

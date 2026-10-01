@@ -195,13 +195,16 @@ var windowKeys = [][2]string{
 	{"5", ":=5"}, {"6", ":=6"}, {"7", ":=7"}, {"8", ":=8"}, {"9", ":=9"},
 }
 
-// fixedSize returns the tmux command keeping the size of the window target (serverDefaultSize)
-// whoever attaches, to chain in the invocation creating the window. With the default size policy
-// (latest), a human attaching to inspect resizes the windows to their terminal, and they keep
-// that size once the human detaches. It is a window option set on each window rather than a
-// global one, which crashes tmux 3.3 to 3.6 (see StartServer).
+// fixedSize returns the tmux command giving the window target the size of terminals (ScreenColumns
+// by ScreenRows) and keeping it whoever attaches, to chain in the invocation creating the window.
+// With the default size policy (latest), a human attaching to inspect resizes the windows to their
+// terminal, and they keep that size once the human detaches. The policy alone is not enough: a
+// window created while a client is attached, to any session, is created at the size of that client
+// (default-size only applies when none is), and the manual policy would keep it. resize-window sets
+// both, the size and the manual policy, as an option of the window rather than the global one,
+// which crashes tmux 3.3 to 3.6 (see StartServer).
 func fixedSize(target string) []string {
-	return []string{"set-option", "-w", "-t", target, "window-size", "manual"}
+	return []string{"resize-window", "-t", target, "-x", strconv.Itoa(ScreenColumns), "-y", strconv.Itoa(ScreenRows)}
 }
 
 // StartServer starts the tmux server and returns once it is ready and configured.
