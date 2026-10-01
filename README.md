@@ -63,7 +63,7 @@ terminals are on another machine, and sending a command does not wait for it.
 
 | Tool | Parameters | What it does |
 |---|---|---|
-| `list_windows` | none | Lists the windows: each with its foreground command, working directory and last activity. |
+| `list_windows` | none | Lists the windows: each with its foreground command, working directory and last activity, and how its last command exited once bash is back at its prompt. |
 | `create_window` | `name` | Opens a window running bash, in the home directory of the user running ratd. |
 | `close_window` | `name` | Closes a window, ending what runs in it. |
 | `send_text` | `window`, `text`, `enter` | Pastes text as a human pastes, then presses Enter if `enter` is true (required: the agent decides each time whether the text runs). |
@@ -409,9 +409,18 @@ Terminals run bash as a login shell, which reads the bash startup files of the u
 (`~/.bash_profile`, `~/.profile`…). RAT enforces what it relies on, but a startup file can still
 defeat it: one assigning `PROMPT_COMMAND` (rather than adding to it) removes what makes a pasted
 text wait for Enter, and unless bash does it by itself (5.1 and later, without an inputrc turning
-it off), each line of a pasted text then runs as soon as it is pasted. RAT checks what the bash
-prompt ends up with when it starts, and warns, but does not refuse to run. A startup file changed
-while RAT runs is only checked at its next start.
+it off), each line of a pasted text then runs as soon as it is pasted. It also removes what tells
+RAT when a command finished, and how: so does one running a command before RAT's that changes the
+exit status (starship does, `history -a` added in front does), for the status only. RAT checks
+what the bash prompt ends up with when it starts, warns, and only tells agents what holds, but
+does not refuse to run. A startup file changed while RAT runs is only checked at its next start.
+
+With a user for RAT alone (see Deployment), these startup files are RAT's: leave them as the
+account was created. What makes a shell pleasant to a human has no use for agents, and gets in
+their way: a prompt framework such as starship hides how commands exited, changing the exit status
+before running RAT's `PROMPT_COMMAND`, and an alias such as `rm='rm -i'` makes a command ask a
+question the agent did not expect. Running RAT as your own user brings your configuration to the
+terminals of the agents.
 
 ## Requirements
 

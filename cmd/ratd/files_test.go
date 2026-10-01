@@ -25,7 +25,7 @@ func connectFiles(t *testing.T) (*mcp.ClientSession, *logBuffer, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, logs := connectDaemon(t, controller)
+	session, logs := connectDaemon(t, controller, terminalsHold)
 	return session, logs, home
 }
 

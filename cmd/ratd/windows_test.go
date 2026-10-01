@@ -24,6 +24,13 @@ const toolsSession = "alice"
 // and the logs of ratd. All is stopped when the test ends.
 func connectTools(t *testing.T, tenant string) (*mcp.ClientSession, *tmux.Controller, *logBuffer, string) {
 	t.Helper()
+	return connectToolsWith(t, tenant, terminalsHold)
+}
+
+// connectToolsWith is connectTools, for ratd having found terminals in its terminals.
+func connectToolsWith(t *testing.T, tenant string, terminals tmux.TerminalsCheck) (*mcp.ClientSession, *tmux.Controller,
+	*logBuffer, string) {
+	t.Helper()
 	requireTmux(t)
 	home := testHome(t)
 	controller, err := tmux.New(tenant)
@@ -34,7 +41,7 @@ func connectTools(t *testing.T, tenant string) (*mcp.ClientSession, *tmux.Contro
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = controller.StopServer(context.Background()) })
-	session, logs := connectDaemon(t, controller)
+	session, logs := connectDaemon(t, controller, terminals)
 	return session, controller, logs, home
 }
 
@@ -55,12 +62,13 @@ func testHome(t *testing.T) string {
 var terminalsHold = tmux.TerminalsCheck{BracketedPaste: true, Prompts: true, Statuses: true}
 
 // connectDaemon returns an MCP client connected in memory to the tools of session alice, for
-// ratd with the terminals of controller, and the logs of ratd. All is stopped when the test ends.
-func connectDaemon(t *testing.T, controller *tmux.Controller) (*mcp.ClientSession, *logBuffer) {
+// ratd with the terminals of controller, having found terminals in them, and the logs of ratd. All
+// is stopped when the test ends.
+func connectDaemon(t *testing.T, controller *tmux.Controller, terminals tmux.TerminalsCheck) (*mcp.ClientSession, *logBuffer) {
 	t.Helper()
 	ctx := context.Background()
 	logs := &logBuffer{}
-	d, err := newDaemon(slog.New(slog.NewTextHandler(logs, nil)), &mtls.Side{Tenant: "t"}, controller, terminalsHold, defaultReadBudget)
+	d, err := newDaemon(slog.New(slog.NewTextHandler(logs, nil)), &mtls.Side{Tenant: "t"}, controller, terminals, defaultReadBudget)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,8 +119,8 @@ func expectTool(t *testing.T, session *mcp.ClientSession, tool string, args map[
 }
 
 // TestListWindows guards the description of the windows: a missing session created with a header
-// saying so, then each window with its command, absolute directory, activity, and history or
-// full-screen program.
+// saying so, then each window with its command, absolute directory, activity, how its last command
+// exited once bash is back at its prompt, and history or full-screen program.
 func TestListWindows(t *testing.T) {
 	session, controller, _, home := connectTools(t, "test-ratd-list")
 	ctx := context.Background()
@@ -130,9 +138,48 @@ func TestListWindows(t *testing.T) {
 	}
 	eventually(t, "history and full-screen program listed", func() bool {
 		text, _ := callTool(t, session, "list_windows", nil)
-		return strings.Contains(text, " rows of history") && strings.Contains(text, "fs: sleep in "+home) &&
-			strings.Contains(text, ", full-screen program")
+		return strings.Contains(text, ", last command exited with status 0 (") && strings.Contains(text, " rows of history") &&
+			strings.Contains(text, "fs: sleep in "+home) && strings.Contains(text, ", full-screen program")
 	})
+	if err := controller.SendText(ctx, toolsSession, tmux.FirstWindow, "false", true); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "exit status listed", func() bool {
+		text, _ := callTool(t, session, "list_windows", nil)
+		return strings.Contains(text, "main: bash in "+home+", active ") &&
+			strings.Contains(text, ", last command exited with status 1 (") && !strings.Contains(text, "status 0")
+	})
+	if text, _ := callTool(t, session, "list_windows", nil); strings.Contains(text, "fs: sleep in "+home+", active ") &&
+		strings.Contains(text[strings.Index(text, "fs: "):], "exited") {
+		t.Errorf("expected no exit status for a command running:\n%s", text)
+	}
+}
+
+// TestListWindowsStatusesUntold guards that the exit status of commands is not told when the
+// terminals do not record it right (a command of bash startup files changing it): neither in the
+// description of the windows, nor in the description of the tool.
+func TestListWindowsStatusesUntold(t *testing.T) {
+	session, controller, _, _ := connectToolsWith(t, "test-ratd-nostatus", tmux.TerminalsCheck{BracketedPaste: true, Prompts: true})
+	expectTool(t, session, "list_windows", nil, false)
+	if err := controller.SendText(context.Background(), toolsSession, tmux.FirstWindow, "false", true); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "prompt recorded", func() bool {
+		w, err := controller.Window(context.Background(), toolsSession, tmux.FirstWindow)
+		return err == nil && w.Prompt.Status == 1
+	})
+	if text := expectTool(t, session, "list_windows", nil, false); strings.Contains(text, "exited") {
+		t.Errorf("expected no exit status, got:\n%s", text)
+	}
+	tools, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range tools.Tools {
+		if tool.Name == "list_windows" && strings.Contains(tool.Description, "exit") {
+			t.Errorf("expected no exit status in the description, got %q", tool.Description)
+		}
+	}
 }
 
 // TestCreateWindow guards creating windows: main in a missing session is created by creating the

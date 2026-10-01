@@ -41,19 +41,29 @@ const (
 
 // instructions are sent to each client when it initializes (or discovers the server, from
 // protocol 2026-07-28 on), host being the machine ratd runs on: an agent with a local shell too
-// must know where commands run.
+// must know where commands run. The second verb tells how to check a command (see checkingText).
 const instructionsFormat = `rat gives you persistent terminals on %s: commands run there, not where you run. ` +
 	`It is asynchronous by design: sending a command returns at once, without waiting for it to finish. ` +
 	`Start long running commands (builds, tests, deployments), carry on with other work, and come back to ` +
-	`check them: rat does not know when a command finishes, list_windows shows the foreground command ` +
-	`(bash means the terminal waits for input), read_window shows the screen. Run several commands in ` +
-	`parallel in several windows. Each terminal is a window running bash, found by name: windows persist ` +
-	`across your restarts and context compactions, so call list_windows first. A window named main exists ` +
+	`check them: %s Run several commands in parallel in several windows. Each terminal is a window running ` +
+	`bash, found by name: windows persist across your restarts and context compactions, so call ` +
+	`list_windows first. A window named main exists ` +
 	`when you start. To copy a whole file to or from the machine, use write_file and read_file rather than ` +
 	`the terminal. For the exact output of a long command, run it as command 2>&1 | tee /tmp/name.log: the ` +
 	`screen still shows it, and read_file reads the file whole or a range at a time, rather than reading ` +
 	`the window over and over. If the terminals restart after a failure, every window disappears and you ` +
 	`find a fresh main.`
+
+// checkingText tells agents how to check a command they sent, from what holds in the terminals: an
+// agent must not look for what ratd does not tell.
+func checkingText(terminals tmux.TerminalsCheck) string {
+	if terminals.Statuses {
+		return `list_windows shows the foreground command (bash means the terminal waits for input), and how the ` +
+			`last command exited once bash is back at its prompt; read_window shows the screen.`
+	}
+	return `rat does not know when a command finishes, list_windows shows the foreground command (bash means the ` +
+		`terminal waits for input), read_window shows the screen.`
+}
 
 // pasteWarning ends the instructions when bash startup files defeat bracketed paste, or when that
 // could not be checked (see checkTerminals).
@@ -74,6 +84,9 @@ type daemon struct {
 	// user is the name of the user ratd runs as, and the terminals with it, told to agents denied a
 	// permission
 	user string
+	// terminals is what holds in the terminals, as checked at startup (see checkTerminals): agents
+	// are only told what holds
+	terminals tmux.TerminalsCheck
 	// instructions are sent to every client
 	instructions string
 	// readBudget bounds what a read sends back, in bytes: once in the context of a model, it can
@@ -104,7 +117,7 @@ func newDaemon(logger *slog.Logger, side *mtls.Side, controller *tmux.Controller
 	if u, err := user.Current(); err == nil {
 		username = u.Username
 	}
-	instructions := fmt.Sprintf(instructionsFormat, host)
+	instructions := fmt.Sprintf(instructionsFormat, host, checkingText(terminals))
 	if !terminals.BracketedPaste {
 		instructions += pasteWarning
 	}
@@ -115,7 +128,7 @@ func newDaemon(logger *slog.Logger, side *mtls.Side, controller *tmux.Controller
 		sdkLogger = slog.New(minLevel{Handler: logger.Handler(), min: slog.LevelWarn})
 	}
 	return &daemon{logger: logger, sdkLogger: sdkLogger, side: side, controller: controller, host: host, user: username,
-		instructions: instructions, readBudget: readBudget, inputSchemas: inputSchemas,
+		terminals: terminals, instructions: instructions, readBudget: readBudget, inputSchemas: inputSchemas,
 		schemas: mcp.NewSchemaCache()}, nil
 }
 

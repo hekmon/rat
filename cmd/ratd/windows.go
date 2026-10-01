@@ -20,9 +20,7 @@ func (d *daemon) addWindowTools(server *mcp.Server, session string) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        tools.ListWindows,
 		InputSchema: d.inputSchemas[tools.ListWindows],
-		Description: "List your terminals: each window with its foreground command, working directory and last " +
-			"activity. The cheap way to check whether a command finished: bash in the foreground means the " +
-			"terminal waits for input (bash builtins and loops show as bash too, and ssh shows as ssh even when idle).",
+		Description: d.listWindowsDescription(),
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: ptr(false)},
 	}, tool(d, session, tools.ListWindows, func(tools.NoInput) string { return "" },
 		func(ctx context.Context, _ tools.NoInput) result { return d.listWindows(ctx, session) }))
@@ -42,6 +40,20 @@ func (d *daemon) addWindowTools(server *mcp.Server, session string) {
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(true), IdempotentHint: true, OpenWorldHint: ptr(false)},
 	}, tool(d, session, tools.CloseWindow, func(in tools.NameInput) string { return in.Name },
 		func(ctx context.Context, in tools.NameInput) result { return d.closeWindow(ctx, session, in.Name) }))
+}
+
+// listWindowsDescription returns the description of list_windows, telling the exit status of commands
+// only where the terminals record it.
+func (d *daemon) listWindowsDescription() string {
+	if d.terminals.Statuses {
+		return "List your terminals: each window with its foreground command, working directory, last activity, " +
+			"and how its last command exited once bash is back at its prompt. The cheap way to check whether a " +
+			"command finished: an exit status shows it did (ssh shows as ssh even when idle, and what runs within " +
+			"it shows no exit status)."
+	}
+	return "List your terminals: each window with its foreground command, working directory and last " +
+		"activity. The cheap way to check whether a command finished: bash in the foreground means the " +
+		"terminal waits for input (bash builtins and loops show as bash too, and ssh shows as ssh even when idle)."
 }
 
 // listWindows lists the windows of session, one per line. A missing session is created, the
@@ -64,16 +76,22 @@ func (d *daemon) listWindows(ctx context.Context, session string) result {
 	now := time.Now()
 	lines := make([]string, len(windows))
 	for i, w := range windows {
-		lines[i] = describeWindow(w, now)
+		lines[i] = describeWindow(w, now, d.terminals.Statuses)
 	}
 	return result{text: header + strings.Join(lines, "\n"), attrs: []any{"windows", len(windows)}}
 }
 
 // describeWindow tells what window runs, where, and when it was last active, relatively to now:
-// models do not know the current time. The history is only told when a capture can include it,
-// not under a full-screen program. Paths are absolute, for the file tools.
-func describeWindow(w tmux.Window, now time.Time) string {
+// models do not know the current time. How the last command exited is told when statuses (the
+// terminals record them right, see checkTerminals), once bash is back at its prompt after it. The
+// history is only told when a capture can include it, not under a full-screen program. Paths are
+// absolute, for the file tools.
+func describeWindow(w tmux.Window, now time.Time, statuses bool) string {
 	description := fmt.Sprintf("%s: %s in %s, active %s ago", w.Name, w.Command, w.Path, sinceText(now.Sub(w.Activity)))
+	if statuses && !w.Prompt.Time.IsZero() && w.Prompt.Status != tmux.NoStatus {
+		description += fmt.Sprintf(", last command exited with status %d (%s ago)", w.Prompt.Status,
+			sinceText(now.Sub(w.Prompt.Time)))
+	}
 	switch {
 	case w.FullScreen:
 		description += ", full-screen program"

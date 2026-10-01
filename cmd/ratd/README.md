@@ -149,12 +149,18 @@ rat fit long running commands: an agent starts one, carries on, and comes back t
 ### Terminals
 
 - **`list_windows`**: for each window, its name, foreground command, working directory and last
-  activity, plus when they apply: a full-screen program, the scrollback size.
-  Activity is relative ("12s ago"): models do not know the current time. The description tells
-  it is the cheap way to check whether a command finished: bash in the foreground means the
-  terminal waits for input, with its caveats (bash builtins and loops show as bash, ssh shows as
-  ssh even when idle). When it creates the session (see Plumbing), a header says so: the agent
-  learns its terminals did not exist, rather than finding a lone `main`.
+  activity, plus when they apply: how its last command exited, a full-screen program, the
+  scrollback size. Activity is relative ("12s ago"): models do not know the current time. The exit
+  status is told once bash is back at its prompt after the last input, with when ("last command
+  exited with status 1 (12s ago)"): the time tells a status from an earlier command, the absence
+  of a status a command running (see Prompts in `tmux/README.md`). The description tells it is
+  the cheap way to check whether a command finished: an exit status shows it did, with its caveat
+  (ssh shows as ssh even when idle, and what runs within it shows no status). Where the terminals
+  do not record statuses right (see Startup), neither the windows nor the description tell them:
+  the description tells instead that bash in the foreground means the terminal waits for input,
+  with its caveats (bash builtins and loops show as bash). When it creates the session (see
+  Plumbing), a header says so: the agent learns its terminals did not exist, rather than finding
+  a lone `main`.
 - **`create_window`** `{name}`: makes sure the session exists, then the window. Asking for
   `main` in a missing session is a success: creating the session made it. An existing window is
   not an error but a message saying it was not created, with what it runs and where: the agent
@@ -388,9 +394,9 @@ Built at startup, sent to each client when it initializes, or discovers the serv
 > rat gives you persistent terminals on *host*: commands run there, not where you run. It is
 > asynchronous by design: sending a command returns at once, without waiting for it to finish.
 > Start long running commands (builds, tests, deployments), carry on with other work, and come
-> back to check them: rat does not know when a command finishes, list_windows shows the
-> foreground command (bash means the terminal waits for input), read_window shows the screen.
-> Run several commands in parallel in several windows. Each terminal is a window running bash,
+> back to check them: list_windows shows the foreground command (bash means the terminal waits
+> for input), and how the last command exited once bash is back at its prompt; read_window shows
+> the screen. Run several commands in parallel in several windows. Each terminal is a window running bash,
 > found by name: windows persist across your restarts and context compactions, so call
 > list_windows first. A window named main exists when you start. To copy a whole file to or from
 > the machine, use write_file and read_file rather than the terminal. For the exact output of a
@@ -399,7 +405,9 @@ Built at startup, sent to each client when it initializes, or discovers the serv
 > over.
 > If the terminals restart after a failure, every window disappears and you find a fresh main.
 
-The host name tells an agent that has a local shell too where commands run. The tenant and the
+How to check a command depends on what holds in the terminals (see Startup): where they do not
+record statuses right, the instructions tell instead that rat does not know when a command
+finishes. The host name tells an agent that has a local shell too where commands run. The tenant and the
 session are left out, agents having no use for them; the server info title carries the tenant
 and the host (`rat prod on host`), for clients to display. When the check of the terminals finds
 bracketed paste defeated, or can not run (see below), a sentence is added: multi-line text may run
