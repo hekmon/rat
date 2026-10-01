@@ -182,6 +182,19 @@ var terminalEnvironment = [][2]string{
 	{"SYSTEMD_PAGER", "cat"},
 }
 
+// windowKeys are the keys moving between the windows of a session (C-b n, p, l, 0 to 9), each with
+// the window it targets, bound to switch-client rather than to the tmux defaults (next-window,
+// previous-window, last-window, select-window): a human watching read-only (attach -r) only gets
+// the keys bound to switch-client or detach-client, the others answering "Client is read-only".
+// switch-client to a window of the current session selects it, as the defaults do for a client that
+// is not read-only, wrapping around the same way. rat never reads the current window of a session,
+// targeting windows by name: a human changing it changes nothing for agents.
+var windowKeys = [][2]string{
+	{"n", ":+"}, {"p", ":-"}, {"l", ":!"},
+	{"0", ":=0"}, {"1", ":=1"}, {"2", ":=2"}, {"3", ":=3"}, {"4", ":=4"},
+	{"5", ":=5"}, {"6", ":=6"}, {"7", ":=7"}, {"8", ":=8"}, {"9", ":=9"},
+}
+
 // fixedSize returns the tmux command keeping the size of the window target (serverDefaultSize)
 // whoever attaches, to chain in the invocation creating the window. With the default size policy
 // (latest), a human attaching to inspect resizes the windows to their terminal, and they keep
@@ -327,6 +340,9 @@ readiness:
 	}
 	for _, variable := range terminalEnvironment {
 		args = append(args, "set-environment", "-g", variable[0], variable[1], ";")
+	}
+	for _, key := range windowKeys {
+		args = append(args, "bind-key", "-T", "prefix", key[0], "switch-client", "-t", key[1], ";")
 	}
 	args = append(args, "set-environment", "-g", "PROMPT_COMMAND", promptCommand(tmuxPath))
 	if out, err := c.cmd(optsCtx, args).CombinedOutput(); err != nil {

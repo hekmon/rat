@@ -426,3 +426,58 @@ func TestServerWindowSizeFixed(t *testing.T) {
 	_ = client.Wait()
 	checkSize("client detached")
 }
+
+// TestServerReadOnlyWindowKeys guards that a human watching read-only (attach -r), as the README
+// recommends, moves between windows with the usual keys: tmux refuses a read-only client every key
+// but those bound to switch-client or detach-client (see windowKeys). What the human types still
+// reaches no terminal.
+func TestServerReadOnlyWindowKeys(t *testing.T) {
+	c := startTestServer(t, "readonly")
+	ctx := context.Background()
+	if err := c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	for _, window := range []string{"build", "tests"} {
+		if err := c.NewWindow(ctx, "s", window); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// the human: a read-only client in a terminal of its own, a window of another server, run by
+	// its absolute path as the PATH of a terminal may not hold it (see promptCommand)
+	tmuxPath, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	human := startTestServer(t, "readonly-human")
+	if err = human.NewSession(ctx, "h"); err != nil {
+		t.Fatal(err)
+	}
+	typeCommand(t, human, "h", FirstWindow, "env -u TMUX "+tmuxPath+" -L "+c.socketName()+" attach -r -t =s")
+	eventually(t, "read-only client attached", func() (bool, string) {
+		out, err := c.run(ctx, "list-clients", "-F", "#{client_flags}")
+		return err == nil && strings.Contains(out, "read-only"), out
+	})
+	for _, step := range []struct{ key, window string }{
+		{"n", "build"}, {"n", "tests"}, {"n", FirstWindow}, {"p", "tests"}, {"l", FirstWindow}, {"1", "build"},
+	} {
+		if err = human.SendKeys(ctx, "h", FirstWindow, "C-b", step.key); err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, "C-b "+step.key+" selecting "+step.window, func() (bool, string) {
+			out, err := c.run(ctx, "display-message", "-p", "-t", "=s:", "#{window_name}")
+			out = strings.TrimSpace(out)
+			return err == nil && out == step.window, out
+		})
+	}
+	typeCommand(t, human, "h", FirstWindow, "echo typed-by-human")
+	time.Sleep(300 * time.Millisecond)
+	for _, window := range []string{FirstWindow, "build", "tests"} {
+		snapshot, err := c.Capture(ctx, "s", window, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(snapshot.Content, "typed-by-human") {
+			t.Errorf("%s: what the human typed reached the terminal:\n%s", window, snapshot.Content)
+		}
+	}
+}

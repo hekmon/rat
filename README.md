@@ -394,8 +394,10 @@ leaves the rest to how you deploy it:
   address (`--listen 10.8.0.2:7281`) all of it.
 - **Watch, read-only.** Attach to the terminals of a tenant as its user, in read-only mode:
   `sudo -u rat tmux -L rat-prod attach -r -t alice` (the socket is named after the tenant, here
-  `prod`, and the session after the client, here `alice`: the terminals of that client). The
-  terminals are the agents': what you type would reach them, and a window you resize stays so.
+  `prod`, and the session after the client, here `alice`: the terminals of that client). Move
+  between its windows with `C-b n`, `C-b p`, `C-b l` and `C-b 0` to `C-b 9`; read-only refuses
+  the window list (`C-b w`), and scrolling back (`C-b [`) before tmux 3.7. The terminals are the
+  agents': what you type would reach them, and a window you resize stays so.
 - **What outlives the service.** Stopping the service stops the terminals and whatever agents
   started, detached or not (with systemd; on macOS, end what is left with `pkill -u rat`, see
   Deployment). What an agent set up to outlive it, as the user (crontab, user services,

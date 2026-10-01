@@ -159,6 +159,33 @@ else being tmux defaults:
 - `allow-rename off`: already the default, but window names are how agents find their
   terminals: programs must not rename them (escape sequences).
 
+### Window keys, for a human watching read-only
+
+A human watches the terminals read-only (`attach -r`, as the root README recommends): what they
+type must not reach the agents' shells. tmux then refuses every key but those bound to
+`switch-client` or `detach-client`, the others answering "Client is read-only", the keys moving
+between windows included: the human could only watch the window they attached to.
+
+rat binds those keys to `switch-client` instead (`windowKeys`): `C-b n`, `p`, `l` and `0` to `9`
+to `switch-client -t :+`, `:-`, `:!` and `:=0` to `:=9`. Switching to a window of the current
+session selects it, as `next-window`, `previous-window`, `last-window` and `select-window` do for
+a client that is not read-only, wrapping around the same way: such a client sees no difference.
+Moving changes nothing for agents: rat never reads the current window of a session, targeting
+windows by name (see Targets and names) and creating them without selecting them (`-d`). The
+current window belongs to the session, not to the client: two humans watching the same session
+move together.
+
+Still refused read-only, having no `switch-client` equivalent: the window chooser (`C-b w`), and
+copy mode to scroll back (`C-b [`) before tmux 3.7 ("Allow copy mode to work for readonly
+clients" in its changelog; refused by 3.3a and 3.5a, measured). tmux 3.7 also tightened the
+read-only checks of `switch-client`, so that a client only detaches itself: switching windows
+still works. Measured with tmux 3.3a and 3.7c, which a test guards with a read-only client
+attached in a terminal.
+
+Rejected: dropping `-r`, which lets a key typed while watching reach a shell; attaching to a
+given window (`attach -r -t '=session:=window'`), detaching to watch another, which needs no code
+but makes watching several windows a chore.
+
 ### Terminals run bash, at home
 
 Terminals run bash, checked at `StartServer` rather than failing on each new window: it is
