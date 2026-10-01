@@ -210,9 +210,15 @@ func TestRunGivesUp(t *testing.T) {
 
 // TestRunPasteWarning guards that agents are told to send one line at a time, and the admin
 // warned, when bash startup files defeat bracketed paste, or block the check (and every terminal
-// with it).
+// with it). An inputrc turns bracketed paste off, so that only rat's command turns it on, whatever
+// the default of the bash running the tests (on from 5.1).
 func TestRunPasteWarning(t *testing.T) {
 	requireTmux(t)
+	inputrc := filepath.Join(t.TempDir(), "inputrc")
+	if err := os.WriteFile(inputrc, []byte("set enable-bracketed-paste off\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("INPUTRC", inputrc)
 	timeout := pasteCheckTimeout
 	pasteCheckTimeout = time.Second
 	t.Cleanup(func() { pasteCheckTimeout = timeout })

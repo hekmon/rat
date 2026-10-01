@@ -200,9 +200,17 @@ Terminals inherit rat's environment, plus variables enforced at `StartServer`:
   rat does not refuse to run then (single line inputs still work), but `CheckBracketedPaste`
   detects it, for the caller to warn: it runs bash once as terminals start it (login,
   interactive, their environment, `TERM` and `TMUX` included, as startup files often run tmux
-  when `TMUX` is empty) and reads what `PROMPT_COMMAND` became. It runs bash directly: tmux 3.3
-  does not return the output of `run-shell` to the client asking for it. It is a snapshot: a
-  startup file changed afterwards goes unnoticed until the next check.
+  when `TMUX` is empty), types commands into it, and asks readline whether bracketed paste is on
+  at the prompt (`bind -v`). Typed on its input rather than given with `-c`, the commands make
+  bash show its prompt before each, running `PROMPT_COMMAND` as in a terminal: what is checked
+  is what the prompt ends up with, whoever turned it on. Rejected: reading what `PROMPT_COMMAND`
+  became, the check until then, which took starship for an override (measured with starship
+  1.26): it replaces `PROMPT_COMMAND` with a function of its own, which runs the previous value.
+  The commands start with `unset HISTFILE`: an interactive bash saves the commands it read in
+  the history of the user when it exits. Measured with bash 4.4, 5.0 and 5.3: `PROMPT_COMMAND`
+  runs, and `bind -v` answers, without a terminal. It runs bash directly: tmux 3.3 does not
+  return the output of `run-shell` to the client asking for it. It is a snapshot: a startup file
+  changed afterwards goes unnoticed until the next check.
 
 `TMUX` is kept, on purpose. tmux sets it in every terminal (it can not be removed with
 `set-environment`, only by the command starting the terminal), and a `tmux` command typed in a

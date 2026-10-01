@@ -407,10 +407,11 @@ leaves the rest to how you deploy it:
 
 Terminals run bash as a login shell, which reads the bash startup files of the user running RAT
 (`~/.bash_profile`, `~/.profile`…). RAT enforces what it relies on, but a startup file can still
-defeat it: one assigning `PROMPT_COMMAND` (rather than adding to it) turns off what makes a
-pasted text wait for Enter, and each of its lines then runs as soon as it is pasted. RAT checks
-this when it starts and warns, but does not refuse to run. A startup file changed while RAT runs
-is only checked at its next start.
+defeat it: one assigning `PROMPT_COMMAND` (rather than adding to it) removes what makes a pasted
+text wait for Enter, and unless bash does it by itself (5.1 and later, without an inputrc turning
+it off), each line of a pasted text then runs as soon as it is pasted. RAT checks what the bash
+prompt ends up with when it starts, and warns, but does not refuse to run. A startup file changed
+while RAT runs is only checked at its next start.
 
 ## Requirements
 

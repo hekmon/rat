@@ -315,9 +315,17 @@ func TestSendTextMissingTarget(t *testing.T) {
 	}
 }
 
-// TestCheckBracketedPaste guards that a bash startup file replacing PROMPT_COMMAND, which rat
-// enforces bracketed paste with, is reported, while one adding to it is not.
+// TestCheckBracketedPaste guards that bracketed paste is checked as bash ends up at its prompt: a
+// bash startup file replacing PROMPT_COMMAND, which rat enforces bracketed paste with, is
+// reported, while one adding to it, or running it from a function of its own (as starship does),
+// is not. An inputrc turns bracketed paste off, so that only rat's command turns it on, whatever
+// the default of the bash running the tests (on from 5.1).
 func TestCheckBracketedPaste(t *testing.T) {
+	inputrc := filepath.Join(t.TempDir(), "inputrc")
+	if err := os.WriteFile(inputrc, []byte("set enable-bracketed-paste off\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("INPUTRC", inputrc)
 	c := newTestController(t, "checkpaste")
 	if err := c.CheckBracketedPaste(context.Background()); !errors.Is(err, ErrServerNotRunning) {
 		t.Fatalf("expected ErrServerNotRunning, got %v", err)
@@ -331,6 +339,8 @@ func TestCheckBracketedPaste(t *testing.T) {
 		`PROMPT_COMMAND="history -a;$PROMPT_COMMAND"`: false,
 		// as terminals, bash runs within tmux: startup files often run tmux when TMUX is empty
 		`[ -z "$TMUX" ] && PROMPT_COMMAND="outside tmux"`: false,
+		// starship keeps PROMPT_COMMAND and replaces it with a function of its own, which runs it
+		`__saved=$PROMPT_COMMAND; PROMPT_COMMAND=__precmd; __precmd() { eval "$__saved"; }`: false,
 	} {
 		home := t.TempDir()
 		if err := os.WriteFile(filepath.Join(home, ".bash_profile"), []byte(profile+"\n"), 0o600); err != nil {
