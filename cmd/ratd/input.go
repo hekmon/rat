@@ -34,8 +34,8 @@ func (d *daemon) addInputTools(server *mcp.Server, session string) {
 			"the text waits on the command line, new lines included, until Enter runs it. While a command runs, or " +
 			"before a new window shows its prompt, the text is read as typed: each line runs. Returns at once, " +
 			"without waiting for the command. Run each long running command in the foreground of a window of its " +
-			"own (create_window), rather than in the background (&, nohup): " + following + ", with no script " +
-			"checking jobs or their logs.",
+			"own (create_window), rather than in the background (&, nohup): " + following + ", with no need for " +
+			"a script to check jobs or their logs.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(true), OpenWorldHint: ptr(true)},
 	}, tool(d, session, tools.SendText, func(in tools.SendTextInput) string { return in.Window },
 		func(ctx context.Context, in tools.SendTextInput) result { return d.sendText(ctx, session, in) }))

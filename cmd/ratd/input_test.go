@@ -41,7 +41,7 @@ func TestSendText(t *testing.T) {
 	for _, tool := range list.Tools {
 		if tool.Name == "send_text" && (!strings.Contains(tool.Description, "rather than in the background (&, "+
 			"nohup): wait_window waits for it, list_windows tells whether it still runs") ||
-			!strings.Contains(tool.Description, "with no script checking jobs or their logs.")) {
+			!strings.Contains(tool.Description, "with no need for a script to check jobs or their logs.")) {
 			t.Errorf("expected send_text to point to a window rather than the background, telling why, got %q",
 				tool.Description)
 		}

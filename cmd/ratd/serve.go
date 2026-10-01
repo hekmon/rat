@@ -47,8 +47,8 @@ const instructionsFormat = `rat gives you persistent terminals on %s: commands r
 	`Start long running commands (builds, tests, deployments), carry on with other work, and come back to ` +
 	`check them: %s Run several commands in parallel in several windows, each long running command in the ` +
 	`foreground of a window of its own (create_window): a single list_windows then tells which still run, and ` +
-	`reading a window shows its progress, with no script checking jobs or their logs. A command run in the ` +
-	`background (&, nohup) looks finished at once: rat follows the foreground command of a window. Each ` +
+	`reading a window shows its progress, with no need for a script to check jobs or their logs. A command run ` +
+	`in the background (&, nohup) looks finished at once: rat follows the foreground command of a window. Each ` +
 	`terminal is a window running bash, found by name: windows persist across your restarts and context ` +
 	`compactions, so call list_windows first, and close the windows you are done with (close_window). A window ` +
 	`named main exists when you start. To copy a whole file to or from the machine, use write_file and ` +
