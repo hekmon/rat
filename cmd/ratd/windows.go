@@ -27,9 +27,10 @@ func (d *daemon) addWindowTools(server *mcp.Server, session string) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        tools.CreateWindow,
 		InputSchema: d.inputSchemas[tools.CreateWindow],
-		Description: "Create a terminal: a window running bash, in your home directory. Windows persist across " +
-			"your restarts: call list_windows first, a window named main already exists. Wait for the prompt of a " +
-			"new window (" + d.promptTool() + ") before sending text to it.",
+		Description: "Create a terminal: a window running bash, in your home directory, one per long running " +
+			"command. Windows persist across your restarts: call list_windows first, a window named main already " +
+			"exists, and close the windows you are done with (close_window). Wait for the prompt of a new window (" +
+			d.promptTool() + ") before sending text to it.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(false), IdempotentHint: true, OpenWorldHint: ptr(false)},
 	}, tool(d, session, tools.CreateWindow, func(in tools.NameInput) string { return in.Name },
 		func(ctx context.Context, in tools.NameInput) result { return d.createWindow(ctx, session, in.Name) }))

@@ -45,14 +45,17 @@ const (
 const instructionsFormat = `rat gives you persistent terminals on %s: commands run there, not where you run. ` +
 	`It is asynchronous by design: sending a command returns at once, without waiting for it to finish. ` +
 	`Start long running commands (builds, tests, deployments), carry on with other work, and come back to ` +
-	`check them: %s Run several commands in parallel in several windows. Each terminal is a window running ` +
-	`bash, found by name: windows persist across your restarts and context compactions, so call ` +
-	`list_windows first. A window named main exists ` +
-	`when you start. To copy a whole file to or from the machine, use write_file and read_file rather than ` +
-	`the terminal. For the exact output of a long command, run it as command 2>&1 | tee /tmp/name.log: the ` +
-	`screen still shows it, and read_file reads the file whole or a range at a time, rather than reading ` +
-	`the window over and over. If the terminals restart after a failure, every window disappears and you ` +
-	`find a fresh main.`
+	`check them: %s Run several commands in parallel in several windows, each long running command in the ` +
+	`foreground of a window of its own (create_window): a single list_windows then tells which still run, and ` +
+	`reading a window shows its progress, with no script checking jobs or their logs. A command run in the ` +
+	`background (&, nohup) looks finished at once: rat follows the foreground command of a window. Each ` +
+	`terminal is a window running bash, found by name: windows persist across your restarts and context ` +
+	`compactions, so call list_windows first, and close the windows you are done with (close_window). A window ` +
+	`named main exists when you start. To copy a whole file to or from the machine, use write_file and ` +
+	`read_file rather than the terminal. For the exact output of a long command, run it as command 2>&1 | tee ` +
+	`/tmp/name.log: the screen still shows it, and read_file reads the file whole or a range at a time, rather ` +
+	`than reading the window over and over. If the terminals restart after a failure, every window disappears ` +
+	`and you find a fresh main.`
 
 // checkingText tells agents how to check a command they sent, from what holds in the terminals: an
 // agent must not look for what ratd does not tell.

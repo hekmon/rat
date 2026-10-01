@@ -148,6 +148,31 @@ rat fit long running commands: an agent starts one, carries on, and comes back t
 is a tool of its own, `wait_window`, which the agent calls when it has nothing else to do: a
 server can not wake an agent up, and polling the screen would cost a screen of context each time.
 
+Windows are how commands run in parallel: each long running command in the foreground of a
+window of its own, which rat follows (see the principles in `AGENTS.md`). A single `list_windows`
+tells which commands still run, `wait_window` waits for one, and its screen shows its progress.
+Agents run long commands in the background all the same (`&`, `nohup`), a habit of shell tools
+blocking until a command ends, then write scripts checking the jobs and their logs, which windows
+spare them. rat does not follow a background job: it looks finished at once, with the exit status
+of starting it (0), and it outlives `close_window` when it ignores SIGHUP (`nohup`), until the
+service stops. Rejected: telling, with the status of a command, how many jobs bash runs in the
+background (it counts them at each prompt), which would warn an agent that started one: it would
+present the background as a way to run commands, which windows are for.
+
+Windows persist until closed, which lets agents find them back, and few agents close them once
+done: they pile up, `list_windows` telling each of them at every call, each keeping a bash and up
+to 10000 rows of history.
+
+The instructions point to a window of its own for each long running command, with what the agent
+gains (a single `list_windows` telling which commands still run, no script), and invite to close
+the windows an agent is done with. The descriptions of the tools where the agent acts repeat what
+applies to them: `send_text`, where it types the `&`, the window and what it gains;
+`create_window`, a window per long running command, closed once done. The specification leaves the
+instructions to clients, which may not pass them on to the model, and a harness disclosing tools
+progressively may show those a search matched without them, while a tool always comes with its
+description. The description of `wait_window` tells that a background job is seen as finished at
+once.
+
 ### Terminals
 
 - **`list_windows`**: for each window, its name, foreground command, working directory and last
@@ -166,10 +191,11 @@ server can not wake an agent up, and polling the screen would cost a screen of c
 - **`create_window`** `{name}`: makes sure the session exists, then the window. Asking for
   `main` in a missing session is a success: creating the session made it. An existing window is
   not an error but a message saying it was not created, with what it runs and where: the agent
-  must not believe it got a fresh terminal. The description invites to list windows first (they
-  persist, `main` exists), and to wait for the prompt of a new window before sending text: with
-  `wait_window`, or `read_window` where it is not offered, as the result of an input sent to a
-  session just created does.
+  must not believe it got a fresh terminal. The description tells a window is one per long running
+  command, invites to list windows first (they persist, `main` exists) and to close those the
+  agent is done with (see above), and to wait for the prompt of a new window before sending text:
+  with `wait_window`, or `read_window` where it is not offered, as the result of an input sent to
+  a session just created does.
 - **`close_window`** `{name}`: terminates what runs in the window. Nothing to close (missing
   window or session) is a message, not an error, and creates nothing. Closing the last window
   closes the session: the result says a fresh `main` comes next, at the cost of a tmux command
@@ -180,8 +206,11 @@ server can not wake an agent up, and polling the screen would cost a screen of c
   defaults: false (small models forget it), true (runs text meant to wait, against "Enter only
   when asked"). The description tells what the text meets: at a bash prompt it waits on the
   command line, new lines included, until Enter; while a command runs, or before a new window
-  shows its prompt, it is read as typed, each line running. An empty text only presses Enter; an
-  empty text without Enter sends nothing, a message rather than an error.
+  shows its prompt, it is read as typed, each line running. It points to a window of its own for
+  each long running command, rather than the background, telling how the tools then follow it
+  (see above): `wait_window` where the terminals record prompts, `list_windows` and `read_window`.
+  An empty text only presses Enter; an empty text without Enter sends nothing, a message rather
+  than an error.
 - **`send_keys`** `{window, keys}`: presses keys in order. The description lists the names the
   controller accepts, one per key (aliases are accepted, not shown): a printable character,
   `Space`, `Enter`, `Tab`, `BTab`, `BSpace`, `Escape`, `Up`, `Down`, `Left`, `Right`, `Home`,
@@ -213,12 +242,13 @@ server can not wake an agent up, and polling the screen would cost a screen of c
   is in the foreground with no prompt since the last input, that a text may wait on the command
   line (sent without Enter), or a builtin run. Not seen as finished, which the description tells:
   a program waiting for input, and what runs within ssh or an interpreter, which show no prompt of
-  rat's bash. The exit status is told where the terminals record it right (see Startup). Where
-  they record no prompt, the tool is offered all the same, its description and its answer telling
-  why it can not wait, and what to use instead: the same tools everywhere, and an agent told why
-  rather than left wondering where a tool went. A missing session is
-  created, as by the other tools: waiting on `main` then waits for its first prompt. It returns at
-  once when ratd stops (see Shutdown).
+  rat's bash. Seen as finished at once, which it tells too: a command run in the background, bash
+  showing its prompt as soon as it started it. The exit status is told where the terminals record
+  it right (see Startup). Where they record no prompt, the tool is offered all the same, its
+  description and its answer telling why it can not wait, and what to use instead: the same tools
+  everywhere, and an agent told why rather than left wondering where a tool went. A missing
+  session is created, as by the other tools: waiting on `main` then waits for its first prompt. It
+  returns at once when ratd stops (see Shutdown).
 
   50 seconds at most: a harness cuts a tool call at a limit of its own, which ratd can not see,
   nor push back without a stream to send progress on. That limit is 60 seconds by default for
@@ -433,13 +463,16 @@ Built at startup, sent to each client when it initializes, or discovers the serv
 > back to check them: wait_window waits until a command finished, 50 seconds at most per call, and
 > tells how it exited; list_windows shows the foreground command of each window, and how its last
 > command exited once bash is back at its prompt; read_window shows the screen. Run several
-> commands in parallel in several windows. Each terminal is a window running bash,
-> found by name: windows persist across your restarts and context compactions, so call
-> list_windows first. A window named main exists when you start. To copy a whole file to or from
-> the machine, use write_file and read_file rather than the terminal. For the exact output of a
-> long command, run it as command 2>&1 | tee /tmp/name.log: the screen still shows it, and
-> read_file reads the file whole or a range at a time, rather than reading the window over and
-> over.
+> commands in parallel in several windows, each long running command in the foreground of a
+> window of its own (create_window): a single list_windows then tells which still run, and reading
+> a window shows its progress, with no script checking jobs or their logs. A command run in the
+> background (&, nohup) looks finished at once: rat follows the foreground command of a window.
+> Each terminal is a window running bash, found by name: windows persist across your restarts and
+> context compactions, so call list_windows first, and close the windows you are done with
+> (close_window). A window named main exists when you start. To copy a whole file to or from the
+> machine, use write_file and read_file rather than the terminal. For the exact output of a long
+> command, run it as command 2>&1 | tee /tmp/name.log: the screen still shows it, and read_file
+> reads the file whole or a range at a time, rather than reading the window over and over.
 > If the terminals restart after a failure, every window disappears and you find a fresh main.
 
 How to check a command depends on what holds in the terminals (see Startup): where they do not

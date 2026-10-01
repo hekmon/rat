@@ -16,7 +16,8 @@ import (
 // TestWaitWindow guards wait_window: it returns as soon as the command sent last finished, telling
 // how it exited, or after the seconds asked, telling what still runs, with a calm hint when nothing
 // was displayed for a while; bash at its prompt with nothing run since the last input is not taken
-// for a command finished; the seconds asked are bounded.
+// for a command finished; the seconds asked are bounded. A command run in the background is seen
+// as finished at once, as the instructions and the description tell agents.
 func TestWaitWindow(t *testing.T) {
 	hint := quietHint
 	quietHint = 0
@@ -35,6 +36,10 @@ func TestWaitWindow(t *testing.T) {
 		"main: still running after 1s, sleep in the foreground. No output for ", "read_window shows whether it waits for input.")
 	expectTool(t, session, "send_keys", map[string]any{"window": "main", "keys": []string{"C-c"}}, false)
 	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 5}, false, "exit status 130.")
+	// the job outlasts the wait: what finished is starting it
+	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": "sleep 30 &", "enter": true}, false)
+	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 5}, false,
+		"main: the command finished ", " ago, exit status 0.")
 	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": "echo pending", "enter": false}, false)
 	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 1}, false,
 		"main: nothing finished after 1s: bash has shown no prompt since your last input.")
@@ -64,7 +69,7 @@ func TestWaitWindowMissingSession(t *testing.T) {
 // TestWaitWindowWithoutPrompts guards that where the terminals record no prompt (bash startup
 // files replacing PROMPT_COMMAND), wait_window is offered all the same, its description, its answer
 // and the instructions telling why it can not wait. The texts telling to wait for a prompt point to
-// read_window instead.
+// read_window instead, and send_text does not count wait_window among the tools following a command.
 func TestWaitWindowWithoutPrompts(t *testing.T) {
 	session, _, _, _ := connectToolsWith(t, "test-ratd-nowait", tmux.TerminalsCheck{BracketedPaste: true})
 	list, err := session.ListTools(context.Background(), nil)
@@ -88,6 +93,9 @@ func TestWaitWindowWithoutPrompts(t *testing.T) {
 	for _, tool := range list.Tools {
 		if tool.Name == "create_window" && !strings.Contains(tool.Description, "(read_window)") {
 			t.Errorf("expected create_window to point to read_window, got %q", tool.Description)
+		}
+		if tool.Name == "send_text" && !strings.Contains(tool.Description, "(&, nohup): list_windows tells whether") {
+			t.Errorf("expected send_text not to point to wait_window, got %q", tool.Description)
 		}
 	}
 	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": "echo x", "enter": true}, true,

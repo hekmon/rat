@@ -37,7 +37,8 @@ func (d *daemon) addWaitTool(server *mcp.Server, session string) {
 		"prompt. Returns as soon as it is, or after max_seconds (%d by default, %d at most), in one line: how the "+
 		"command exited, or what still runs. Call it again to keep waiting, read_window to see the screen. Not "+
 		"seen as finished: a program waiting for input (y/n, a password), and what runs within ssh or an "+
-		"interpreter.", tools.DefaultWaitSeconds, tools.MaxWaitSeconds)
+		"interpreter. Seen as finished at once: a command run in the background (&, nohup).",
+		tools.DefaultWaitSeconds, tools.MaxWaitSeconds)
 	if !d.terminals.Prompts {
 		description = "Wait until the command sent last to a window finished. Unavailable: " + noPromptsText
 	}

@@ -184,7 +184,9 @@ func TestListWindowsStatusesUntold(t *testing.T) {
 
 // TestCreateWindow guards creating windows: main in a missing session is created by creating the
 // session, an existing window is not recreated but described, and an invalid name is refused with
-// the naming rule. Its description points to wait_window to wait for the prompt of a new window.
+// the naming rule. Its description points to wait_window to wait for the prompt of a new window,
+// and invites to close the windows an agent is done with, as the instructions do: clients may not
+// pass the instructions on.
 func TestCreateWindow(t *testing.T) {
 	session, _, _, home := connectTools(t, "test-ratd-create")
 	tools, err := session.ListTools(context.Background(), nil)
@@ -192,8 +194,9 @@ func TestCreateWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tool := range tools.Tools {
-		if tool.Name == "create_window" && !strings.Contains(tool.Description, "(wait_window)") {
-			t.Errorf("expected create_window to point to wait_window, got %q", tool.Description)
+		if tool.Name == "create_window" && (!strings.Contains(tool.Description, "(wait_window)") ||
+			!strings.Contains(tool.Description, "close the windows you are done with (close_window)")) {
+			t.Errorf("expected create_window to point to wait_window, and to closing windows, got %q", tool.Description)
 		}
 	}
 	expectTool(t, session, "create_window", map[string]any{"name": "main"}, false,

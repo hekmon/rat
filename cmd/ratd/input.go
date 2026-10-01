@@ -21,13 +21,21 @@ const keyNames = "a printable character, Space, Enter, Tab, BTab, BSpace, Escape
 // addInputTools adds the tools sending input to the windows of session. What runs in a terminal can
 // reach anything: an open world.
 func (d *daemon) addInputTools(server *mcp.Server, session string) {
+	// how a command in the foreground of its window is followed: wait_window only where it can wait
+	// (see addWaitTool)
+	following := "list_windows tells whether it still runs, read_window shows its progress"
+	if d.terminals.Prompts {
+		following = "wait_window waits for it, " + following
+	}
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        tools.SendText,
 		InputSchema: d.inputSchemas[tools.SendText],
 		Description: "Paste text in a window, as a human pastes, then press Enter if enter is true. At a bash prompt, " +
 			"the text waits on the command line, new lines included, until Enter runs it. While a command runs, or " +
 			"before a new window shows its prompt, the text is read as typed: each line runs. Returns at once, " +
-			"without waiting for the command: check it with list_windows or read_window.",
+			"without waiting for the command. Run each long running command in the foreground of a window of its " +
+			"own (create_window), rather than in the background (&, nohup): " + following + ", with no script " +
+			"checking jobs or their logs.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(true), OpenWorldHint: ptr(true)},
 	}, tool(d, session, tools.SendText, func(in tools.SendTextInput) string { return in.Window },
 		func(ctx context.Context, in tools.SendTextInput) result { return d.sendText(ctx, session, in) }))

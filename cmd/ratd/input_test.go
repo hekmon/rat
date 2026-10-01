@@ -28,9 +28,24 @@ func waitPrompt(t *testing.T, session *mcp.ClientSession, controller *tmux.Contr
 }
 
 // TestSendText guards send_text: a multi-line text pasted at a prompt waits for Enter, Enter alone
-// runs it, enter is required, and the log line tells the size of the text, never the text.
+// runs it, enter is required, and the log line tells the size of the text, never the text. Its
+// description points to a window per long running command rather than the background, telling
+// why, as the instructions do: clients may not pass the instructions on. wait_window is among the
+// tools following the command.
 func TestSendText(t *testing.T) {
 	session, controller, logs, _ := connectTools(t, "test-ratd-sendtext")
+	list, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range list.Tools {
+		if tool.Name == "send_text" && (!strings.Contains(tool.Description, "rather than in the background (&, "+
+			"nohup): wait_window waits for it, list_windows tells whether it still runs") ||
+			!strings.Contains(tool.Description, "with no script checking jobs or their logs.")) {
+			t.Errorf("expected send_text to point to a window rather than the background, telling why, got %q",
+				tool.Description)
+		}
+	}
 	expectTool(t, session, "list_windows", nil, false)
 	waitPrompt(t, session, controller, tmux.FirstWindow)
 	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": "echo one\necho secret-two", "enter": false},
