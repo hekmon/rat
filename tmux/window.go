@@ -36,10 +36,13 @@ type Window struct {
 	// Scrollback is the number of terminal rows kept above the screen, which a capture can
 	// include (bounded by the history limit).
 	Scrollback int
-	// Prompt is the last prompt the bash of the terminal displayed, with the exit status of the
-	// command before it: the zero Prompt before its first one. Only the bash of the terminal, and
-	// the ones started in it, record their prompts (see StartServer): not a program displaying a
-	// prompt of its own (ssh, an interpreter).
+	// Prompt is the prompt the bash of the terminal displayed since the last input (SendText,
+	// SendKeys), with the exit status of the command before it: the command sent finished. It is
+	// the zero Prompt while bash displayed none since: a command running, a text left on the command
+	// line, keys typed at the prompt, bash starting. Only the bash of the terminal, and the ones
+	// started in it, record their prompts (see StartServer): not a program displaying a prompt of
+	// its own (ssh, an interpreter). Text sent while a command runs gets the prompt of that command
+	// when it ends: the foreground command then tells whether the text started another one.
 	Prompt Prompt
 }
 

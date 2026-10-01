@@ -36,6 +36,7 @@ var keyFormat = regexp.MustCompile(`^(?:[CMS]-)*(?:[!-~]|Enter|Escape|Tab|BTab|B
 // pasted while bash was starting or running a command. It has no size limit, and reaches the
 // terminal whole: no other input can interleave with it. A tmux mode a human left the window in
 // (copy mode, to scroll back) is left first: in a mode, tmux would paste the text unmarked.
+// Sending something clears the prompt recorded until then (see Window.Prompt).
 // The error wraps ErrSessionNotFound or ErrWindowNotFound if they do not exist.
 //
 // A paste is all or nothing: a command ended by its context while the text streams to tmux pastes
@@ -72,6 +73,10 @@ func (c *Controller) sendText(ctx context.Context, session, window string, text 
 	// load-buffer, which waits while reading stdin and lets other clients run meanwhile: a mode
 	// entered then would still be on for the paste.
 	args = append(args, leaveModes(tg)...)
+	if text != nil || enter {
+		args = append(args, ";")
+		args = append(args, clearPrompt(tg)...)
+	}
 	if text != nil {
 		// paste the buffer into the window, where:
 		//  -r keeps new lines as is (tmux would replace them with carriage returns)
@@ -109,7 +114,8 @@ func CheckKey(key string) error {
 // SendKeys presses keys in window of session, in order. Keys are tmux key names, such as
 // "C-c", "Escape", "Up" or "F5"; the error wraps ErrInvalidKey for an unknown one, and nothing
 // is sent. A tmux mode a human left the window in (copy mode, to scroll back) is left first: in a
-// mode, tmux would take the keys for itself, or drop them.
+// mode, tmux would take the keys for itself, or drop them. Pressing keys clears the prompt
+// recorded until then (see Window.Prompt).
 // The error wraps ErrSessionNotFound or ErrWindowNotFound if they do not exist.
 func (c *Controller) SendKeys(ctx context.Context, session, window string, keys ...string) error {
 	if err := checkNames(session, window); err != nil {
@@ -121,7 +127,9 @@ func (c *Controller) SendKeys(ctx context.Context, session, window string, keys 
 		}
 	}
 	tg := target(session, window)
-	args := append(leaveModes(tg), ";", "send-keys", "-t", tg, "--")
+	args := append(leaveModes(tg), ";")
+	args = append(args, clearPrompt(tg)...)
+	args = append(args, ";", "send-keys", "-t", tg, "--")
 	for _, key := range keys {
 		args = append(args, tmuxArg(key))
 	}
@@ -139,6 +147,14 @@ func (c *Controller) SendKeys(ctx context.Context, session, window string, keys 
 // It does nothing on a window in no mode, and fails on a missing one.
 func leaveModes(target string) []string {
 	return []string{"copy-mode", "-q", "-t", target}
+}
+
+// clearPrompt returns the tmux command clearing the prompt the window target recorded (see
+// Window.Prompt), to chain in an input invocation right before the input: the prompt recorded
+// until then precedes the input, and one recorded afterwards follows it. Clearing an option that
+// is not set succeeds: it can not fail the input.
+func clearPrompt(target string) []string {
+	return []string{"set-option", "-pu", "-t", target, promptOption}
 }
 
 // checkMarker starts the line the bash run by CheckBracketedPaste answers on, telling it apart from

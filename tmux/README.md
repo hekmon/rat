@@ -484,6 +484,26 @@ a command runs gets a prompt of its own, a bash started in the terminal records 
 its exit status once it exits. A multi-line text pasted then run gets a single prompt with bash
 5.1 and later, and one per line with 4.4 and 5.0, which show a prompt between them.
 
+### Inputs clear it
+
+Each input clears the option, in its own invocation, right before the text or the keys: a prompt
+recorded afterwards follows the input. The option then tells, by itself, whether bash showed its
+prompt since the last input, the command sent having finished, with no state in rat, not even a
+marker of the input. Without it, the prompt of the previous command would read as the end of the
+one just sent. While it is cleared: a command running, a text left on the command line (no
+Enter), keys typed at the prompt, bash starting. Clearing an option that is not set succeeds
+(measured with tmux 3.3a to 3.7c): it can not fail the input.
+
+Limits, where the prompt recorded is not the one of the command sent:
+
+- A text sent while a command runs is read when it ends (see Pasted as a human pastes): the
+  prompt of that command is recorded after the input, then bash runs the text. An input sent
+  within milliseconds of a command ending meets the same race. In both cases the foreground
+  command tells: the text runs then, unless it is a bash builtin.
+- bash 4.4 and 5.0 show a prompt between the lines of a multi-line text run at once: the prompt
+  after its first line is recorded while the next ones run.
+- Input typed by a human attached to the terminal does not go through rat: it clears nothing.
+
 ### Reading it
 
 The option is read with the window description, quoted (`#{q:@rat_prompt}`). A command typed in

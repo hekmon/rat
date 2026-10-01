@@ -418,3 +418,42 @@ func TestSendTextAllOrNothing(t *testing.T) {
 		t.Errorf("expected no buffer left, got %q, %v", buffers, err)
 	}
 }
+
+// TestInputClearsPrompt guards that an input clears the prompt recorded until then, in its own
+// invocation: no prompt shows while the command sent runs, nor while text or keys wait on the
+// command line, and the prompt recorded afterwards follows the input, with its status.
+func TestInputClearsPrompt(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	c := startTestServer(t, "inputprompt")
+	ctx := context.Background()
+	if err := c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "first prompt", promptIs(c, "s", FirstWindow, NoStatus))
+	noPrompt := func(what string) {
+		t.Helper()
+		if w, err := c.Window(ctx, "s", FirstWindow); err != nil || w.Prompt != (Prompt{}) {
+			t.Errorf("%s: expected no prompt, got %+v, %v", what, w.Prompt, err)
+		}
+	}
+	if err := c.SendText(ctx, "s", FirstWindow, "sleep 1; false", true); err != nil {
+		t.Fatal(err)
+	}
+	noPrompt("command running")
+	eventually(t, "prompt after the command", promptIs(c, "s", FirstWindow, 1))
+	if err := c.SendText(ctx, "s", FirstWindow, "echo pending", false); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "text typed", promptEndsWith(c, "s", FirstWindow, "echo pending"))
+	noPrompt("text on the command line")
+	// C-c discards the command line, and bash shows a new prompt
+	if err := c.SendKeys(ctx, "s", FirstWindow, "C-c"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "prompt after C-c", promptIs(c, "s", FirstWindow, 130))
+	if err := c.SendKeys(ctx, "s", FirstWindow, "x"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "key typed", promptEndsWith(c, "s", FirstWindow, "x"))
+	noPrompt("key on the command line")
+}
