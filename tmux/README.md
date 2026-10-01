@@ -190,10 +190,11 @@ Terminals inherit rat's environment, plus variables enforced at `StartServer`:
   `less` when their output does not fit the screen, and agents would have to notice it and quit
   it. The output goes to the scrollback instead. The tool specific ones are needed as they take
   precedence over `PAGER` and users often set them (`GIT_PAGER` also overrides `core.pager`).
-- `PROMPT_COMMAND='bind "set enable-bracketed-paste on"'`: pasted text relies on bracketed
-  paste (see Input), which bash 4.4 and 5.0 do not enable by default, and an inputrc can disable.
-  bash runs `PROMPT_COMMAND` before each prompt, after its startup files, so the setting holds
-  whatever they say. Rejected: an inputrc of rat's (`INPUTRC`), a file to maintain; typing the
+- `PROMPT_COMMAND`, which records each prompt (see Prompts) and runs `bind "set
+  enable-bracketed-paste on"`: pasted text relies on bracketed paste (see Input), which bash 4.4
+  and 5.0 do not enable by default, and an inputrc can disable. bash runs `PROMPT_COMMAND` before
+  each prompt, after its startup files, so the setting holds whatever they say. It is set apart
+  from the other variables, as it names the tmux running the server. Rejected: an inputrc of rat's (`INPUTRC`), a file to maintain; typing the
   `bind` command in each new terminal, which shows on the screen and in the history, and holds
   only until something changes the setting. Limit: a startup file assigning `PROMPT_COMMAND`
   (rather than adding to it, as most do) replaces it, and the inputrc or bash default applies.
@@ -284,8 +285,8 @@ The window description is therefore separated by spaces, which must not be ambig
 
 - neither the name (validated) nor the numbers (activity, full screen, scrollback) can contain
   a space;
-- the foreground command is quoted by tmux, with the `q:` format modifier escaping spaces and
-  special characters with a backslash, and unquoted by rat;
+- the last prompt (see Prompts) and the foreground command are quoted by tmux, with the `q:`
+  format modifier escaping spaces and special characters with a backslash, and unquoted by rat;
 - the working directory comes last, so it needs no quoting: everything after the command is
   the path.
 
@@ -293,7 +294,8 @@ The window description is therefore separated by spaces, which must not be ambig
 
 Agents act on a terminal, they do not run commands: they paste text and press keys, and the
 input may answer a prompt ("press y to confirm") as well as start a command. rat does not know
-when a command finishes, only which process is in the foreground.
+when a command finishes in general: it knows which process is in the foreground, and when the
+bash of the terminal shows its prompt again (see Prompts).
 
 ### One input, one tmux invocation
 
@@ -440,6 +442,61 @@ Rejected: reporting the mode (in the window description, then in `list_windows` 
 `read_window`), or refusing input in a mode, for the caller to leave it: the caller is an agent
 in the end, who would get tmux plumbing to handle, and could not leave every mode anyway, its
 keys being dropped.
+
+## Prompts
+
+tmux knows which process is in the foreground of a terminal, not when a command finished nor how:
+`bash` in the foreground also means a builtin or a loop running, or bash not having started the
+command just sent yet. bash knows: it shows its prompt again once the command finished, and runs
+`PROMPT_COMMAND` right before. rat's `PROMPT_COMMAND` (see Terminal environment) records each
+prompt on the pane option `@rat_prompt`: the exit status of the command, and the time. The window
+description reads it (`Window.Prompt`).
+
+### The hook
+
+- **`$?` is read first**: anything run before it changes it. A startup file putting a command of
+  its own in front of rat's can change it too: `history -a` does, every status then reading 0,
+  as does starship, which runs rat's command from a function of its own; direnv and bash-preexec
+  keep it (measured with starship 1.26, direnv and bash-preexec on Debian 12).
+- **The first prompt of a bash records no status** (`-`): it follows the startup files, not a
+  command, and their last status (1 on macOS with an empty `~/.bash_profile`) is not the agent's.
+  So does the first prompt of a bash started in the terminal: the variable telling a first
+  prompt is not exported.
+- **tmux is reached by the client of the terminal**, the tmux running the server, by its absolute
+  path: `StartServer` finds it in rat's PATH, as the server was found (`/usr/bin/tmux` on Debian,
+  `/opt/homebrew/bin/tmux` with Homebrew). Rejected: `tmux` looked up at each prompt in the PATH
+  of the terminal, which the agent and its startup files change: tmux missing there, or another
+  one found first, would fail silently, the terminal recording no prompt anymore. The client uses
+  `TMUX` and `TMUX_PANE`, which tmux sets in every terminal, and is not run without them: an agent
+  unsetting `TMUX` would reach another server, and a bash run elsewhere (the startup check)
+  records nothing.
+- **In the background, from a subshell**: in the foreground, the tmux client would show as the
+  command of the terminal while it runs (`tmux` instead of `bash`, a few milliseconds per
+  prompt). A subshell rather than a job: bash would announce a job, and its end.
+- **Nothing on the screen**: every output is silenced, and the time comes from `printf '%(%s)T'`,
+  without starting a process, or `date` for a bash older than 4.2 started in the terminal (typing
+  `bash` on macOS runs the 3.2 of the system, first in the PATH of a login shell). The cost is one
+  tmux client per prompt: about 1 ms on Linux, 4 ms on macOS.
+
+Measured with tmux 3.3a, 3.5a and 3.7c, and bash 4.4 to 5.3: a command records its status, C-c
+at the prompt or on a command 130, an empty Enter keeps the previous status, each line typed while
+a command runs gets a prompt of its own, a bash started in the terminal records its prompts, and
+its exit status once it exits. A multi-line text pasted then run gets a single prompt with bash
+5.1 and later, and one per line with 4.4 and 5.0, which show a prompt between them.
+
+### Reading it
+
+The option is read with the window description, quoted (`#{q:@rat_prompt}`). A command typed in
+a terminal can write it, `TMUX` being kept: a value rat did not write reads as no prompt, never
+as an error failing the description.
+
+Rejected:
+
+- The pane title, set by an escape sequence without starting a process: any program sets it
+  (ssh sessions, vim), and would be taken for a prompt.
+- Waiting on a tmux channel (`wait-for`) signaled by the hook, rather than reading an option:
+  the channel would be named after the pane ID, which rat never uses, and an option keeps the
+  status for whoever reads it later.
 
 ## Capture
 

@@ -166,19 +166,21 @@ const checkScript = "unset HISTFILE\n" +
 // override. Startup files may block, so ctx should bound it. It fails with ErrServerNotRunning if
 // the server is not started.
 func (c *Controller) CheckBracketedPaste(ctx context.Context) error {
-	// What tmux adds for terminals, on top of their environment: the shell, TERM, and TMUX. TMUX
-	// matters: a common startup file runs tmux when it is empty.
+	// What tmux adds for terminals, on top of their environment: the shell, TERM, and TMUX, and
+	// what StartServer set apart from terminalEnvironment, PROMPT_COMMAND. TMUX matters: a common
+	// startup file runs tmux when it is empty.
 	out, err := c.run(ctx, "show-options", "-gv", "default-shell", ";",
 		"show-options", "-gv", "default-terminal", ";",
-		"display-message", "-p", "#{socket_path},#{pid},0")
+		"display-message", "-p", "#{socket_path},#{pid},0", ";",
+		"show-environment", "-g", "PROMPT_COMMAND")
 	if err != nil {
 		return fmt.Errorf("failed to read the terminals settings: %w", err)
 	}
 	settings := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
-	if len(settings) != 3 {
+	if len(settings) != 4 || !strings.HasPrefix(settings[3], "PROMPT_COMMAND=") {
 		return fmt.Errorf("unexpected terminals settings %q", out)
 	}
-	shell, term, tmux := settings[0], settings[1], settings[2]
+	shell, term, tmux, promptCommand := settings[0], settings[1], settings[2], settings[3]
 	// Not through tmux (run-shell): tmux 3.3 does not return its output to the client.
 	// The commands are typed on stdin rather than given with -c: bash then shows a prompt before
 	// each, as in a terminal. Reading PROMPT_COMMAND instead took a startup file running rat's
@@ -190,7 +192,7 @@ func (c *Controller) CheckBracketedPaste(ctx context.Context) error {
 	for _, variable := range terminalEnvironment {
 		cmd.Env = append(cmd.Env, variable[0]+"="+variable[1])
 	}
-	cmd.Env = append(cmd.Env, "TERM="+term, "TMUX="+tmux)
+	cmd.Env = append(cmd.Env, "TERM="+term, "TMUX="+tmux, promptCommand)
 	if cmd.Dir, err = os.UserHomeDir(); err != nil {
 		return fmt.Errorf("failed to run bash as terminals do: %w", err)
 	}

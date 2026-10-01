@@ -292,6 +292,10 @@ func TestServerOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	tmuxPath, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for option, expected := range map[string]string{
 		"default-shell": bashPath,
 		"history-limit": strconv.Itoa(serverHistoryLimit),
@@ -316,7 +320,7 @@ func TestServerOptions(t *testing.T) {
 		"GIT_PAGER":      "cat",
 		"MANPAGER":       "cat",
 		"SYSTEMD_PAGER":  "cat",
-		"PROMPT_COMMAND": `bind "set enable-bracketed-paste on"`,
+		"PROMPT_COMMAND": promptCommand(tmuxPath),
 	} {
 		out, err := c.cmd(context.Background(), []string{"show-environment", "-g", variable}).Output()
 		if err != nil {

@@ -3,6 +3,7 @@ package tmux
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -33,22 +34,87 @@ func foregroundIs(c *Controller, session, window, command string) func() (bool, 
 	}
 }
 
-// TestParseWindow guards the parsing of the window format, whose command is quoted by tmux and
-// whose path comes last unquoted.
+// TestParseWindow guards the parsing of the window format, whose prompt and command are quoted by
+// tmux and whose path comes last unquoted, and the parsing of prompts: a value rat did not write,
+// which a command typed in a terminal can, reads as no prompt rather than failing.
 func TestParseWindow(t *testing.T) {
-	w, err := parseWindow(`w 1700000000 1 42 my\ prog\|x /tmp/a dir|b`)
+	w, err := parseWindow(`w 1700000000 1 42 0\ 1790000000 my\ prog\|x /tmp/a dir|b`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	expected := Window{Name: "w", Command: "my prog|x", Path: "/tmp/a dir|b", Activity: time.Unix(1700000000, 0),
-		FullScreen: true, Scrollback: 42}
+		FullScreen: true, Scrollback: 42, Prompt: Prompt{Time: time.Unix(1790000000, 0), Status: 0}}
 	if w != expected {
 		t.Errorf("got %+v, expected %+v", w, expected)
 	}
-	for _, line := range []string{"", "w", "w 1700000000 0 0", "w notanumber 0 0 bash /tmp", "w 1700000000 0 x bash /tmp"} {
+	for _, line := range []string{"", "w", "w 1700000000 0 0", "w 1700000000 0 0 1\\ 1790000000 bash",
+		"w notanumber 0 0  bash /tmp", "w 1700000000 0 x  bash /tmp"} {
 		if _, err := parseWindow(line); err == nil {
 			t.Errorf("%q: expected an error", line)
 		}
+	}
+	for value, expected := range map[string]Prompt{
+		`-\ 1790000000`:    {Time: time.Unix(1790000000, 0), Status: NoStatus},
+		`130\ 1790000000`:  {Time: time.Unix(1790000000, 0), Status: 130},
+		``:                 {},
+		`garbage`:          {},
+		`1\ x`:             {},
+		`256\ 1790000000`:  {},
+		`-1\ 1790000000`:   {},
+		`1\ 1790000000\ 2`: {},
+	} {
+		w, err := parseWindow("w 1700000000 0 0 " + value + " bash /tmp")
+		if err != nil || w.Prompt != expected {
+			t.Errorf("prompt %q: expected %+v, got %+v, %v", value, expected, w.Prompt, err)
+		}
+	}
+}
+
+// promptIs returns a condition true once window records a prompt following a command that exited
+// with status (NoStatus for the first prompt of a bash).
+func promptIs(c *Controller, session, window string, status int) func() (bool, string) {
+	return func() (bool, string) {
+		w, err := c.Window(context.Background(), session, window)
+		if err != nil {
+			return false, err.Error()
+		}
+		return !w.Prompt.Time.IsZero() && w.Prompt.Status == status, fmt.Sprintf("%+v", w.Prompt)
+	}
+}
+
+// TestPrompt guards the prompts terminals record: the first one with no status, as it follows
+// startup files, then the exit status of each command, again no status for the first prompt of a
+// bash started in the terminal, its own statuses, and its exit status once it exits. A terminal
+// whose PATH lost tmux records its prompts all the same: the hook runs the tmux of the server by
+// its path. A value rat did not write, which a command typed in a terminal can, does not fail the
+// description.
+func TestPrompt(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	c := startTestServer(t, "prompt")
+	ctx := context.Background()
+	if err := c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "first prompt", promptIs(c, "s", FirstWindow, NoStatus))
+	for _, step := range []struct {
+		command string
+		status  int
+	}{
+		{"false", 1}, {"true", 0}, {"bash", NoStatus}, {"(exit 3)", 3}, {"exit 4", 4},
+		// tmux out of the PATH of the terminal: the hook does not look it up there
+		{"export PATH=/nonexistent; (exit 5)", 5},
+	} {
+		typeCommand(t, c, "s", FirstWindow, step.command)
+		eventually(t, "prompt after "+step.command, promptIs(c, "s", FirstWindow, step.status))
+	}
+	if w, err := c.Window(ctx, "s", FirstWindow); err != nil || time.Since(w.Prompt.Time) > time.Minute {
+		t.Errorf("expected a recent prompt, got %+v, %v", w.Prompt, err)
+	}
+	if _, err := c.run(ctx, "set-option", "-p", "-t", target("s", FirstWindow), promptOption, "not rat's"); err != nil {
+		t.Fatal(err)
+	}
+	if w, err := c.Window(ctx, "s", FirstWindow); err != nil || w.Prompt != (Prompt{}) {
+		t.Errorf("expected no prompt from a value rat did not write, got %+v, %v", w.Prompt, err)
 	}
 }
 
@@ -71,6 +137,8 @@ func TestListWindows(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// bash started: its description no longer changes by itself
+	eventually(t, "first prompt", promptIs(c, "s", FirstWindow, NoStatus))
 	windows, err := c.ListWindows(ctx, "s")
 	if err != nil {
 		t.Fatal(err)

@@ -50,7 +50,9 @@ An agent closing all its windows simply finds a fresh `main` on its next call.
 - **Terminal input, not command execution.** Agents act on a terminal as a human does: they
   paste text and press keys. Pressing Enter is optional (e.g. "press y to confirm"), and the
   input may answer a prompt rather than start a command. rat does not know when a command
-  finishes, only which process is in the foreground.
+  finishes in general: it knows which process is in the foreground, and when the bash of a
+  terminal shows its prompt again, with the exit status of the command before it. A command run
+  within ssh or an interpreter shows no prompt of that bash.
 - **Humans peek, they do not take over.** The terminals are the agents'. A human may attach to
   rat's tmux server to watch them work, and what a peek leaves behind must not change what agents
   get: a window keeps its size, and a mode left on (copy mode, to scroll back) is left before the

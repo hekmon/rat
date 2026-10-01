@@ -125,11 +125,45 @@ func (p *serverProcess) exitedOnItsOwn() error {
 }
 
 // bracketedPasteCommand turns bracketed paste on in bash, run before each prompt through
-// PROMPT_COMMAND (see terminalEnvironment).
+// PROMPT_COMMAND (see promptCommand).
 const bracketedPasteCommand = `bind "set enable-bracketed-paste on"`
 
+// promptOption is the pane option where the bash of a terminal records its last prompt (see
+// promptCommand), which Window reads: a user option, tmux has no use for it.
+const promptOption = "@rat_prompt"
+
+// promptCommand returns the PROMPT_COMMAND of terminals, run by bash before each prompt, after its
+// startup files, and reaching the server with the tmux at tmuxPath. In order, it:
+//   - reads the exit status of the last command: anything run before would change it;
+//   - turns bracketed paste on, which pasted text relies on, and which bash 4.4 and 5.0 do not
+//     enable by default, and an inputrc can disable: enforced whatever startup files say, with no
+//     file of rat's to maintain;
+//   - records the prompt on promptOption: the status, - for the first prompt of a bash (which
+//     follows its startup files, not a command), and the time, in seconds.
+//
+// Startup files assigning PROMPT_COMMAND defeat it: see CheckBracketedPaste. Nothing it runs writes
+// on the screen. The time comes from printf, without starting a process, or from date for a bash
+// older than 4.2 started in a terminal (on macOS, typing bash runs the 3.2 of the system). tmux is
+// the one running the server, at tmuxPath, which StartServer finds in rat's PATH: looked up in the
+// PATH of the terminal, which the agent and its startup files change, it could be missing, or
+// another tmux, and fail silently. It runs in the background from a subshell: in the foreground,
+// it would show as the command of the terminal while it runs. It is only run by a bash in a
+// terminal, whose TMUX and TMUX_PANE tmux sets: an agent unsetting TMUX would reach another server.
+func promptCommand(tmuxPath string) string {
+	return `__rat_status=$?; [ -n "${__rat_prompted-}" ] || __rat_status=-; __rat_prompted=1; ` +
+		bracketedPasteCommand + `; [ -z "${TMUX-}" ] || [ -z "${TMUX_PANE-}" ] || ` +
+		`{ printf -v __rat_time '%(%s)T' -1 2>/dev/null || __rat_time=$(date +%s); ` +
+		`(` + shellQuote(tmuxPath) + ` set-option -p -t "$TMUX_PANE" ` + promptOption +
+		` "$__rat_status $__rat_time" </dev/null >/dev/null 2>&1 &); }`
+}
+
+// shellQuote returns s quoted for bash, between single quotes.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 // terminalEnvironment is what StartServer adds to the environment terminals inherit, which is
-// otherwise rat's own.
+// otherwise rat's own, besides PROMPT_COMMAND (see promptCommand).
 var terminalEnvironment = [][2]string{
 	// the same neutral UTF-8 locale everywhere, whatever rat's own (a service often has none).
 	// UTF-8: without it, bash reads non ASCII input (é, ✓) as meta keys and mangles it, and
@@ -145,11 +179,6 @@ var terminalEnvironment = [][2]string{
 	{"GIT_PAGER", "cat"},
 	{"MANPAGER", "cat"},
 	{"SYSTEMD_PAGER", "cat"},
-	// pasted text relies on bracketed paste, which bash 4.4 and 5.0 do not enable by default,
-	// and an inputrc can disable. bash runs PROMPT_COMMAND before each prompt, after its startup
-	// files: the setting is enforced whatever they say, with no file of rat's to maintain.
-	// Startup files assigning PROMPT_COMMAND defeat it: see CheckBracketedPaste.
-	{"PROMPT_COMMAND", bracketedPasteCommand},
 }
 
 // fixedSize returns the tmux command keeping the size of the window target (serverDefaultSize)
@@ -286,6 +315,11 @@ readiness:
 		// programs must not be able to rename them (escape sequences)
 		{"allow-rename", "off"},
 	}
+	// the tmux running the server, for the prompt hook of terminals
+	tmuxPath, err := exec.LookPath("tmux")
+	if err != nil {
+		return fmt.Errorf("failed to configure server: %w", err)
+	}
 	var args []string
 	for _, option := range options {
 		args = append(args, "set-option", "-g", option[0], option[1], ";")
@@ -293,7 +327,7 @@ readiness:
 	for _, variable := range terminalEnvironment {
 		args = append(args, "set-environment", "-g", variable[0], variable[1], ";")
 	}
-	args = args[:len(args)-1] // no trailing command separator
+	args = append(args, "set-environment", "-g", "PROMPT_COMMAND", promptCommand(tmuxPath))
 	if out, err := c.cmd(optsCtx, args).CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to configure server: %w: %s", err, strings.TrimSpace(string(out)))
 	}

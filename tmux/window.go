@@ -24,7 +24,7 @@ type Window struct {
 	// Command is the process in the foreground of the terminal: the shell (bash) when it waits
 	// for input, the running program otherwise. It does not see bash builtins and loops,
 	// background jobs, nor what runs within ssh or a nested shell (which show as bash, bash and
-	// ssh). It tells nothing about the exit status of the last command.
+	// ssh). It tells nothing about the exit status of the last command: Prompt does.
 	Command string
 	// Path is the working directory of the foreground process.
 	Path string
@@ -36,21 +36,43 @@ type Window struct {
 	// Scrollback is the number of terminal rows kept above the screen, which a capture can
 	// include (bounded by the history limit).
 	Scrollback int
+	// Prompt is the last prompt the bash of the terminal displayed, with the exit status of the
+	// command before it: the zero Prompt before its first one. Only the bash of the terminal, and
+	// the ones started in it, record their prompts (see StartServer): not a program displaying a
+	// prompt of its own (ssh, an interpreter).
+	Prompt Prompt
 }
+
+// Prompt is a prompt the bash of a terminal displayed, as it recorded it.
+type Prompt struct {
+	// Time is when bash displayed it, to the second. The zero Time is no prompt.
+	Time time.Time
+	// Status is the exit status of the command bash ran before it, NoStatus for the first prompt of
+	// a bash, which follows its startup files rather than a command.
+	Status int
+}
+
+// NoStatus is the Status of a Prompt following no command.
+const NoStatus = -1
 
 // windowFormat is the tmux format describing a window, parsed by parseWindow. Fields are
 // separated by spaces: tmux replaces control characters (such as tabs) by '_' in its output, so
 // the separator has to be printable. The name (validated) and the numbers can not contain it,
-// the command is quoted by tmux (q: escapes spaces and special characters with a backslash),
-// and the path comes last so it needs no quoting.
-const windowFormat = "#{window_name} #{window_activity} #{alternate_on} #{history_size} #{q:pane_current_command} #{pane_current_path}"
+// the prompt and the command are quoted by tmux (q: escapes spaces and special characters with a
+// backslash), and the path comes last so it needs no quoting.
+const windowFormat = "#{window_name} #{window_activity} #{alternate_on} #{history_size} #{q:" + promptOption +
+	"} #{q:pane_current_command} #{pane_current_path}"
 
 func parseWindow(line string) (w Window, err error) {
 	fields := strings.SplitN(line, " ", 5)
 	if len(fields) != 5 {
 		return w, fmt.Errorf("unexpected window description %q", line)
 	}
-	command, path, ok := cutQuoted(fields[4])
+	prompt, rest, ok := cutQuoted(fields[4])
+	if !ok {
+		return w, fmt.Errorf("unexpected window description %q", line)
+	}
+	command, path, ok := cutQuoted(rest)
 	if !ok {
 		return w, fmt.Errorf("unexpected window description %q", line)
 	}
@@ -67,7 +89,26 @@ func parseWindow(line string) (w Window, err error) {
 		Activity:   time.Unix(numbers[0], 0),
 		FullScreen: numbers[1] == 1,
 		Scrollback: int(numbers[2]),
+		Prompt:     parsePrompt(prompt),
 	}, nil
+}
+
+// parsePrompt returns the prompt recorded as value (see promptCommand), or the zero Prompt for
+// anything else: a command typed in a terminal can write the option, and a value rat did not write
+// must not fail the description of the window.
+func parsePrompt(value string) Prompt {
+	statusField, timeField, _ := strings.Cut(value, " ")
+	seconds, err := strconv.ParseInt(timeField, 10, 64)
+	if err != nil || seconds <= 0 {
+		return Prompt{}
+	}
+	status := NoStatus
+	if statusField != "-" {
+		if status, err = strconv.Atoi(statusField); err != nil || status < 0 || status > 255 {
+			return Prompt{}
+		}
+	}
+	return Prompt{Time: time.Unix(seconds, 0), Status: status}
 }
 
 // cutQuoted reads a field quoted by the tmux q: format modifier (spaces and special characters
