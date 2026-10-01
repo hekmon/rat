@@ -184,9 +184,18 @@ func TestListWindowsStatusesUntold(t *testing.T) {
 
 // TestCreateWindow guards creating windows: main in a missing session is created by creating the
 // session, an existing window is not recreated but described, and an invalid name is refused with
-// the naming rule.
+// the naming rule. Its description points to wait_window to wait for the prompt of a new window.
 func TestCreateWindow(t *testing.T) {
 	session, _, _, home := connectTools(t, "test-ratd-create")
+	tools, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range tools.Tools {
+		if tool.Name == "create_window" && !strings.Contains(tool.Description, "(wait_window)") {
+			t.Errorf("expected create_window to point to wait_window, got %q", tool.Description)
+		}
+	}
 	expectTool(t, session, "create_window", map[string]any{"name": "main"}, false,
 		"Window main created: bash is starting in "+home+".")
 	if text := expectTool(t, session, "list_windows", nil, false); strings.Count(text, "\n") != 0 {

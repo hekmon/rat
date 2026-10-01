@@ -29,7 +29,7 @@ func (d *daemon) addWindowTools(server *mcp.Server, session string) {
 		InputSchema: d.inputSchemas[tools.CreateWindow],
 		Description: "Create a terminal: a window running bash, in your home directory. Windows persist across " +
 			"your restarts: call list_windows first, a window named main already exists. Wait for the prompt of a " +
-			"new window (read_window) before sending text to it.",
+			"new window (" + d.promptTool() + ") before sending text to it.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(false), IdempotentHint: true, OpenWorldHint: ptr(false)},
 	}, tool(d, session, tools.CreateWindow, func(in tools.NameInput) string { return in.Name },
 		func(ctx context.Context, in tools.NameInput) result { return d.createWindow(ctx, session, in.Name) }))

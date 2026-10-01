@@ -51,6 +51,15 @@ func (d *daemon) addWaitTool(server *mcp.Server, session string) {
 		func(ctx context.Context, in tools.WaitWindowInput) result { return d.waitWindow(ctx, session, in) }))
 }
 
+// promptTool names the tool an agent waits for the prompt of a window with: wait_window where it
+// is offered, read_window otherwise.
+func (d *daemon) promptTool() string {
+	if d.terminals.Prompts {
+		return tools.WaitWindow
+	}
+	return tools.ReadWindow
+}
+
 // waitOf returns how long a call of wait_window with in waits at most.
 func waitOf(in tools.WaitWindowInput) time.Duration {
 	if in.MaxSeconds == 0 {

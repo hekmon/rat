@@ -86,7 +86,7 @@ func TestSendKeys(t *testing.T) {
 func TestSendToMissingSession(t *testing.T) {
 	session, controller, _, _ := connectTools(t, "test-ratd-sendmissing")
 	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": "echo x", "enter": true}, true,
-		"Nothing was sent: your terminals did not exist, main was just created", "Wait for its prompt")
+		"Nothing was sent: your terminals did not exist, main was just created", "Wait for its prompt (wait_window)")
 	if _, err := controller.Window(context.Background(), toolsSession, tmux.FirstWindow); err != nil {
 		t.Errorf("expected main to be created, got %v", err)
 	}

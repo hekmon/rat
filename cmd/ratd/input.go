@@ -103,7 +103,7 @@ func (d *daemon) sent(ctx context.Context, session, window string, err error) re
 	}
 	text := "Nothing was sent: your terminals did not exist, main was just created and bash is starting."
 	if window == tmux.FirstWindow {
-		text += " Wait for its prompt (read_window), then send again."
+		text += " Wait for its prompt (" + d.promptTool() + "), then send again."
 	} else {
 		text += fmt.Sprintf(" Window %s does not exist: create it with create_window.", window)
 	}

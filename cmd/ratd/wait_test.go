@@ -63,7 +63,8 @@ func TestWaitWindowMissingSession(t *testing.T) {
 
 // TestWaitWindowWithoutPrompts guards that where the terminals record no prompt (bash startup
 // files replacing PROMPT_COMMAND), wait_window is offered all the same, its description, its answer
-// and the instructions telling why it can not wait.
+// and the instructions telling why it can not wait. The texts telling to wait for a prompt point to
+// read_window instead.
 func TestWaitWindowWithoutPrompts(t *testing.T) {
 	session, _, _, _ := connectToolsWith(t, "test-ratd-nowait", tmux.TerminalsCheck{BracketedPaste: true})
 	list, err := session.ListTools(context.Background(), nil)
@@ -84,6 +85,13 @@ func TestWaitWindowWithoutPrompts(t *testing.T) {
 		"rat can not tell when a command finishes on this machine (wait_window tells why)") {
 		t.Errorf("expected the instructions to tell rat can not tell when commands finish, got %q", instructions)
 	}
+	for _, tool := range list.Tools {
+		if tool.Name == "create_window" && !strings.Contains(tool.Description, "(read_window)") {
+			t.Errorf("expected create_window to point to read_window, got %q", tool.Description)
+		}
+	}
+	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": "echo x", "enter": true}, true,
+		"Wait for its prompt (read_window)")
 }
 
 // TestRunStopsWaits guards that stopping ratd does not wait for a call waiting: it returns at once,

@@ -167,7 +167,9 @@ server can not wake an agent up, and polling the screen would cost a screen of c
   `main` in a missing session is a success: creating the session made it. An existing window is
   not an error but a message saying it was not created, with what it runs and where: the agent
   must not believe it got a fresh terminal. The description invites to list windows first (they
-  persist, `main` exists), and to wait for the prompt of a new window before sending text.
+  persist, `main` exists), and to wait for the prompt of a new window before sending text: with
+  `wait_window`, or `read_window` where it is not offered, as the result of an input sent to a
+  session just created does.
 - **`close_window`** `{name}`: terminates what runs in the window. Nothing to close (missing
   window or session) is a message, not an error, and creates nothing. Closing the last window
   closes the session: the result says a fresh `main` comes next, at the cost of a tmux command
