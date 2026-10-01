@@ -401,9 +401,9 @@ Built at startup, sent to each client when it initializes, or discovers the serv
 
 The host name tells an agent that has a local shell too where commands run. The tenant and the
 session are left out, agents having no use for them; the server info title carries the tenant
-and the host (`rat prod on host`), for clients to display. When the bracketed paste check fails
-or can not run (see below), a sentence is added: multi-line text may run line by line even at a
-prompt, send one line at a time.
+and the host (`rat prod on host`), for clients to display. When the check of the terminals finds
+bracketed paste defeated, or can not run (see below), a sentence is added: multi-line text may run
+line by line even at a prompt, send one line at a time.
 
 Tool names are fixed, with no tenant prefix: MCP has no namespaces, and harnesses prefix tool
 names with the server name of their own configuration (`rat-prod`, `rat-staging`). A prefix in
@@ -419,13 +419,14 @@ In this order, a failure at steps 1, 2 or 4 making ratd exit while the admin is 
 2. **Start the tmux server**, which takes the tenant: a server already answering on its socket
    (`tmux.ErrServerSocketInUse`) means another ratd serves it on this machine, which the error
    names with its PID. Other failures: tmux missing, bash missing or too old.
-3. **Check bracketed paste**, once (`tmux.Controller.CheckBracketedPaste`, 10 seconds at most):
-   whether bash startup files defeat it. Terminals keep working either way (single line input is
-   fine), so an override, or a check that can not run, is a warning: logged, and added to the MCP
-   instructions. A startup file blocking also blocks every terminal: the log says so. Checked
-   once rather than at each tmux restart: clients receive the instructions once, and must not be
-   told something the server no longer believes. A startup file changed while ratd runs is caught
-   at its next start.
+3. **Check the terminals**, once (`tmux.Controller.CheckTerminals`, 10 seconds at most): what bash
+   startup files defeat at the prompt of terminals, bracketed paste, and the prompts recorded with
+   the status of commands. Terminals keep working either way (single line input is fine), so an
+   override, or a check that can not run, is a warning: logged, and for bracketed paste added to
+   the MCP instructions. A check that can not run is taken as nothing holding. A startup file
+   blocking also blocks every terminal: the log says so. Checked once rather than at each tmux
+   restart: clients receive the instructions once, and must not be told something the server no
+   longer believes. A startup file changed while ratd runs is caught at its next start.
 4. **Listen**: a second ratd for the same tenant fails at step 2, before opening an endpoint.
 
 When less than a year of validity remains on the bundle, ratd warns at startup and every 24 hours:
@@ -503,7 +504,7 @@ plus what tells the action without its content: the size of a text and whether E
 pressed, the number of keys, the rows of history asked and read (and the size of a screen
 refused), the path and size of a file. Never the content: neither text, nor keys (they can spell
 a password one key at a time), nor files. And the lifecycle: startup (version, tenant, address,
-read budget, bundle expiry), the bracketed paste check, tmux exits and restarts, the crash budget,
+read budget, bundle expiry), the check of the terminals, tmux exits and restarts, the crash budget,
 shutdown.
 
 At debug level, one line per MCP request (the session, the method, the duration), whatever the

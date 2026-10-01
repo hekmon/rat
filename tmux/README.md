@@ -194,24 +194,38 @@ Terminals inherit rat's environment, plus variables enforced at `StartServer`:
   enable-bracketed-paste on"`: pasted text relies on bracketed paste (see Input), which bash 4.4
   and 5.0 do not enable by default, and an inputrc can disable. bash runs `PROMPT_COMMAND` before
   each prompt, after its startup files, so the setting holds whatever they say. It is set apart
-  from the other variables, as it names the tmux running the server. Rejected: an inputrc of rat's (`INPUTRC`), a file to maintain; typing the
-  `bind` command in each new terminal, which shows on the screen and in the history, and holds
-  only until something changes the setting. Limit: a startup file assigning `PROMPT_COMMAND`
-  (rather than adding to it, as most do) replaces it, and the inputrc or bash default applies.
-  rat does not refuse to run then (single line inputs still work), but `CheckBracketedPaste`
-  detects it, for the caller to warn: it runs bash once as terminals start it (login,
-  interactive, their environment, `TERM` and `TMUX` included, as startup files often run tmux
-  when `TMUX` is empty), types commands into it, and asks readline whether bracketed paste is on
-  at the prompt (`bind -v`). Typed on its input rather than given with `-c`, the commands make
-  bash show its prompt before each, running `PROMPT_COMMAND` as in a terminal: what is checked
-  is what the prompt ends up with, whoever turned it on. Rejected: reading what `PROMPT_COMMAND`
-  became, the check until then, which took starship for an override (measured with starship
-  1.26): it replaces `PROMPT_COMMAND` with a function of its own, which runs the previous value.
-  The commands start with `unset HISTFILE`: an interactive bash saves the commands it read in
-  the history of the user when it exits. Measured with bash 4.4, 5.0 and 5.3: `PROMPT_COMMAND`
-  runs, and `bind -v` answers, without a terminal. It runs bash directly: tmux 3.3 does not
-  return the output of `run-shell` to the client asking for it. It is a snapshot: a startup file
-  changed afterwards goes unnoticed until the next check.
+  from the other variables, as it names the tmux running the server. Rejected: an inputrc of
+  rat's (`INPUTRC`), a file to maintain; typing the `bind` command in each new terminal, which
+  shows on the screen and in the history, and holds only until something changes the setting.
+
+  Limit: a startup file assigning `PROMPT_COMMAND` (rather than adding to it, as most do)
+  replaces it: the inputrc or bash default applies, and no prompt is recorded. A command a
+  startup file adds in front of rat's may change the exit status rat's gets. rat does not refuse
+  to run then (single line inputs still work), but `CheckTerminals` detects both, for the caller
+  to warn: it runs bash once as terminals start it (login, interactive, their environment, `TERM`
+  and `TMUX` included, as startup files often run tmux when `TMUX` is empty), and types commands
+  into it:
+
+  1. `unset HISTFILE`: an interactive bash saves the commands it read in the history of the user
+     when it exits.
+  2. `(exit 7)`: a status the commands of a `PROMPT_COMMAND` are unlikely to leave, unlike 0 or 1
+     (`history -a` fails with 1 once `HISTFILE` is unset).
+  3. A line answering with what bracketed paste is at the prompt, as readline reports it (`bind
+     -v`), the status rat's command got (`__rat_status`, which it leaves in the shell; empty if it
+     did not run), and what `PROMPT_COMMAND` became, for the logs.
+
+  Typed on its input rather than given with `-c`, the commands make bash show its prompt before
+  each, running `PROMPT_COMMAND` as in a terminal: what is checked is what the prompt ends up
+  with, whoever turned it on. Rejected: reading what `PROMPT_COMMAND` became, the check until
+  then, which took starship for an override (measured with starship 1.26): it replaces
+  `PROMPT_COMMAND` with a function of its own, which runs the previous value (and changes the
+  status before). Measured with bash 4.4, 5.0 and 5.3: `PROMPT_COMMAND` runs, and `bind -v`
+  answers, without a terminal. `TMUX_PANE` is left out of its environment: rat's command would
+  record the prompts of the check in the pane it names, on rat's server, which `TMUX` names (a
+  rat started in a terminal of another tmux inherits a `TMUX_PANE`, naming a pane of rat's server
+  as well, measured). It runs bash directly: tmux 3.3 does not return the output of `run-shell`
+  to the client asking for it. It is a snapshot: a startup file changed afterwards goes unnoticed
+  until the next check.
 
 `TMUX` is kept, on purpose. tmux sets it in every terminal (it can not be removed with
 `set-environment`, only by the command starting the terminal), and a `tmux` command typed in a
@@ -457,7 +471,8 @@ description reads it (`Window.Prompt`).
 - **`$?` is read first**: anything run before it changes it. A startup file putting a command of
   its own in front of rat's can change it too: `history -a` does, every status then reading 0,
   as does starship, which runs rat's command from a function of its own; direnv and bash-preexec
-  keep it (measured with starship 1.26, direnv and bash-preexec on Debian 12).
+  keep it (measured with starship 1.26, direnv and bash-preexec on Debian 12). `CheckTerminals`
+  tells whether the status reaches rat's command (see Terminal environment).
 - **The first prompt of a bash records no status** (`-`): it follows the startup files, not a
   command, and their last status (1 on macOS with an empty `~/.bash_profile`) is not the agent's.
   So does the first prompt of a bash started in the terminal: the variable telling a first

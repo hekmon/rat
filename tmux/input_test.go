@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestSendText guards that text is sent literally (key names and a leading '-' included), and
@@ -315,41 +316,75 @@ func TestSendTextMissingTarget(t *testing.T) {
 	}
 }
 
-// TestCheckBracketedPaste guards that bracketed paste is checked as bash ends up at its prompt: a
-// bash startup file replacing PROMPT_COMMAND, which rat enforces bracketed paste with, is
-// reported, while one adding to it, or running it from a function of its own (as starship does),
-// is not. An inputrc turns bracketed paste off, so that only rat's command turns it on, whatever
-// the default of the bash running the tests (on from 5.1).
-func TestCheckBracketedPaste(t *testing.T) {
+// TestCheckTerminals guards what the check finds at the bash prompt, whatever startup files do with
+// PROMPT_COMMAND: replaced, rat's command does not run (no bracketed paste, no prompt recorded);
+// added to, it runs, and gets the status unless a command run before changes it; run from a
+// function of its own, as starship does, it runs as well. An inputrc turns bracketed paste off, so
+// that only rat's command turns it on, whatever the default of the bash running the tests (on from
+// 5.1).
+func TestCheckTerminals(t *testing.T) {
 	inputrc := filepath.Join(t.TempDir(), "inputrc")
 	if err := os.WriteFile(inputrc, []byte("set enable-bracketed-paste off\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("INPUTRC", inputrc)
-	c := newTestController(t, "checkpaste")
-	if err := c.CheckBracketedPaste(context.Background()); !errors.Is(err, ErrServerNotRunning) {
+	c := newTestController(t, "checkterminals")
+	if _, err := c.CheckTerminals(context.Background()); !errors.Is(err, ErrServerNotRunning) {
 		t.Fatalf("expected ErrServerNotRunning, got %v", err)
 	}
 	if err := c.StartServer(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	for profile, overridden := range map[string]bool{
-		"true":                        false,
-		`PROMPT_COMMAND="history -a"`: true,
-		`PROMPT_COMMAND="history -a;$PROMPT_COMMAND"`: false,
+	all := TerminalsCheck{BracketedPaste: true, Prompts: true, Statuses: true}
+	for profile, expected := range map[string]TerminalsCheck{
+		"true":                        all,
+		`PROMPT_COMMAND="history -a"`: {},
+		// history -a fails once HISTFILE is unset, the check unsetting it: it changes the status
+		`PROMPT_COMMAND="history -a;$PROMPT_COMMAND"`: {BracketedPaste: true, Prompts: true},
+		// as direnv does: a command added in front, keeping the status
+		`__keep() { local s=$?; true; return $s; }; PROMPT_COMMAND="__keep;$PROMPT_COMMAND"`: all,
 		// as terminals, bash runs within tmux: startup files often run tmux when TMUX is empty
-		`[ -z "$TMUX" ] && PROMPT_COMMAND="outside tmux"`: false,
-		// starship keeps PROMPT_COMMAND and replaces it with a function of its own, which runs it
-		`__saved=$PROMPT_COMMAND; PROMPT_COMMAND=__precmd; __precmd() { eval "$__saved"; }`: false,
+		`[ -z "$TMUX" ] && PROMPT_COMMAND="outside tmux"`: all,
+		// as starship does: PROMPT_COMMAND kept, and run by a function of its own, which runs
+		// commands before (changing the status), or not
+		`__saved=$PROMPT_COMMAND; PROMPT_COMMAND=__precmd; __precmd() { eval "$__saved"; }`:             all,
+		`__saved=$PROMPT_COMMAND; PROMPT_COMMAND=__precmd; __precmd() { local s=$?; eval "$__saved"; }`: {BracketedPaste: true, Prompts: true},
 	} {
 		home := t.TempDir()
 		if err := os.WriteFile(filepath.Join(home, ".bash_profile"), []byte(profile+"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		t.Setenv("HOME", home)
-		err := c.CheckBracketedPaste(context.Background())
-		if got := errors.Is(err, ErrBracketedPasteOverridden); got != overridden || !got && err != nil {
-			t.Errorf("profile %s: expected overridden %v, got %v", profile, overridden, err)
+		check, err := c.CheckTerminals(context.Background())
+		check.PromptCommand = ""
+		if err != nil || check != expected {
+			t.Errorf("profile %s: expected %+v, got %+v, %v", profile, expected, check, err)
+		}
+	}
+}
+
+// TestCheckTerminalsNoPane guards that the check records no prompt in a window: a rat started in a
+// terminal of another tmux inherits a TMUX_PANE, which would name a pane of rat's server too.
+func TestCheckTerminalsNoPane(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	c := startTestServer(t, "checknopane")
+	ctx := context.Background()
+	if err := c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "first prompt", promptIs(c, "s", FirstWindow, NoStatus))
+	pane, err := c.run(ctx, "display-message", "-p", "-t", target("s", FirstWindow), "#{pane_id}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMUX_PANE", strings.TrimSpace(pane))
+	if check, err := c.CheckTerminals(ctx); err != nil || !check.Prompts {
+		t.Fatalf("expected the prompt hook to run, got %+v, %v", check, err)
+	}
+	// the hook records in the background: its tmux client may reach the server after the check
+	for deadline := time.Now().Add(500 * time.Millisecond); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if w, err := c.Window(ctx, "s", FirstWindow); err != nil || w.Prompt.Status != NoStatus {
+			t.Fatalf("expected the first prompt of the window, got %+v, %v", w.Prompt, err)
 		}
 	}
 }

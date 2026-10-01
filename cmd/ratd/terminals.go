@@ -11,33 +11,45 @@ import (
 	"github.com/hekmon/rat/tmux"
 )
 
-// pasteCheckTimeout bounds the bracketed paste check, which runs the bash startup files of the
+// terminalsCheckTimeout bounds the check of the terminals, which runs the bash startup files of the
 // terminals: one may block. A variable for tests.
-var pasteCheckTimeout = 10 * time.Second
+var terminalsCheckTimeout = 10 * time.Second
 
-// checkBracketedPaste checks once whether bash startup files defeat bracketed paste in the
-// terminals, and tells whether agents must be warned. Terminals keep working either way (single
-// line input is fine): an override, or a check that can not run, is only a warning, logged here
-// and added to the MCP instructions. Checked once rather than at each tmux restart: clients
-// receive the instructions once, and must not be told something ratd no longer believes.
-func checkBracketedPaste(ctx context.Context, logger *slog.Logger, controller *tmux.Controller) (warn bool) {
-	ctx, cancel := context.WithTimeout(ctx, pasteCheckTimeout)
+// checkTerminals checks once what the bash prompt of terminals ends up with (bracketed paste, the
+// prompts and statuses recorded), logs what bash startup files defeat, and returns it, for ratd to
+// tell agents only what holds. Terminals keep working either way (single line input is fine): an
+// override is only a warning. A check that can not run, such as a startup file blocking (which
+// blocks every terminal as well), is taken as nothing holding. Checked once rather than at each
+// tmux restart: clients receive the instructions and the tools once, and must not be told
+// something ratd no longer believes.
+func checkTerminals(ctx context.Context, logger *slog.Logger, controller *tmux.Controller) tmux.TerminalsCheck {
+	ctx, cancel := context.WithTimeout(ctx, terminalsCheckTimeout)
 	defer cancel()
-	err := controller.CheckBracketedPaste(ctx)
+	check, err := controller.CheckTerminals(ctx)
 	switch {
-	case err == nil:
-		logger.Info("bracketed paste enforced in terminals")
-		return false
-	case errors.Is(err, tmux.ErrBracketedPasteOverridden):
-		logger.Warn("bash startup files override bracketed paste: multi-line text may run line by line even at "+
-			"a prompt, agents are told to send one line at a time", "error", err)
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		logger.Warn("bash startup files did not finish: they block every terminal as well, agents are told to "+
-			"send one line at a time", "timeout", pasteCheckTimeout)
-	default:
-		logger.Warn("the bracketed paste check failed: agents are told to send one line at a time", "error", err)
+			"send one line at a time", "timeout", terminalsCheckTimeout)
+		return tmux.TerminalsCheck{}
+	case err != nil:
+		logger.Warn("the check of the terminals failed: agents are told to send one line at a time", "error", err)
+		return tmux.TerminalsCheck{}
 	}
-	return true
+	if check.BracketedPaste {
+		logger.Info("bracketed paste enforced in terminals")
+	} else {
+		logger.Warn("bash startup files override bracketed paste: multi-line text may run line by line even at "+
+			"a prompt, agents are told to send one line at a time", "prompt_command", check.PromptCommand)
+	}
+	switch {
+	case !check.Prompts:
+		logger.Warn("bash startup files replace PROMPT_COMMAND: the prompts of terminals are not recorded, ratd "+
+			"can not tell when commands finish", "prompt_command", check.PromptCommand)
+	case !check.Statuses:
+		logger.Warn("bash startup files run a command changing the exit status before rat's, in PROMPT_COMMAND: "+
+			"ratd does not tell how commands exited", "prompt_command", check.PromptCommand)
+	}
+	return check
 }
 
 // restartPolicy is how ratd keeps its tmux server running.

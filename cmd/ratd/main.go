@@ -94,7 +94,7 @@ func command(logs io.Writer) *cli.Command {
 // run starts ratd with the server directory of a bundle, its reads bounded by readBudget bytes,
 // then listens with listen, and serves until ctx is done. The steps of the startup run in order, a failure making ratd exit while the
 // admin is still there: loading the bundle, starting the tmux server of its tenant, checking
-// bracketed paste, listening. A second ratd for the same tenant thus fails before listening.
+// its terminals, listening. A second ratd for the same tenant thus fails before listening.
 // Stopping closes the door first (no call gets in anymore), then stops the terminals.
 // It also returns an error when the tmux server died too often: ratd then shows as failed.
 func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int, listen func() (net.Listener, error)) error {
@@ -124,8 +124,8 @@ func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int
 		}
 		logger.Info("terminals stopped")
 	}()
-	warnPaste := checkBracketedPaste(ctx, logger, controller)
-	d, err := newDaemon(logger, side, controller, warnPaste, readBudget)
+	checked := checkTerminals(ctx, logger, controller)
+	d, err := newDaemon(logger, side, controller, checked, readBudget)
 	if err != nil {
 		return err
 	}

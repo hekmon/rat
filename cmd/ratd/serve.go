@@ -56,7 +56,7 @@ const instructionsFormat = `rat gives you persistent terminals on %s: commands r
 	`find a fresh main.`
 
 // pasteWarning ends the instructions when bash startup files defeat bracketed paste, or when that
-// could not be checked (see checkBracketedPaste).
+// could not be checked (see checkTerminals).
 const pasteWarning = ` Multi-line text may run line by line even at a prompt: send one line at a time.`
 
 // daemon is ratd serving a tenant: what every request needs, fixed at startup. Terminals are not
@@ -88,9 +88,9 @@ type daemon struct {
 }
 
 // newDaemon returns ratd serving the tenant of side, the server directory of its bundle, with the
-// terminals of controller, warning agents that pasted text may run line by line if warnPaste, its
-// reads bounded by readBudget bytes.
-func newDaemon(logger *slog.Logger, side *mtls.Side, controller *tmux.Controller, warnPaste bool,
+// terminals of controller, telling agents only what holds in them (terminals, see checkTerminals),
+// its reads bounded by readBudget bytes.
+func newDaemon(logger *slog.Logger, side *mtls.Side, controller *tmux.Controller, terminals tmux.TerminalsCheck,
 	readBudget int) (*daemon, error) {
 	host, err := os.Hostname()
 	if err != nil {
@@ -105,7 +105,7 @@ func newDaemon(logger *slog.Logger, side *mtls.Side, controller *tmux.Controller
 		username = u.Username
 	}
 	instructions := fmt.Sprintf(instructionsFormat, host)
-	if warnPaste {
+	if !terminals.BracketedPaste {
 		instructions += pasteWarning
 	}
 	// The SDK logs every stateless request at info level (a session connecting, then

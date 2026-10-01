@@ -141,14 +141,15 @@ const promptOption = "@rat_prompt"
 //   - records the prompt on promptOption: the status, - for the first prompt of a bash (which
 //     follows its startup files, not a command), and the time, in seconds.
 //
-// Startup files assigning PROMPT_COMMAND defeat it: see CheckBracketedPaste. Nothing it runs writes
-// on the screen. The time comes from printf, without starting a process, or from date for a bash
-// older than 4.2 started in a terminal (on macOS, typing bash runs the 3.2 of the system). tmux is
-// the one running the server, at tmuxPath, which StartServer finds in rat's PATH: looked up in the
-// PATH of the terminal, which the agent and its startup files change, it could be missing, or
-// another tmux, and fail silently. It runs in the background from a subshell: in the foreground,
-// it would show as the command of the terminal while it runs. It is only run by a bash in a
-// terminal, whose TMUX and TMUX_PANE tmux sets: an agent unsetting TMUX would reach another server.
+// Startup files assigning PROMPT_COMMAND defeat it: see CheckTerminals, which reads the status it
+// leaves in __rat_status. Nothing it runs writes on the screen. The time comes from printf, without
+// starting a process, or from date for a bash older than 4.2 started in a terminal (on macOS,
+// typing bash runs the 3.2 of the system). tmux is the one running the server, at tmuxPath, which
+// StartServer finds in rat's PATH: looked up in the PATH of the terminal, which the agent and its
+// startup files change, it could be missing, or another tmux, and fail silently. It runs in the
+// background from a subshell: in the foreground, it would show as the command of the terminal while
+// it runs. It is only run by a bash in a terminal, whose TMUX and TMUX_PANE tmux sets: an agent
+// unsetting TMUX would reach another server, and the bash of CheckTerminals records nothing.
 func promptCommand(tmuxPath string) string {
 	return `__rat_status=$?; [ -n "${__rat_prompted-}" ] || __rat_status=-; __rat_prompted=1; ` +
 		bracketedPasteCommand + `; [ -z "${TMUX-}" ] || [ -z "${TMUX_PANE-}" ] || ` +

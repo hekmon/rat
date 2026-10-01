@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -16,10 +17,6 @@ import (
 var (
 	// ErrInvalidKey is returned by SendKeys for a name that is not a known tmux key name.
 	ErrInvalidKey = errors.New("invalid key name")
-	// ErrBracketedPasteOverridden is returned by CheckBracketedPaste when bracketed paste is off at
-	// the bash prompt of terminals: bash startup files replaced its enforcement, and neither bash
-	// nor the inputrc turns it on.
-	ErrBracketedPasteOverridden = errors.New("bash startup files override bracketed paste")
 )
 
 // keyFormat matches the tmux key names SendKeys accepts: a printable ASCII character or a named
@@ -157,31 +154,54 @@ func clearPrompt(target string) []string {
 	return []string{"set-option", "-pu", "-t", target, promptOption}
 }
 
-// checkMarker starts the line the bash run by CheckBracketedPaste answers on, telling it apart from
-// what startup files print.
+// TerminalsCheck is what the bash of terminals ends up with at its prompt, once its startup files
+// ran: what rat relies on, which startup files can defeat (see CheckTerminals).
+type TerminalsCheck struct {
+	// BracketedPaste tells pasted text waits on the command line until Enter (see SendText).
+	BracketedPaste bool
+	// Prompts tells the prompt hook runs: windows record their prompts (see Window.Prompt).
+	Prompts bool
+	// Statuses tells the prompt hook gets the exit status of commands, which a command a startup
+	// file adds in front of rat's, in PROMPT_COMMAND, may change.
+	Statuses bool
+	// PromptCommand is what PROMPT_COMMAND became, quoted for bash, for the caller to tell.
+	PromptCommand string
+}
+
+// checkMarker starts the line the bash run by CheckTerminals answers on, telling it apart from what
+// startup files print.
 const checkMarker = "__rat_check|"
 
-// checkScript is what CheckBracketedPaste types into bash, a command per line: bash shows its
-// prompt before each, running PROMPT_COMMAND as in a terminal. The first keeps the history of the
-// user as it is: an interactive bash saves the commands it read when it exits. The second answers
-// after the marker: bracketed paste at the prompt, as readline reports it, and what PROMPT_COMMAND
-// became, quoted on a single line.
+// checkStatus is the exit status of the command CheckTerminals runs before reading what the prompt
+// hook got: unlike 0 and 1, a status the commands of a PROMPT_COMMAND are unlikely to leave.
+const checkStatus = "7"
+
+// checkScript is what CheckTerminals types into bash, a command per line: bash shows its prompt
+// before each, running PROMPT_COMMAND as in a terminal. The first keeps the history of the user as
+// it is: an interactive bash saves the commands it read when it exits. The second exits with
+// checkStatus, for the prompt after it. The third answers after the marker: bracketed paste at the
+// prompt, as readline reports it, the status the prompt hook got (empty if it did not run, see
+// promptCommand), and what PROMPT_COMMAND became, quoted on a single line.
 const checkScript = "unset HISTFILE\n" +
-	`printf '\n%s%s|%q\n' '` + checkMarker + `' "$(bind -v 2>/dev/null | grep -F enable-bracketed-paste)" "${PROMPT_COMMAND[*]-}"` + "\n" +
+	"(exit " + checkStatus + ")\n" +
+	`printf '\n%s%s|%s|%q\n' '` + checkMarker + `' "$(bind -v 2>/dev/null | grep -F enable-bracketed-paste)" ` +
+	`"${__rat_status-}" "${PROMPT_COMMAND[*]-}"` + "\n" +
 	"exit 0\n"
 
-// CheckBracketedPaste checks that bracketed paste is on at the bash prompt of terminals, which
-// pasted text relies on (see SendText). rat turns it on through PROMPT_COMMAND, which a startup
-// file assigning it (rather than adding to it) replaces: bracketed paste then depends on bash
-// defaults (on from 5.1) and the inputrc, and pasted text may run line by line. The error then
-// wraps ErrBracketedPasteOverridden, with what PROMPT_COMMAND became. It is a warning for the
-// caller to relay, terminals keep working.
+// CheckTerminals checks what the bash of terminals ends up with at its prompt, once its startup
+// files ran: bracketed paste, which pasted text relies on (see SendText), and the prompt hook,
+// which records prompts and the status of commands (see Window.Prompt). rat sets both through
+// PROMPT_COMMAND, which a startup file assigning it (rather than adding to it) replaces: bracketed
+// paste then depends on bash defaults (on from 5.1) and the inputrc, and no prompt is recorded. A
+// command a startup file adds in front of rat's may change the status rat's gets. What it finds
+// are warnings for the caller to relay, terminals keep working: the error tells the check could
+// not run.
 // It runs bash once as terminals start it (login, interactive, their environment), typing commands
 // into it: bash shows its prompt and runs PROMPT_COMMAND as in a terminal, so that a startup file
 // running rat's command from a function of its own (as starship does) is not taken for an
 // override. Startup files may block, so ctx should bound it. It fails with ErrServerNotRunning if
 // the server is not started.
-func (c *Controller) CheckBracketedPaste(ctx context.Context) error {
+func (c *Controller) CheckTerminals(ctx context.Context) (TerminalsCheck, error) {
 	// What tmux adds for terminals, on top of their environment: the shell, TERM, and TMUX, and
 	// what StartServer set apart from terminalEnvironment, PROMPT_COMMAND. TMUX matters: a common
 	// startup file runs tmux when it is empty.
@@ -190,11 +210,11 @@ func (c *Controller) CheckBracketedPaste(ctx context.Context) error {
 		"display-message", "-p", "#{socket_path},#{pid},0", ";",
 		"show-environment", "-g", "PROMPT_COMMAND")
 	if err != nil {
-		return fmt.Errorf("failed to read the terminals settings: %w", err)
+		return TerminalsCheck{}, fmt.Errorf("failed to read the terminals settings: %w", err)
 	}
 	settings := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
 	if len(settings) != 4 || !strings.HasPrefix(settings[3], "PROMPT_COMMAND=") {
-		return fmt.Errorf("unexpected terminals settings %q", out)
+		return TerminalsCheck{}, fmt.Errorf("unexpected terminals settings %q", out)
 	}
 	shell, term, tmux, promptCommand := settings[0], settings[1], settings[2], settings[3]
 	// Not through tmux (run-shell): tmux 3.3 does not return its output to the client.
@@ -204,37 +224,41 @@ func (c *Controller) CheckBracketedPaste(ctx context.Context) error {
 	// device: bash shows its prompts there, and complains it has no terminal for job control.
 	cmd := exec.CommandContext(ctx, shell, "-l", "-i")
 	cmd.Stdin = strings.NewReader(checkScript)
-	cmd.Env = os.Environ() // the server environment, which it copied from rat's when started
+	// The server environment, which it copied from rat's when started, but TMUX_PANE: the prompt
+	// hook would record the prompts of the check in the pane it names, on the server TMUX names,
+	// rat's (a rat started in a terminal of another tmux inherits a TMUX_PANE).
+	cmd.Env = slices.DeleteFunc(os.Environ(), func(variable string) bool { return strings.HasPrefix(variable, "TMUX_PANE=") })
 	for _, variable := range terminalEnvironment {
 		cmd.Env = append(cmd.Env, variable[0]+"="+variable[1])
 	}
 	cmd.Env = append(cmd.Env, "TERM="+term, "TMUX="+tmux, promptCommand)
 	if cmd.Dir, err = os.UserHomeDir(); err != nil {
-		return fmt.Errorf("failed to run bash as terminals do: %w", err)
+		return TerminalsCheck{}, fmt.Errorf("failed to run bash as terminals do: %w", err)
 	}
 	// a startup file starting a daemon would keep the output open after bash exits
 	cmd.WaitDelay = time.Second
 	output, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("failed to run bash as terminals do: %w", err)
+		return TerminalsCheck{}, fmt.Errorf("failed to run bash as terminals do: %w", err)
 	}
-	answer, found := "", false
+	var answer []string
 	for line := range strings.Lines(string(output)) {
-		if answer, found = strings.CutPrefix(strings.TrimSuffix(line, "\n"), checkMarker); found {
+		if fields, found := strings.CutPrefix(strings.TrimSuffix(line, "\n"), checkMarker); found {
+			answer = strings.SplitN(fields, "|", 3)
 			break
 		}
 	}
-	if !found {
-		return errors.New("failed to run bash as terminals do: no answer at its prompt")
+	if len(answer) != 3 {
+		return TerminalsCheck{}, errors.New("failed to run bash as terminals do: no answer at its prompt")
 	}
-	paste, promptCommand, _ := strings.Cut(answer, "|")
+	paste, status := answer[0], answer[1]
+	check := TerminalsCheck{Prompts: status != "", Statuses: status == checkStatus, PromptCommand: answer[2]}
 	switch paste {
 	case "set enable-bracketed-paste on":
-		return nil
+		check.BracketedPaste = true
 	case "set enable-bracketed-paste off":
-		return fmt.Errorf("%w: PROMPT_COMMAND is %s, pasted text may run line by line", ErrBracketedPasteOverridden,
-			promptCommand)
 	default:
-		return fmt.Errorf("failed to read bracketed paste at the bash prompt: %q", paste)
+		return TerminalsCheck{}, fmt.Errorf("failed to read bracketed paste at the bash prompt: %q", paste)
 	}
+	return check, nil
 }

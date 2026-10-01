@@ -50,13 +50,17 @@ func testHome(t *testing.T) string {
 	return home
 }
 
+// terminalsHold is the check of terminals where everything holds: the tests run bash with no
+// startup file of theirs.
+var terminalsHold = tmux.TerminalsCheck{BracketedPaste: true, Prompts: true, Statuses: true}
+
 // connectDaemon returns an MCP client connected in memory to the tools of session alice, for
 // ratd with the terminals of controller, and the logs of ratd. All is stopped when the test ends.
 func connectDaemon(t *testing.T, controller *tmux.Controller) (*mcp.ClientSession, *logBuffer) {
 	t.Helper()
 	ctx := context.Background()
 	logs := &logBuffer{}
-	d, err := newDaemon(slog.New(slog.NewTextHandler(logs, nil)), &mtls.Side{Tenant: "t"}, controller, false, defaultReadBudget)
+	d, err := newDaemon(slog.New(slog.NewTextHandler(logs, nil)), &mtls.Side{Tenant: "t"}, controller, terminalsHold, defaultReadBudget)
 	if err != nil {
 		t.Fatal(err)
 	}

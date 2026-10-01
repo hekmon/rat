@@ -208,25 +208,31 @@ func TestRunGivesUp(t *testing.T) {
 	}
 }
 
-// TestRunPasteWarning guards that agents are told to send one line at a time, and the admin
-// warned, when bash startup files defeat bracketed paste, or block the check (and every terminal
-// with it). An inputrc turns bracketed paste off, so that only rat's command turns it on, whatever
-// the default of the bash running the tests (on from 5.1).
-func TestRunPasteWarning(t *testing.T) {
+// TestRunTerminalsWarnings guards that the admin is warned of what bash startup files defeat in
+// the terminals, and agents told to send one line at a time when bracketed paste is defeated, or
+// when the check could not run: startup files blocking it block every terminal as well. An inputrc
+// turns bracketed paste off, so that only rat's command turns it on, whatever the default of the
+// bash running the tests (on from 5.1).
+func TestRunTerminalsWarnings(t *testing.T) {
 	requireTmux(t)
 	inputrc := filepath.Join(t.TempDir(), "inputrc")
 	if err := os.WriteFile(inputrc, []byte("set enable-bracketed-paste off\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("INPUTRC", inputrc)
-	timeout := pasteCheckTimeout
-	pasteCheckTimeout = time.Second
-	t.Cleanup(func() { pasteCheckTimeout = timeout })
+	timeout := terminalsCheckTimeout
+	terminalsCheckTimeout = time.Second
+	t.Cleanup(func() { terminalsCheckTimeout = timeout })
 	for _, tc := range []struct {
-		name, profile, log string
+		name, profile string
+		logs          []string
+		pasteWarning  bool
 	}{
-		{"override", "PROMPT_COMMAND=true\n", "bash startup files override bracketed paste"},
-		{"blocking", "sleep 3\n", "bash startup files did not finish"},
+		{"override", "PROMPT_COMMAND=true\n", []string{"bash startup files override bracketed paste",
+			"bash startup files replace PROMPT_COMMAND"}, true},
+		{"status changed", "PROMPT_COMMAND=\"history -a;$PROMPT_COMMAND\"\n",
+			[]string{"bash startup files run a command changing the exit status"}, false},
+		{"blocking", "sleep 3\n", []string{"bash startup files did not finish"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -234,7 +240,7 @@ func TestRunPasteWarning(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Setenv("HOME", home)
-			bundle := newBundle(t, "test-ratd-paste")
+			bundle := newBundle(t, "test-ratd-terminals")
 			addr, logs, _ := runRatd(t, bundle)
 			client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 			session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{
@@ -245,11 +251,14 @@ func TestRunPasteWarning(t *testing.T) {
 				t.Fatalf("%v\n%s", err, logs)
 			}
 			defer session.Close()
-			if !strings.HasSuffix(session.InitializeResult().Instructions, pasteWarning) {
-				t.Errorf("expected the instructions to warn about pasted text, got %q", session.InitializeResult().Instructions)
+			if warned := strings.HasSuffix(session.InitializeResult().Instructions, pasteWarning); warned != tc.pasteWarning {
+				t.Errorf("expected the instructions to warn about pasted text: %v, got %q", tc.pasteWarning,
+					session.InitializeResult().Instructions)
 			}
-			if !strings.Contains(logs.String(), tc.log) {
-				t.Errorf("expected the warning %q to be logged:\n%s", tc.log, logs)
+			for _, log := range tc.logs {
+				if !strings.Contains(logs.String(), log) {
+					t.Errorf("expected the warning %q to be logged:\n%s", log, logs)
+				}
 			}
 		})
 	}

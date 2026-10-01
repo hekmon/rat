@@ -67,7 +67,7 @@ func startRatd(t *testing.T, bundle string, level slog.Level) (string, *logBuffe
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, err := newDaemon(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: level})), side, controller, false, defaultReadBudget)
+	d, err := newDaemon(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: level})), side, controller, terminalsHold, defaultReadBudget)
 	if err != nil {
 		t.Fatal(err)
 	}

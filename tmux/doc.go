@@ -34,7 +34,8 @@
 //
 // [Controller.SendText] pastes text as is, as a human pastes, then presses Enter only if asked:
 // agents may be answering a prompt rather than running a command. Pasting relies on bash
-// bracketed paste, which startup files can defeat: [Controller.CheckBracketedPaste] tells.
+// bracketed paste, and the prompts windows record on the prompt hook of bash, both of which
+// startup files can defeat: [Controller.CheckTerminals] tells.
 // [Controller.SendKeys] presses keys by their tmux names (C-c, Escape, Up…), which [CheckKey]
 // validates without tmux. Both first leave any tmux mode (copy mode…) a human peeking at the
 // terminals left the window in, where input would not reach the program as sent.
