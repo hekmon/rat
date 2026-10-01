@@ -210,9 +210,10 @@ func TestRunGivesUp(t *testing.T) {
 
 // TestRunTerminalsWarnings guards that the admin is warned of what bash startup files defeat in
 // the terminals, and agents told to send one line at a time when bracketed paste is defeated, or
-// when the check could not run: startup files blocking it block every terminal as well. An inputrc
-// turns bracketed paste off, so that only rat's command turns it on, whatever the default of the
-// bash running the tests (on from 5.1).
+// when the check could not run (startup files blocking it block every terminal as well): in the
+// instructions, and in the description of send_text, which then no longer tells that text pasted at
+// a prompt waits for Enter. An inputrc turns bracketed paste off, so that only rat's command turns
+// it on, whatever the default of the bash running the tests (on from 5.1).
 func TestRunTerminalsWarnings(t *testing.T) {
 	requireTmux(t)
 	inputrc := filepath.Join(t.TempDir(), "inputrc")
@@ -251,9 +252,23 @@ func TestRunTerminalsWarnings(t *testing.T) {
 				t.Fatalf("%v\n%s", err, logs)
 			}
 			defer session.Close()
-			if warned := strings.HasSuffix(session.InitializeResult().Instructions, pasteWarning); warned != tc.pasteWarning {
+			if warned := strings.HasSuffix(session.InitializeResult().Instructions, " "+pasteWarning); warned != tc.pasteWarning {
 				t.Errorf("expected the instructions to warn about pasted text: %v, got %q", tc.pasteWarning,
 					session.InitializeResult().Instructions)
+			}
+			list, err := session.ListTools(context.Background(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, tool := range list.Tools {
+				if tool.Name != "send_text" {
+					continue
+				}
+				warned := strings.Contains(tool.Description, pasteWarning)
+				waits := strings.Contains(tool.Description, "nothing runs until Enter")
+				if warned != tc.pasteWarning || waits == tc.pasteWarning {
+					t.Errorf("expected send_text to warn about pasted text: %v, got %q", tc.pasteWarning, tool.Description)
+				}
 			}
 			for _, log := range tc.logs {
 				if !strings.Contains(logs.String(), log) {

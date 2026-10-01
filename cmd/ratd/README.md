@@ -213,7 +213,9 @@ once.
   offered). Rejected: the exception told as "each line runs", right before "returns at once":
   inexact (a program reading its input takes lines, a last line without a new line waits on the
   command line), and a model summarizing the description merged the two, telling its user that
-  pasted text runs line by line. It points to a window of its own for each long running command,
+  pasted text runs line by line. Where the terminals do not keep bracketed paste (see Startup), the
+  description tells instead what the instructions do: multi-line text may run line by line even at
+  a prompt, send one line at a time. It points to a window of its own for each long running command,
   rather than the background, telling how the tools then follow it (see above): `wait_window`
   where the terminals record prompts, `list_windows` and `read_window`.
   An empty text only presses Enter; an empty text without Enter sends nothing, a message rather
@@ -489,7 +491,8 @@ can not tell when a command finishes there, wait_window telling why. The host na
 session are left out, agents having no use for them; the server info title carries the tenant
 and the host (`rat prod on host`), for clients to display. When the check of the terminals finds
 bracketed paste defeated, or can not run (see below), a sentence is added: multi-line text may run
-line by line even at a prompt, send one line at a time.
+line by line even at a prompt, send one line at a time. The description of `send_text` tells it
+too, in place of what text meets at a prompt.
 
 Tool names are fixed, with no tenant prefix: MCP has no namespaces, and harnesses prefix tool
 names with the server name of their own configuration (`rat-prod`, `rat-staging`). A prefix in
@@ -508,11 +511,11 @@ In this order, a failure at steps 1, 2 or 4 making ratd exit while the admin is 
 3. **Check the terminals**, once (`tmux.Controller.CheckTerminals`, 10 seconds at most): what bash
    startup files defeat at the prompt of terminals, bracketed paste, and the prompts recorded with
    the status of commands. Terminals keep working either way (single line input is fine), so an
-   override, or a check that can not run, is a warning: logged, and for bracketed paste added to
-   the MCP instructions. A check that can not run is taken as nothing holding. A startup file
-   blocking also blocks every terminal: the log says so. Checked once rather than at each tmux
-   restart: clients receive the instructions once, and must not be told something the server no
-   longer believes. A startup file changed while ratd runs is caught at its next start.
+   override, or a check that can not run, is a warning: logged, and for bracketed paste told to
+   agents, in the MCP instructions and the description of `send_text`. A check that can not run is
+   taken as nothing holding. A startup file blocking also blocks every terminal: the log says so.
+   Checked once rather than at each tmux restart: clients receive the instructions and the tools
+   once, and must not be told something the server no longer believes. A startup file changed while ratd runs is caught at its next start.
 4. **Listen**: a second ratd for the same tenant fails at step 2, before opening an endpoint.
 
 When less than a year of validity remains on the bundle, ratd warns at startup and every 24 hours:

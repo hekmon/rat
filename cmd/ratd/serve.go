@@ -75,9 +75,10 @@ func checkingText(terminals tmux.TerminalsCheck) string {
 	}
 }
 
-// pasteWarning ends the instructions when bash startup files defeat bracketed paste, or when that
-// could not be checked (see checkTerminals).
-const pasteWarning = ` Multi-line text may run line by line even at a prompt: send one line at a time.`
+// pasteWarning ends the instructions, and replaces what the description of send_text tells of pasted
+// text, when bash startup files defeat bracketed paste, or when that could not be checked (see
+// checkTerminals).
+const pasteWarning = `Multi-line text may run line by line even at a prompt: send one line at a time.`
 
 // daemon is ratd serving a tenant: what every request needs, fixed at startup. Terminals are not
 // held here: tmux is their only source of truth.
@@ -132,7 +133,7 @@ func newDaemon(logger *slog.Logger, side *mtls.Side, controller *tmux.Controller
 	}
 	instructions := fmt.Sprintf(instructionsFormat, host, checkingText(terminals))
 	if !terminals.BracketedPaste {
-		instructions += pasteWarning
+		instructions += " " + pasteWarning
 	}
 	// The SDK logs every stateless request at info level (a session connecting, then
 	// disconnecting): only its warnings and errors are kept, unless ratd logs at debug level.

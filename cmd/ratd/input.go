@@ -21,22 +21,10 @@ const keyNames = "a printable character, Space, Enter, Tab, BTab, BSpace, Escape
 // addInputTools adds the tools sending input to the windows of session. What runs in a terminal can
 // reach anything: an open world.
 func (d *daemon) addInputTools(server *mcp.Server, session string) {
-	// how a command in the foreground of its window is followed: wait_window only where it can wait
-	// (see addWaitTool)
-	following := "list_windows tells whether it still runs, read_window shows its progress"
-	if d.terminals.Prompts {
-		following = "wait_window waits for it, " + following
-	}
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        tools.SendText,
 		InputSchema: d.inputSchemas[tools.SendText],
-		Description: "Paste text in a window, then press Enter if enter is true. Returns at once, without waiting for " +
-			"the command. At a bash prompt, the text waits on the command line, new lines included: nothing runs " +
-			"until Enter. Otherwise (while a command runs, or before a new window shows its prompt), the text is read " +
-			"as typed, a new line as Enter: the running program gets it first, then bash runs the rest line by line " +
-			"once back at its prompt. So before pasting several lines, wait for the prompt (" + d.promptTool() + "). " +
-			"Run each long running command in the foreground of a window of its own (create_window), rather than in " +
-			"the background (&, nohup): " + following + ", with no need for a script to check jobs or their logs.",
+		Description: d.sendTextDescription(),
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(true), OpenWorldHint: ptr(true)},
 	}, tool(d, session, tools.SendText, func(in tools.SendTextInput) string { return in.Window },
 		func(ctx context.Context, in tools.SendTextInput) result { return d.sendText(ctx, session, in) }))
@@ -48,6 +36,31 @@ func (d *daemon) addInputTools(server *mcp.Server, session string) {
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(true), OpenWorldHint: ptr(true)},
 	}, tool(d, session, tools.SendKeys, func(in tools.SendKeysInput) string { return in.Window },
 		func(ctx context.Context, in tools.SendKeysInput) result { return d.sendKeys(ctx, session, in) }))
+}
+
+// sendTextDescription returns the description of send_text, telling that pasted text waits for
+// Enter at a bash prompt only where the terminals keep bracketed paste. Elsewhere, it warns as the
+// instructions do (pasteWarning): clients may not pass the instructions on, and a tool always comes
+// with its description.
+func (d *daemon) sendTextDescription() string {
+	// what the text meets, and the rule it calls for
+	pasting := pasteWarning
+	if d.terminals.BracketedPaste {
+		pasting = "At a bash prompt, the text waits on the command line, new lines included: nothing runs until " +
+			"Enter. Otherwise (while a command runs, or before a new window shows its prompt), the text is read as " +
+			"typed, a new line as Enter: the running program gets it first, then bash runs the rest line by line once " +
+			"back at its prompt. So before pasting several lines, wait for the prompt (" + d.promptTool() + ")."
+	}
+	// how a command in the foreground of its window is followed: wait_window only where it can wait
+	// (see addWaitTool)
+	following := "list_windows tells whether it still runs, read_window shows its progress"
+	if d.terminals.Prompts {
+		following = "wait_window waits for it, " + following
+	}
+	return "Paste text in a window, then press Enter if enter is true. Returns at once, without waiting for the " +
+		"command. " + pasting + " Run each long running command in the foreground of a window of its own " +
+		"(create_window), rather than in the background (&, nohup): " + following + ", with no need for a script " +
+		"to check jobs or their logs."
 }
 
 // sendText pastes the text of in, then presses Enter if asked. The log line tells the size of the
