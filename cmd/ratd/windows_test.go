@@ -266,6 +266,7 @@ func TestToolsAnnotations(t *testing.T) {
 		"send_text":     {DestructiveHint: ptr(true), OpenWorldHint: ptr(true)},
 		"send_keys":     {DestructiveHint: ptr(true), OpenWorldHint: ptr(true)},
 		"read_window":   {ReadOnlyHint: true, OpenWorldHint: ptr(false)},
+		"wait_window":   {ReadOnlyHint: true, OpenWorldHint: ptr(false)},
 		"write_file":    {DestructiveHint: ptr(true), IdempotentHint: true, OpenWorldHint: ptr(false)},
 		"read_file":     {ReadOnlyHint: true, OpenWorldHint: ptr(false)},
 	}

@@ -371,6 +371,32 @@ func TestRelayFailures(t *testing.T) {
 	})
 }
 
+// TestRelayWaitTimeout guards that a call waiting (wait_window) gets what it waits on top of the
+// timeout of a request: ratd answering it after the timeout of the other calls is relayed, while
+// another call answered as late fails.
+func TestRelayWaitTimeout(t *testing.T) {
+	bundle := newBundle(t)
+	timeout := requestTimeout
+	requestTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { requestTimeout = timeout })
+	late := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		_, _ = io.Copy(io.Discard, req.Body)
+		time.Sleep(600 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{"content":[]}}`)
+	})
+	p := startRat(t, bundle, fakeRatd(t, bundle, late, nil), slog.LevelInfo)
+	wait := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"wait_window",` +
+		`"arguments":{"window":"main","max_seconds":1}}}`
+	if answer := p.exchange(t, wait); !strings.Contains(answer, `"result"`) {
+		t.Errorf("expected the late answer to a wait relayed, got %s", answer)
+	}
+	code, message, _ := errorOf(t, p.exchange(t, ping))
+	if code != codeRelayFailed || !strings.Contains(message, "did not answer within 300ms") {
+		t.Errorf("expected another call answered as late to fail, got %d: %q", code, message)
+	}
+}
+
 // TestRelayInvalidInput guards the answers to lines rat can not relay: not JSON, and over 16 MiB,
 // after which rat reads on.
 func TestRelayInvalidInput(t *testing.T) {

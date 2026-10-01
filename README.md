@@ -16,7 +16,7 @@ with it.
   compactions of an agent: it finds its terminals back, with what runs in them.
 - **Asynchronous by design.** Sending a command returns at once: agents start long running
   commands (builds, tests, deployments) in parallel windows, carry on, and come back to check
-  them.
+  them, or wait for them, 50 seconds at most at a time, learning how they exited.
 - **A keyboard, not a command runner.** Agents paste text as a human pastes (at a prompt,
   multi-line text waits for Enter) and press keys by name: they answer prompts and drive
   full-screen programs, as a human would.
@@ -48,7 +48,7 @@ wrapped lines joined, the same size every time, with history on request. And a h
 does not get in the way: attaching does not resize the windows, and a copy mode left on is left
 before the agent's next input.
 
-The result is eight tools with few parameters, explained in a few lines of instructions. Less
+The result is nine tools with few parameters, explained in a few lines of instructions. Less
 context goes to describing the tools, and the agent needs fewer tries to get a command right:
 there is no tmux syntax to get wrong, and nothing to check after each call. The tmux server
 belongs to RAT: it starts with no user configuration, so terminals are the same on every
@@ -56,7 +56,7 @@ machine, and it stops with RAT.
 
 ## Tools
 
-ratd adds eight tools to your harness, and instructions telling agents how to use them: the
+ratd adds nine tools to your harness, and instructions telling agents how to use them: the
 terminals are on another machine, and sending a command does not wait for it.
 
 **Terminals**
@@ -69,6 +69,7 @@ terminals are on another machine, and sending a command does not wait for it.
 | `send_text` | `window`, `text`, `enter` | Pastes text as a human pastes, then presses Enter if `enter` is true (required: the agent decides each time whether the text runs). |
 | `send_keys` | `window`, `keys` | Presses keys by name, in order: `C-c`, `Escape`, `Up`, `Tab`… |
 | `read_window` | `window`, `scrollback_rows` (optional, 0) | Returns what the window displays: its screen (200 columns, 24 rows), with rows of history above it on demand. |
+| `wait_window` | `window`, `max_seconds` (optional, 20, 50 at most) | Waits until the command sent last finished, then tells how it exited, or what still runs once `max_seconds` passed. |
 
 **Files**, copied to and from the machine of ratd, as its user:
 
@@ -79,7 +80,7 @@ terminals are on another machine, and sending a command does not wait for it.
 
 Paths are absolute or start with `~/`. What `read_window` and `read_file` return is bounded by
 the read budget of ratd (64 KiB by default, `--read-budget`): a longer output is read a range at
-a time. `list_windows`, `read_window` and `read_file` only read; the others act on the terminals
+a time. `list_windows`, `read_window`, `wait_window` and `read_file` only read; the others act on the terminals
 or the files, and only `send_text` and `send_keys` reach beyond RAT, through what runs in the
 terminals.
 

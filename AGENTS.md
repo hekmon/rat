@@ -19,9 +19,10 @@ at once, and to know what they leave behind.
   the TLS configuration of each side.
 - **`ratd` (MCP server)**: high level, agent facing, served over HTTP with mutual TLS. Each of
   its tools serves a purpose (list, create and close windows, send text or keys, read a window,
-  read and write files), and composing the controller primitives to serve it is ratd's value:
-  the plumbing (e.g. a session created on first use) stays hidden, to avoid tool and context
-  bloat. It reads and writes files itself: tmux is its terminal backend, not its file backend.
+  wait for a command, read and write files), and composing the controller primitives to serve it
+  is ratd's value: the plumbing (e.g. a session created on first use) stays hidden, to avoid tool
+  and context bloat. It reads and writes files itself: tmux is its terminal backend, not its file
+  backend.
 - **`rat` (bridge)**: a stdio MCP server relaying to ratd, for harnesses that can not present a
   client certificate (most of them). It relays messages as they are, presenting the
   certificate.
@@ -99,7 +100,8 @@ tenant.
   a machine (for a Unix user).
 - **Stopping rat leaves nothing behind**, in three levels:
   - **Stopping ratd closes the door**: first its endpoint, so that no call gets in anymore, then
-    its tmux server, every terminal and the processes attached to them. An admin stopping the
+    its tmux server, every terminal and the processes attached to them. A call waiting for a
+    command returns at once: what agents wait for never delays the stop. An admin stopping the
     service is sure that no terminal and no way in is left, without hunting for tmux sockets.
   - **The service manager stops what escapes**: commands detached from their terminal (`nohup`,
     `setsid`, daemons) survive tmux. systemd stops them with the service, killing every process

@@ -57,12 +57,19 @@ const instructionsFormat = `rat gives you persistent terminals on %s: commands r
 // checkingText tells agents how to check a command they sent, from what holds in the terminals: an
 // agent must not look for what ratd does not tell.
 func checkingText(terminals tmux.TerminalsCheck) string {
-	if terminals.Statuses {
-		return `list_windows shows the foreground command (bash means the terminal waits for input), and how the ` +
-			`last command exited once bash is back at its prompt; read_window shows the screen.`
+	switch {
+	case terminals.Statuses:
+		return fmt.Sprintf(`wait_window waits until a command finished, %d seconds at most per call, and tells how it `+
+			`exited; list_windows shows the foreground command of each window, and how its last command exited once `+
+			`bash is back at its prompt; read_window shows the screen.`, tools.MaxWaitSeconds)
+	case terminals.Prompts:
+		return fmt.Sprintf(`wait_window waits until a command finished, %d seconds at most per call; list_windows `+
+			`shows the foreground command of each window (bash means the terminal waits for input); read_window shows `+
+			`the screen.`, tools.MaxWaitSeconds)
+	default:
+		return `rat can not tell when a command finishes on this machine (wait_window tells why): list_windows ` +
+			`shows the foreground command (bash means the terminal waits for input), read_window shows the screen.`
 	}
-	return `rat does not know when a command finishes, list_windows shows the foreground command (bash means the ` +
-		`terminal waits for input), read_window shows the screen.`
 }
 
 // pasteWarning ends the instructions when bash startup files defeat bracketed paste, or when that
@@ -98,6 +105,9 @@ type daemon struct {
 	// schemas spares resolving the schemas of the tools again for each request, which builds its
 	// own MCP server
 	schemas *mcp.SchemaCache
+	// stopping is closed once ratd stops (see serve): calls waiting return then, rather than hold
+	// the door open. Nil until serving, as in tests calling the tools without HTTP.
+	stopping <-chan struct{}
 }
 
 // newDaemon returns ratd serving the tenant of side, the server directory of its bundle, with the
@@ -152,8 +162,10 @@ func (h minLevel) WithGroup(name string) slog.Handler {
 
 // serve serves the MCP endpoint on listener, over mutual TLS, until ctx is done. It then closes
 // the door: no connection is accepted anymore, and the calls in flight get shutdownGrace to end
-// before being cut. It returns early if serving fails.
+// before being cut. A call waiting (wait_window) returns as soon as ctx is done: http.Server
+// cancels no call when shutting down, it waits for them. It returns early if serving fails.
 func (d *daemon) serve(ctx context.Context, listener net.Listener) error {
+	d.stopping = ctx.Done()
 	tlsConfig, err := mtls.ServerConfig(d.side)
 	if err != nil {
 		return err
@@ -222,7 +234,8 @@ func (d *daemon) getServer(req *http.Request) *mcp.Server {
 
 // newServer returns the MCP server of session, one per request: stateless, and cheap enough
 // (about 0.1 ms with the schemas cached, measured with 8 tools, next to tool calls taking
-// milliseconds of tmux).
+// milliseconds of tmux). The tools are the same whatever the terminals record (see checkTerminals):
+// where they record no prompt, wait_window tells why it can not wait.
 func (d *daemon) newServer(session string) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "ratd",
@@ -237,6 +250,7 @@ func (d *daemon) newServer(session string) *mcp.Server {
 	d.addWindowTools(server, session)
 	d.addInputTools(server, session)
 	d.addScreenTools(server, session)
+	d.addWaitTool(server, session)
 	d.addFileTools(server, session)
 	return server
 }

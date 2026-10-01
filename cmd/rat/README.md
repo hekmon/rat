@@ -112,7 +112,8 @@ The cost: rat implements the client headers of the transport, and must follow th
 - **Its own failures at startup**: stderr, then exit.
 
 Nothing is retried: the harness, or the agent, decides. A request gets 30 seconds, above the 10
-ratd gives a tool call, so that a connection hanging is cut rather than waited for.
+ratd gives a tool call, so that a connection hanging is cut rather than waited for. A call of
+`wait_window` gets what it waits on top of it, read from its arguments (`tools.Wait`).
 
 ## Logs
 

@@ -40,7 +40,8 @@ const (
 )
 
 // requestTimeout bounds a request to ratd: above the 10 seconds ratd gives a tool call, so that a
-// connection hanging is cut rather than waited for. A variable for tests.
+// connection hanging is cut rather than waited for. A call waiting (wait_window) gets what it waits
+// on top of it. A variable for tests.
 var requestTimeout = 30 * time.Second
 
 // relay relays the messages of a harness to ratd, and the answers of ratd back. It reads inside
@@ -69,6 +70,8 @@ type relay struct {
 // call is a call in flight.
 type call struct {
 	cancel context.CancelFunc
+	// timeout bounds the request relaying the call (see requestTimeout)
+	timeout time.Duration
 	// canceled tells the harness canceled the call: nothing is written for it
 	canceled atomic.Bool
 }
@@ -207,9 +210,13 @@ func (r *relay) handle(ctx context.Context, l line) {
 		r.writeError(nil, jsonrpc.CodeInvalidRequest, "invalid JSON-RPC message: "+err.Error())
 		return
 	}
+	timeout := requestTimeout
+	if msg.Method == "tools/call" && p.Name == tools.WaitWindow {
+		timeout += tools.Wait(p.Arguments)
+	}
 	// registered before relaying, for a cancellation read next to find it
-	callCtx, cancel := context.WithTimeout(ctx, requestTimeout)
-	c := &call{cancel: cancel}
+	callCtx, cancel := context.WithTimeout(ctx, timeout)
+	c := &call{cancel: cancel, timeout: timeout}
 	r.callsMu.Lock()
 	r.calls[id] = c
 	r.callsMu.Unlock()
@@ -333,7 +340,7 @@ func (r *relay) relayCall(ctx context.Context, c *call, msg message, data []byte
 		"duration", time.Since(start))
 	if err != nil {
 		r.logger.Warn("relay failed", "method", msg.Method, "id", string(msg.ID), "error", err)
-		r.writeError(msg.ID, codeRelayFailed, r.failureText(ctx, err))
+		r.writeError(msg.ID, codeRelayFailed, r.failureText(ctx, err, c.timeout))
 		return
 	}
 	isResponse := isResponseTo(resp.body, msg.ID)
@@ -411,14 +418,14 @@ func isResponseTo(body []byte, rawID json.RawMessage) bool {
 }
 
 // failureText tells the harness why a request did not reach ratd, or got no answer: ratd
-// unreachable, refusing the handshake or refused by rat, or not answering in time.
-func (r *relay) failureText(ctx context.Context, err error) string {
+// unreachable, refusing the handshake or refused by rat, or not answering within timeout.
+func (r *relay) failureText(ctx context.Context, err error, timeout time.Duration) string {
 	server := r.target.Server
 	var opErr *net.OpError
 	var urlErr interface{ Unwrap() error }
 	switch {
 	case errors.Is(context.Cause(ctx), context.DeadlineExceeded):
-		return fmt.Sprintf("ratd at %s did not answer within %s", server, requestTimeout)
+		return fmt.Sprintf("ratd at %s did not answer within %s", server, timeout)
 	case errors.As(err, &opErr) && opErr.Op == "remote error":
 		return fmt.Sprintf("ratd at %s refused the TLS handshake: %s. Check the bundle with rat-tool check.", server, opErr)
 	case refusedByRat(err) && errors.As(err, &urlErr):

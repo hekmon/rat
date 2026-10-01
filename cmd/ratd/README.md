@@ -136,15 +136,17 @@ constraints of mTLS: they keep the freedom of their host names.
 
 ## Tools
 
-Eight tools, each serving a purpose; composing the controller primitives to serve it is what
+Nine tools, each serving a purpose; composing the controller primitives to serve it is what
 ratd adds. Descriptions are short, as small models read them once and forget the details: what
 an agent needs to interpret a result goes in the result itself, only when it applies. Results
 are readable text, with a header line between brackets when there is something to say, rather
 than JSON.
 
-No tool waits for a command: sending returns once tmux holds the input (47 ms for a 4 MiB paste,
-measured with tmux 3.7c), reading returns what is displayed at that moment. This is what makes
-rat fit long running commands: an agent starts one, carries on, and comes back to check it.
+Sending never waits for a command: it returns once tmux holds the input (47 ms for a 4 MiB paste,
+measured with tmux 3.7c), and reading returns what is displayed at that moment. This is what makes
+rat fit long running commands: an agent starts one, carries on, and comes back to check it. Waiting
+is a tool of its own, `wait_window`, which the agent calls when it has nothing else to do: a
+server can not wake an agent up, and polling the screen would cost a screen of context each time.
 
 ### Terminals
 
@@ -193,6 +195,38 @@ rat fit long running commands: an agent starts one, carries on, and comes back t
   the history belongs to the terminal before the program started: it is never included, and the
   header says so when history was asked. `scrollback_rows` is unsigned, so that the schema
   refuses a negative number.
+
+- **`wait_window`** `{window, max_seconds}`: waits until the command sent last to the window
+  finished, then tells how it exited (`build: the command finished 3s ago, exit status 1.`), or,
+  after `max_seconds` (20 by default, from 1 to 50, bounded by the schema), what still runs
+  (`build: still running after 20s, make in the foreground.`). Finished means the window recorded a
+  prompt since the last input, with bash in the foreground: a text sent while a command ran gets
+  the prompt of that command, then runs (see Prompts in `tmux/README.md`). It asks tmux every
+  quarter of a second rather than being told: ratd keeps no state, and faster would only load
+  tmux, the refresh of terminal UIs (about 100 ms) being for human eyes. Answers are one line,
+  never the screen: waiting 50 seconds at a time for a twenty minute build costs 24 lines, where
+  reading the screen each time would cost 24 screens. Two hints, worded calmly, as an agent
+  told its command looks stuck interrupts it: when nothing was displayed for ten seconds, that it
+  is normal for some commands, and that `read_window` shows whether it waits for input; when bash
+  is in the foreground with no prompt since the last input, that a text may wait on the command
+  line (sent without Enter), or a builtin run. Not seen as finished, which the description tells:
+  a program waiting for input, and what runs within ssh or an interpreter, which show no prompt of
+  rat's bash. The exit status is told where the terminals record it right (see Startup). Where
+  they record no prompt, the tool is offered all the same, its description and its answer telling
+  why it can not wait, and what to use instead: the same tools everywhere, and an agent told why
+  rather than left wondering where a tool went. A missing session is
+  created, as by the other tools: waiting on `main` then waits for its first prompt. It returns at
+  once when ratd stops (see Shutdown).
+
+  50 seconds at most: a harness cuts a tool call at a limit of its own, which ratd can not see,
+  nor push back without a stream to send progress on. That limit is 60 seconds by default for
+  several harnesses (Cline, Zed, OpenCode, Continue, the Cursor CLI, and Claude Code reaching ratd
+  over HTTP, until the first byte of the answer), configurable in most, and longer for others
+  (Codex 300 s, Gemini CLI 10 min, Claude Code through rat), checked in their code in 2026-10. A
+  wait of 60 seconds would race the first ones, its answer coming after the cut, the agent then
+  getting an error from its harness rather than an answer: 50 leaves room for the network and for
+  ratd to answer. Rejected: a wait without parameter, which an agent can not shorten to check on a
+  command it expects to ask something; a longer maximum, which more harnesses would cut.
 
 The inputs of the tools (names, types, JSON schemas) are declared in package `cmd/ratd/tools`,
 which rat imports: from protocol 2026-07-28 on, an argument whose schema carries an
@@ -336,7 +370,7 @@ number).
 
 | Tool | Read only | Destructive | Idempotent | Open world |
 |---|---|---|---|---|
-| `list_windows`, `read_window`, `read_file` | yes | | | |
+| `list_windows`, `read_window`, `wait_window`, `read_file` | yes | | | |
 | `create_window` | | | yes (an existing window is reported, not recreated) | |
 | `close_window` | | yes | yes | |
 | `send_text`, `send_keys` | | yes | | yes |
@@ -394,9 +428,10 @@ Built at startup, sent to each client when it initializes, or discovers the serv
 > rat gives you persistent terminals on *host*: commands run there, not where you run. It is
 > asynchronous by design: sending a command returns at once, without waiting for it to finish.
 > Start long running commands (builds, tests, deployments), carry on with other work, and come
-> back to check them: list_windows shows the foreground command (bash means the terminal waits
-> for input), and how the last command exited once bash is back at its prompt; read_window shows
-> the screen. Run several commands in parallel in several windows. Each terminal is a window running bash,
+> back to check them: wait_window waits until a command finished, 50 seconds at most per call, and
+> tells how it exited; list_windows shows the foreground command of each window, and how its last
+> command exited once bash is back at its prompt; read_window shows the screen. Run several
+> commands in parallel in several windows. Each terminal is a window running bash,
 > found by name: windows persist across your restarts and context compactions, so call
 > list_windows first. A window named main exists when you start. To copy a whole file to or from
 > the machine, use write_file and read_file rather than the terminal. For the exact output of a
@@ -406,8 +441,8 @@ Built at startup, sent to each client when it initializes, or discovers the serv
 > If the terminals restart after a failure, every window disappears and you find a fresh main.
 
 How to check a command depends on what holds in the terminals (see Startup): where they do not
-record statuses right, the instructions tell instead that rat does not know when a command
-finishes. The host name tells an agent that has a local shell too where commands run. The tenant and the
+record statuses right, the instructions tell of no status; where they record no prompt, that rat
+can not tell when a command finishes there, wait_window telling why. The host name tells an agent that has a local shell too where commands run. The tenant and the
 session are left out, agents having no use for them; the server info title carries the tenant
 and the host (`rat prod on host`), for clients to display. When the check of the terminals finds
 bracketed paste defeated, or can not run (see below), a sentence is added: multi-line text may run
@@ -459,7 +494,10 @@ times of recent deaths are kept, for this budget.
 On SIGTERM or SIGINT, the door closes before the terminals: ratd stops accepting connections and
 gives the calls in flight 10 seconds, then stops the tmux server (with the controller's own
 escalation, SIGTERM then SIGKILL). The other order would answer calls arriving in between that
-the terminals are restarting.
+the terminals are restarting. A call waiting (`wait_window`) returns at once, telling ratd stops:
+`http.Server` cancels no call when shutting down, it waits for them, and a wait would hold the
+door open for the whole grace, then be cut. The kill switch does not depend on what agents wait
+for.
 
 The controller terminates its server when the context it was started with ends: ratd starts it
 with a context the signal does not cancel, which would otherwise stop the terminals with the
@@ -473,8 +511,8 @@ warn about.
 
 ### Timeouts
 
-- **A tool call: 10 seconds.** No call waits for a command, and tmux answers in milliseconds even
-  for the largest inputs (47 ms for a 4 MiB paste, 11 ms for a capture of 10000 rows): beyond,
+- **A tool call: 10 seconds**, plus its wait for `wait_window`. No other call waits for a command,
+  and tmux answers in milliseconds even for the largest inputs (47 ms for a 4 MiB paste, 11 ms for a capture of 10000 rows): beyond,
   tmux is stuck, and the agent is told so. File operations can not be interrupted: on a file
   system not answering (a stale NFS mount, which blocks a human as well), the call returns at the
   end of its time, logged as a warning, while the operation stays blocked until the file system

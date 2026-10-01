@@ -13,9 +13,10 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// toolTimeout bounds a tool call. No call waits for a command, and tmux answers in milliseconds
-// even for the largest inputs (47 ms for a 4 MiB paste, 11 ms for a capture of 10000 rows):
-// beyond, tmux is stuck, and the agent is told so. A variable for tests.
+// toolTimeout bounds a tool call. No call waits for a command but wait_window, which waits on top
+// of it (see timedTool), and tmux answers in milliseconds even for the largest inputs (47 ms for a
+// 4 MiB paste, 11 ms for a capture of 10000 rows): beyond, tmux is stuck, and the agent is told so.
+// A variable for tests.
 var toolTimeout = 10 * time.Second
 
 // nameRule tells agents what a window name may be (package names).
@@ -62,9 +63,16 @@ type result struct {
 // turns its result into a tool result. window tells the window the input names, for the log line.
 func tool[In any](d *daemon, session, name string, window func(In) string,
 	do func(ctx context.Context, in In) result) mcp.ToolHandlerFor[In, any] {
+	return timedTool(d, session, name, window, func(In) time.Duration { return 0 }, do)
+}
+
+// timedTool is tool, for a tool whose input asks to wait: do runs within toolTimeout plus what
+// wait returns.
+func timedTool[In any](d *daemon, session, name string, window func(In) string, wait func(In) time.Duration,
+	do func(ctx context.Context, in In) result) mcp.ToolHandlerFor[In, any] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 		start := time.Now()
-		ctx, cancel := context.WithTimeout(ctx, toolTimeout)
+		ctx, cancel := context.WithTimeout(ctx, wait(in)+toolTimeout)
 		defer cancel()
 		r := do(ctx, in)
 		attrs := []any{"session", session, "tool", name}

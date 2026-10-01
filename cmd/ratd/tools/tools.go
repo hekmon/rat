@@ -1,8 +1,11 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
+	"strconv"
+	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -15,6 +18,7 @@ const (
 	SendText     = "send_text"
 	SendKeys     = "send_keys"
 	ReadWindow   = "read_window"
+	WaitWindow   = "wait_window"
 	WriteFile    = "write_file"
 	ReadFile     = "read_file"
 )
@@ -49,6 +53,39 @@ type ReadWindowInput struct {
 	ScrollbackRows uint   `json:"scrollback_rows,omitempty" jsonschema:"rows of history to include above the screen"`
 }
 
+// WaitWindowInput is the input of wait_window. max_seconds 0 is DefaultWaitSeconds: the schema can
+// not tell 0 from a missing number, and bounds the others (see Schemas).
+type WaitWindowInput struct {
+	Window     string `json:"window" jsonschema:"the name of the window"`
+	MaxSeconds uint   `json:"max_seconds,omitempty" jsonschema:"the most seconds to wait"`
+}
+
+const (
+	// DefaultWaitSeconds is how long wait_window waits at most, unless told.
+	DefaultWaitSeconds = 20
+	// MaxWaitSeconds is the longest wait_window waits. A harness cuts a tool call at a limit of its
+	// own, which ratd can not see, nor push back: it answers without a stream, with no progress to
+	// send meanwhile. Several harnesses cut at 60 seconds by default (Cline, Zed, OpenCode, Continue,
+	// the Cursor CLI, and Claude Code reaching ratd over HTTP, checked in their code in 2026-10): a
+	// wait of 60 seconds would race them, its answer coming after the cut, and the agent getting an
+	// error from its harness instead. 50 leaves room for the network and for ratd to answer.
+	MaxWaitSeconds = 50
+)
+
+// Wait returns how long a call of wait_window with arguments waits at most: max_seconds, or
+// DefaultWaitSeconds when missing or not a number, MaxWaitSeconds at most. ratd refuses a value
+// out of bounds, but rat, which bounds its request with it, reads it before.
+func Wait(arguments json.RawMessage) time.Duration {
+	var args struct {
+		MaxSeconds *float64 `json:"max_seconds"`
+	}
+	seconds := float64(DefaultWaitSeconds)
+	if json.Unmarshal(arguments, &args) == nil && args.MaxSeconds != nil {
+		seconds = min(max(*args.MaxSeconds, 0), MaxWaitSeconds)
+	}
+	return time.Duration(seconds * float64(time.Second))
+}
+
 // WriteFileInput is the input of write_file. The content is required, and may be empty.
 type WriteFileInput struct {
 	Path    string `json:"path" jsonschema:"absolute, or starting with ~/ for the home directory"`
@@ -73,6 +110,7 @@ var inputs = map[string]reflect.Type{
 	SendText:     reflect.TypeFor[SendTextInput](),
 	SendKeys:     reflect.TypeFor[SendKeysInput](),
 	ReadWindow:   reflect.TypeFor[ReadWindowInput](),
+	WaitWindow:   reflect.TypeFor[WaitWindowInput](),
 	WriteFile:    reflect.TypeFor[WriteFileInput](),
 	ReadFile:     reflect.TypeFor[ReadFileInput](),
 }
@@ -89,5 +127,11 @@ func Schemas() (map[string]*jsonschema.Schema, error) {
 		}
 		schemas[name] = schema
 	}
+	// max_seconds of wait_window is bounded, and defaults: the schema tells agents, and the SDK
+	// refuses a value out of bounds before the call
+	maxSeconds := schemas[WaitWindow].Properties["max_seconds"]
+	minimum, maximum := 1.0, float64(MaxWaitSeconds)
+	maxSeconds.Minimum, maxSeconds.Maximum = &minimum, &maximum
+	maxSeconds.Default = json.RawMessage(strconv.Itoa(DefaultWaitSeconds))
 	return schemas, nil
 }
