@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/hekmon/rat/internal/version"
+
 	"github.com/urfave/cli/v3"
 )
 

@@ -17,11 +17,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/hekmon/rat/cmd/ratd/tools"
 	"github.com/hekmon/rat/connect"
 	"github.com/hekmon/rat/internal/flags"
 	"github.com/hekmon/rat/mtls"
+
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 )
 

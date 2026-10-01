@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/hekmon/rat/cmd/ratd/tools"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

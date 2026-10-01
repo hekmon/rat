@@ -8,6 +8,7 @@ import (
 
 	"github.com/hekmon/rat/cmd/ratd/tools"
 	"github.com/hekmon/rat/tmux"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

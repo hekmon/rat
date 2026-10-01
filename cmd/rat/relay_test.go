@@ -20,6 +20,7 @@ import (
 
 	"github.com/hekmon/rat/internal/flags"
 	"github.com/hekmon/rat/mtls"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

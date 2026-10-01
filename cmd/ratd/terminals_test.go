@@ -17,6 +17,7 @@ import (
 	"github.com/hekmon/rat/connect"
 	"github.com/hekmon/rat/mtls"
 	"github.com/hekmon/rat/tmux"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

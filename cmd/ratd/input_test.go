@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/hekmon/rat/tmux"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

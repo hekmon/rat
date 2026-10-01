@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/hekmon/rat/mtls"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

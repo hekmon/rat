@@ -17,6 +17,7 @@ import (
 	"github.com/hekmon/rat/internal/flags"
 	"github.com/hekmon/rat/internal/version"
 	"github.com/hekmon/rat/mtls"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/urfave/cli/v3"
 )

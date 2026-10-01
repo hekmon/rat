@@ -16,6 +16,7 @@ import (
 	"github.com/hekmon/rat/internal/version"
 	"github.com/hekmon/rat/mtls"
 	"github.com/hekmon/rat/tmux"
+
 	"github.com/urfave/cli/v3"
 )
 

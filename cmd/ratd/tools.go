@@ -9,6 +9,7 @@ import (
 
 	"github.com/hekmon/rat/tmux"
 	"github.com/hekmon/rat/tmux/names"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
