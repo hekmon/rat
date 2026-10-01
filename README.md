@@ -86,7 +86,11 @@ terminals.
 ## Components
 
 - **ratd**: the MCP server, and the entry point. A standard MCP server (Streamable HTTP): a
-  harness written with any MCP SDK connects to it, presenting a client certificate.
+  harness written with any MCP SDK connects to it, presenting a client certificate. It runs as a
+  service rather than as a stdio server started over ssh, as remote MCP servers often are: the
+  terminals outlive the connections and stop with the service, and the account running them needs
+  no ssh access (see Deployment; the alternatives are weighed in
+  [`cmd/ratd/README.md`](cmd/ratd/README.md)).
 - **rat**: an adapter for the harnesses that can not present a client certificate (most of them
   today): a stdio MCP server, started by the harness, relaying to ratd over HTTPS and presenting
   the client certificate in its place.
@@ -103,7 +107,7 @@ RAT keeps agents apart in layers, from the widest to the narrowest:
 |---|---|---|---|
 | Unix user | the account ratd runs as | you, when deploying | the rest of the machine: agents can do what the user can, nothing more |
 | Tenant | one ratd: its port, its bundle, its terminals | the bundle, generated for it | groups of agents, such as production and staging, or two teams |
-| Session | the terminals of a client of the tenant | the client certificate | the harnesses of a tenant: a client only reaches its own session |
+| Session | the terminals of a client of the tenant | the client certificate | the calls of the harnesses of a tenant: each reaches its own session only, while commands typed in a terminal reach them all |
 | Window | a terminal running bash | the agent, by name | the commands of an agent, run in parallel |
 
 Harnesses meant to share terminals share a client certificate; harnesses meant to be apart get
@@ -185,8 +189,8 @@ ratd is meant to run as a service, under a Unix user of its own (see Security).
 ```sh
 useradd --create-home --shell /usr/sbin/nologin rat
 echo 'DenyUsers rat' > /etc/ssh/sshd_config.d/rat.conf && systemctl reload sshd
-install -d -m 700 -o rat /etc/rat/prod
-cp -r bundle-prod/server /etc/rat/prod/ && chown -R rat /etc/rat/prod
+install -d -m 755 /etc/rat/prod && cp -r bundle-prod/server /etc/rat/prod/
+chmod 755 /etc/rat/prod/server && chown rat /etc/rat/prod/server/server.key
 ```
 
 ```ini
@@ -227,6 +231,11 @@ journalctl -u ratd-prod -f
   leaving it out of an `AllowUsers` list does the same). Check with `sshd -T | grep -i denyusers`.
   Reach the account with `sudo -u rat`, as the attach command does (see Security): it runs the
   command itself, where `su -` and `sudo -i` run the login shell, and are refused.
+- **The bundle belongs to root, but for its key.** ratd only reads it, and the agents run as its
+  user: a bundle that user could write, an agent could replace with one of its own, whose clients
+  ratd would let in at its next start (measured on Debian 12). The key stays the user's, ratd
+  having to read it and refusing it readable by others: an agent can only spoil it, and ratd then
+  refuses to start.
 - **The kill switch.** `systemctl stop ratd-prod` stops ratd, its endpoint first, the terminals
   and the commands they run, and whatever else is left in the service: commands detached from
   their terminals included (measured with systemd 252: a `nohup` command started by an agent is
@@ -320,8 +329,9 @@ to a server; the bundle stands for `authorized_keys`, but closed:
   the bundle, and was never written: no one can issue a certificate afterwards, not even someone
   controlling the server. Nor does the certificate of ratd stand for a client: each certificate
   carries one extended key usage, server or client authentication, which each side requires of
-  its peer (`openssl x509 -in server.crt -noout -text` shows it). A password or a token would
-  instead sit next to the terminals, readable by the agents running there.
+  its peer (`openssl x509 -in server.crt -noout -text` shows it). A password or an API key would
+  instead travel with every request and, kept in clear, sit next to the terminals, readable by
+  the agents running there.
 - **Modern and fixed:** TLS 1.3 only, with keys that change at each connection (what is captured
   today can not be decrypted with a key stolen tomorrow), ECDSA P-256 certificates.
 - **On every address, loopback included**: other users of the machine reach loopback too.
