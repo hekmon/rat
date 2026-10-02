@@ -17,6 +17,9 @@ import (
 var (
 	// ErrInvalidKey is returned by SendKeys for a name that is not a known tmux key name.
 	ErrInvalidKey = errors.New("invalid key name")
+	// ErrControlCharacter is returned by SendText for a text holding a control character other
+	// than tab, new line and carriage return.
+	ErrControlCharacter = errors.New("control character")
 )
 
 // keyFormat matches the tmux key names SendKeys accepts: a printable ASCII character or a named
@@ -26,7 +29,8 @@ var keyFormat = regexp.MustCompile(`^(?:[CMS]-)*(?:[!-~]|Enter|Escape|Tab|BTab|B
 
 // SendText pastes text in window of session, as a human pastes, then presses Enter if enter is
 // true. The text is pasted as is, never interpreted as key names and with nothing added or
-// removed. When the text arrives, a program asking for pastes to be marked (bracketed paste:
+// removed. It holds no control character but tab, new line and carriage return: the error wraps
+// ErrControlCharacter otherwise, and nothing is sent (see CheckText). When the text arrives, a program asking for pastes to be marked (bracketed paste:
 // bash waiting at its prompt, vim…) receives it as a paste: bash inserts it into its command
 // line, new lines included, and runs nothing until Enter. Otherwise, the text is read as typed, a
 // new line as Enter: by programs that do not ask, but also by bash reading it later, when it was
@@ -40,6 +44,9 @@ var keyFormat = regexp.MustCompile(`^(?:[CMS]-)*(?:[!-~]|Enter|Escape|Tab|BTab|B
 // A paste is all or nothing: a command ended by its context while the text streams to tmux pastes
 // none of it, and leaves no buffer behind.
 func (c *Controller) SendText(ctx context.Context, session, window, text string, enter bool) error {
+	if err := CheckText(text); err != nil {
+		return err
+	}
 	var stdin io.Reader
 	if text != "" {
 		stdin = strings.NewReader(text)
@@ -47,7 +54,32 @@ func (c *Controller) SendText(ctx context.Context, session, window, text string,
 	return c.sendText(ctx, session, window, stdin, enter)
 }
 
-// sendText is SendText, the text read from text, nil when empty: tests stream it.
+// CheckText returns an error wrapping ErrControlCharacter if text holds a control character
+// SendText refuses: an ASCII one below space, or DEL, but tab, new line and carriage return. It
+// names the first one, in hexadecimal and caret notation (0x1b (^[) for ESC), and its line. It is
+// the rule SendText applies, for callers to find which character is refused.
+//
+// Refused rather than pasted, or removed: the terminal would not get what the caller sent, and the
+// caller would not know. Until tmux 3.6, ESC[201~ ends the bracketed paste early, and the lines
+// after it run without Enter; from 3.7, tmux rewrites control characters into visible text. Keys
+// are pressed with SendKeys. See "Control characters are refused" in the README.
+func CheckText(text string) error {
+	line := 1
+	// bytes rather than runes: no byte of a multi-byte UTF-8 character is below 0x80, so a control
+	// character is found whatever the text holds, invalid UTF-8 included
+	for i := 0; i < len(text); i++ {
+		switch b := text[i]; {
+		case b == '\n':
+			line++
+		case b == '\t' || b == '\r':
+		case b < ' ' || b == 0x7f:
+			return fmt.Errorf("%w 0x%02x (^%c) on line %d", ErrControlCharacter, b, b^0x40, line)
+		}
+	}
+	return nil
+}
+
+// sendText is SendText, the text read from text, nil when empty: tests stream it, unchecked.
 func (c *Controller) sendText(ctx context.Context, session, window string, text io.Reader, enter bool) error {
 	if err := checkNames(session, window); err != nil {
 		return err

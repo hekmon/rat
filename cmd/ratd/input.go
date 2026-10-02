@@ -64,13 +64,19 @@ func (d *daemon) sendTextDescription() string {
 		"to check jobs or their logs."
 }
 
-// sendText pastes the text of in, then presses Enter if asked. The log line tells the size of the
-// text, never the text.
+// sendText pastes the text of in, then presses Enter if asked. A text holding a control character
+// is refused, naming it, and nothing is sent (see tmux.CheckText): the tools to use instead depend
+// on what the agent meant, keys or content. The log line tells the size of the text, never the text.
 func (d *daemon) sendText(ctx context.Context, session string, in tools.SendTextInput) result {
 	attrs := []any{"text_bytes", len(in.Text), "enter", in.Enter}
 	if in.Text == "" && !in.Enter {
 		return result{outcome: message, text: fmt.Sprintf("Nothing sent to %s: the text is empty, and enter false.", in.Window),
 			attrs: attrs}
+	}
+	if err := tmux.CheckText(in.Text); err != nil {
+		return result{outcome: failed, err: err, attrs: attrs, text: fmt.Sprintf("Nothing sent to %s: the text holds a "+
+			"%s. A text holds no control character but tab and new lines: press keys (Escape, C-c…) with send_keys, "+
+			"and write content holding control characters with write_file.", in.Window, err)}
 	}
 	err := d.controller.SendText(ctx, session, in.Window, in.Text, in.Enter)
 	r := d.sent(ctx, session, in.Window, err)

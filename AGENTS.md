@@ -129,7 +129,8 @@ tenant.
   are never used nor stored.
 - **Agent input reaches the terminal as is**: text is pasted literally, as a human pastes, never
   interpreted by tmux (not even by a mode a human left the terminal in), and Enter is only
-  pressed when asked.
+  pressed when asked. A text that can not reach it as is (control characters) is refused, never
+  altered.
 
 How the tmux controller keeps them, and the tmux pitfalls behind each of them, are described in
 [`tmux/README.md`](tmux/README.md).

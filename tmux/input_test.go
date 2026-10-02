@@ -68,6 +68,58 @@ func TestSendTextPastedInputrcOff(t *testing.T) {
 	checkPasted(t, c)
 }
 
+// TestSendTextControlCharacter guards that a text holding a control character is refused, with
+// nothing sent: ESC[201~ in a text would end the bracketed paste early (tmux 3.6 and older), and
+// the lines after it run without Enter.
+func TestSendTextControlCharacter(t *testing.T) {
+	c := startTestServer(t, "sendcontrol")
+	ctx := context.Background()
+	if err := c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	// a prompt displayed after the output of a command: bash waits, and asked for bracketed paste
+	typeCommand(t, c, "s", FirstWindow, "echo ready")
+	eventually(t, "prompt after the command", screenContains(c, "s", FirstWindow, "\nready\n"))
+	err := c.SendText(ctx, "s", FirstWindow, "echo one\n\x1b[201~echo injected\n", false)
+	if !errors.Is(err, ErrControlCharacter) {
+		t.Fatalf("expected ErrControlCharacter, got %v", err)
+	}
+	// a command typed after the refused text: bash shows it once done with anything the text ran
+	typeCommand(t, c, "s", FirstWindow, "echo after")
+	eventually(t, "command after the refused text", screenContains(c, "s", FirstWindow, "echo after"))
+	snapshot, err := c.Capture(ctx, "s", FirstWindow, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(snapshot.Content, "one") || strings.Contains(snapshot.Content, "injected") {
+		t.Fatalf("the refused text reached the terminal:\n%s", snapshot.Content)
+	}
+}
+
+// TestCheckText guards which characters a text may hold: any but control characters, tab, new
+// line and carriage return excepted, and that a refused one is named, with its line.
+func TestCheckText(t *testing.T) {
+	for _, text := range []string{"", "echo a\tb\r\nc\n", "café ✓ 日本", "\xff\xfe invalid UTF-8", "\u009b C1, as UTF-8"} {
+		if err := CheckText(text); err != nil {
+			t.Errorf("CheckText(%q): %v", text, err)
+		}
+	}
+	for text, want := range map[string]string{
+		"\x1b[201~":      "control character 0x1b (^[) on line 1",
+		"a\nb\r\nc\x7f":  "control character 0x7f (^?) on line 3",
+		"x\x00":          "control character 0x00 (^@) on line 1",
+		"\n\nsleep\x03":  "control character 0x03 (^C) on line 3",
+		"bell\x07":       "control character 0x07 (^G) on line 1",
+		"back\x08space":  "control character 0x08 (^H) on line 1",
+		"\x1f\x1b\x1b[A": "control character 0x1f (^_) on line 1",
+	} {
+		err := CheckText(text)
+		if !errors.Is(err, ErrControlCharacter) || err.Error() != want {
+			t.Errorf("CheckText(%q): expected %q, got %v", text, want, err)
+		}
+	}
+}
+
 // checkPasted checks that a multi-line text pasted at a bash prompt runs nothing until Enter,
 // which then runs every line.
 func checkPasted(t *testing.T, c *Controller) {

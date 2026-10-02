@@ -28,7 +28,8 @@ func waitPrompt(t *testing.T, session *mcp.ClientSession, controller *tmux.Contr
 }
 
 // TestSendText guards send_text: a multi-line text pasted at a prompt waits for Enter, Enter alone
-// runs it, enter is required, and the log line tells the size of the text, never the text. Its
+// runs it, enter is required, a text holding a control character is refused naming it, with the
+// tools to use instead, and the log line tells the size of the text, never the text. Its
 // description points to a window per long running command rather than the background, telling
 // why, as the instructions do: clients may not pass the instructions on. wait_window is among the
 // tools following the command, and the one to wait for the prompt with before pasting several
@@ -63,6 +64,8 @@ func TestSendText(t *testing.T) {
 	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": "", "enter": true}, false, "Enter pressed in main.")
 	eventually(t, "every line run", screenOf(controller, tmux.FirstWindow, "\none\nsecret-two"))
 	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": ""}, true, "enter")
+	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": "echo a\n\x1b[201~echo b", "enter": false}, true,
+		"Nothing sent to main: the text holds a control character 0x1b (^[) on line 2.", "with send_keys", "with write_file")
 	expectTool(t, session, "send_text", map[string]any{"window": "nope", "text": "x", "enter": true}, true,
 		"No window nope: list_windows shows your windows.")
 	out := logs.String()

@@ -414,7 +414,8 @@ load-buffer -b rat-input-N - ; copy-mode -q -t =session:=window ; paste-buffer -
   text only presses Enter, if asked.
 - `copy-mode -q` leaves any tmux mode, right before the paste (see Input leaves tmux modes).
 
-Nothing is added nor removed, and Enter is only pressed when asked, as a separate key.
+Nothing is added nor removed, and Enter is only pressed when asked, as a separate key. A text
+holding control characters is refused instead (see Control characters are refused).
 
 ### A paste is all or nothing
 
@@ -467,6 +468,39 @@ Rejected:
   others could interleave with, bringing back a lock on windows.
 - Limiting the size of texts: an agent must be able to do what a human does, and a big paste is
   valid.
+
+### Control characters are refused
+
+A text holding a control character (below space, or DEL), tab, new line and carriage return aside,
+is refused (`CheckText`, `ErrControlCharacter`), and nothing is sent: what the program would get is
+not what the agent sent, and depends on the tmux version.
+
+- Until tmux 3.6, `paste-buffer` writes the buffer as is between the markers, and bash ends the
+  paste at the first `ESC[201~` it reads, wherever it comes from. The rest of the text is read as
+  typed, each new line running the line before it, and the real end marker leaves a `~` on the
+  command line. A text the agent did not write (a file, a web page, the output of a command) runs
+  without Enter. Reproduced with tmux 3.4 and bash 5.2; `TestSendTextControlCharacter` guards it.
+- From tmux 3.7, `paste-buffer` passes the buffer through `vis(3)` (`VIS_SAFE`) unless `-S` is
+  given, against this very sequence: control characters other than tab, new line, carriage
+  return, backspace and bell are written as visible text (`^[` for ESC). The hole is closed by
+  altering the text, silently. Measured with tmux 3.7c (the bytes a program reads, with and
+  without `-S`, which brings the early end back), as `cmd-paste-buffer.c` and its CHANGES tell.
+
+Refusing every control character `vis` rewrites, and backspace and bell, which no text holds,
+leaves it nothing to do: the paste is the same from tmux 3.3a on, without knowing the version. An
+agent meaning a key presses it (`SendKeys`), a file holding control characters is written without
+the terminal (ratd's `write_file`). Bytes are checked rather than characters: no byte of a
+multi-byte UTF-8 character is below 0x80. C1 controls, encoded in UTF-8 (U+009B…), are not
+refused: they end no paste, bash reading bytes.
+
+Rejected:
+
+- Removing them, or encoding them as tmux 3.7 does: the agent would not know its text changed,
+  and it meant something by them, a key or content, which only it can send the right way.
+- Refusing `ESC[201~` alone: the hole closed, other control characters would still reach the
+  program as is until 3.6 and altered from 3.7, terminals differing with the tmux of the machine.
+- Passing `-S` from tmux 3.7, to paste control characters as is everywhere: older versions refuse
+  the flag, and two paths, depending on the version, with `TestMinimumTmux` testing only one.
 
 ### Trailing semicolons
 

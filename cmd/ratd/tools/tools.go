@@ -36,7 +36,7 @@ type NameInput struct {
 // leaving a command unrun (false) or running text meant to wait (true).
 type SendTextInput struct {
 	Window string `json:"window" jsonschema:"the name of the window"`
-	Text   string `json:"text" jsonschema:"the text to paste, as is: new lines included, nothing added"`
+	Text   string `json:"text" jsonschema:"the text to paste, as is: new lines included, nothing added; no control character but tab and new lines (keys: send_keys)"`
 	Enter  bool   `json:"enter" jsonschema:"true runs the text at a prompt; false leaves it on the command line, or answers a program without Enter"`
 }
 

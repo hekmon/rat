@@ -34,7 +34,9 @@
 // # Input and capture
 //
 // [Controller.SendText] pastes text as is, as a human pastes, then presses Enter only if asked:
-// agents may be answering a prompt rather than running a command. Pasting relies on bash
+// agents may be answering a prompt rather than running a command. A text holding a control
+// character but tab and new lines is refused, which [CheckText] tells without tmux: until tmux 3.6,
+// one (ESC[201~) ends the paste early, and from 3.7, tmux alters them. Pasting relies on bash
 // bracketed paste, and the prompts windows record on the prompt hook of bash, both of which
 // startup files can defeat: [Controller.CheckTerminals] tells.
 // [Controller.SendKeys] presses keys by their tmux names (C-c, Escape, Up…), which [CheckKey]

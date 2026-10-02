@@ -220,7 +220,11 @@ once.
   rather than the background, telling how the tools then follow it (see above): `wait_window`
   where the terminals record prompts, `list_windows` and `read_window`.
   An empty text only presses Enter; an empty text without Enter sends nothing, a message rather
-  than an error.
+  than an error. A text holding a control character, tab and new lines aside, is refused, and
+  nothing is sent (see Control characters are refused in `tmux/README.md`): the error names the
+  first one and its line, and points to `send_keys` for keys and `write_file` for content, the two
+  things the agent may have meant. The `text` field tells the rule up front, the description
+  leaves it out: agents rarely send control characters, and the error teaches the one who does.
 - **`send_keys`** `{window, keys}`: presses keys in order. The description lists the names the
   controller accepts, one per key (aliases are accepted, not shown): a printable character,
   `Space`, `Enter`, `Tab`, `BTab`, `BSpace`, `Escape`, `Up`, `Down`, `Left`, `Right`, `Home`,
@@ -462,6 +466,7 @@ message tells an outcome the agent may act upon, such as nothing to close.
 | screen over the read budget | yes | its size, close the window and start over in a new one |
 | invalid window name | yes | the naming rule |
 | unknown key | yes | the key names, and `send_text` to type text |
+| control character in a text | yes | the character and its line, `send_keys` for keys, `write_file` for content |
 | tmux restarting | yes | every window was lost, retry in a few seconds to find a fresh `main` |
 | tmux not answering in time | yes | logged, retrying may work |
 | file refused (not regular, not text, missing, denied, relative path, a range too far into a huge file to reach in time) | yes | why, and the terminal when it can do better |
