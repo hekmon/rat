@@ -148,18 +148,35 @@ func (d *daemon) finishedText(window string, w tmux.Window, now time.Time) strin
 	}
 }
 
+// notHookedText tells that window records no prompt, its bash not having run rat's hook (see
+// tmux.Window.Hooked): either bash is still starting, or its startup files replace PROMPT_COMMAND,
+// changed since ratd checked them at its start. Told whole, the cause and the fix: the agent may
+// well have changed them itself (an installer editing .bashrc), and can repair them.
+func notHookedText(window string) string {
+	return fmt.Sprintf("%s: no prompt recorded in this window yet: its bash has not run rat's prompt hook. Either it "+
+		"is still starting (its startup files running: read_window shows it), or its startup files replace "+
+		"PROMPT_COMMAND: wait_window then can not tell when its commands finish, nor list_windows how they "+
+		"exited, and multi-line text runs line by line. A startup file must add to PROMPT_COMMAND rather than "+
+		"replace it (PROMPT_COMMAND=\"mine;$PROMPT_COMMAND\"): windows created afterwards record their prompts again.",
+		window)
+}
+
 // runningText tells that the command sent last to window w is still running, relatively to now:
 // since when, what runs in the foreground, and when nothing was displayed for quietHint, that it
 // is normal, or that it may wait for input, which the screen shows. Calm on purpose: an agent told
 // its command looks stuck interrupts it. bash in the foreground, with no prompt since the input,
 // is a bash script or builtin running as well as a text left on the command line (see
-// tmux.Window.Command): both are told, the screen telling which.
+// tmux.Window.Command): both are told, the screen telling which. A window whose bash has not run
+// rat's hook is told as such instead (see notHookedText): bash is starting, or no prompt will come.
 // The time is the one since the last input, as the time without output, both from the clock of
 // the machine, rather than the time waited by this call: an agent adding up its waits miscounts
 // them, waiting on a window several times at once, and then takes the time without output for
 // running slow. Without an input recorded (none sent since the window was created), the time is
 // the one waited.
 func runningText(window string, w tmux.Window, waited time.Duration, now time.Time) string {
+	if !w.Hooked {
+		return notHookedText(window)
+	}
 	running, finished := "still running after "+sinceText(waited), "nothing finished after "+sinceText(waited)
 	noPromptSince := "since your last input"
 	if !w.Input.IsZero() {

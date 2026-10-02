@@ -79,19 +79,24 @@ func (d *daemon) listWindows(ctx context.Context, session string) result {
 	now := time.Now()
 	lines := make([]string, len(windows))
 	for i, w := range windows {
-		lines[i] = describeWindow(w, now, d.terminals.Statuses)
+		lines[i] = describeWindow(w, now, d.terminals)
 	}
 	return result{text: header + strings.Join(lines, "\n"), attrs: []any{"windows", len(windows)}}
 }
 
 // describeWindow tells what window runs, where, and when it was last active, relatively to now:
-// models do not know the current time. How the last command exited is told when statuses (the
-// terminals record them right, see checkTerminals), once bash is back at its prompt after it. The
+// models do not know the current time. How the last command exited is told where the terminals
+// record it right (see checkTerminals), once bash is back at its prompt after it. Where they
+// record prompts, a window whose bash has not run rat's hook yet is told (see notHookedText): bash
+// still starting, or startup files changed since ratd started, which its check did not see. The
 // history is only told when a capture can include it, not under a full-screen program. Paths are
 // absolute, for the file tools.
-func describeWindow(w tmux.Window, now time.Time, statuses bool) string {
+func describeWindow(w tmux.Window, now time.Time, terminals tmux.TerminalsCheck) string {
 	description := fmt.Sprintf("%s: %s in %s, active %s ago", w.Name, w.Command, w.Path, sinceText(now.Sub(w.Activity)))
-	if statuses && !w.Prompt.Time.IsZero() && w.Prompt.Status != tmux.NoStatus {
+	if terminals.Prompts && !w.Hooked {
+		description += ", no prompt recorded yet: bash still starting, or its startup files replace PROMPT_COMMAND"
+	}
+	if terminals.Statuses && !w.Prompt.Time.IsZero() && w.Prompt.Status != tmux.NoStatus {
 		description += fmt.Sprintf(", last command exited with status %d (%s ago)", w.Prompt.Status,
 			sinceText(now.Sub(w.Prompt.Time)))
 	}

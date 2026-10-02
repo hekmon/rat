@@ -143,6 +143,11 @@ const promptMark = "recording"
 // reads: a user option, tmux has no use for it.
 const inputOption = "@rat_input"
 
+// hookedOption is the pane option the bash of a terminal sets at each prompt, along with the mark
+// (see promptCommand), and which nothing clears: rat's hook ran in this terminal (see
+// Window.Hooked). A user option, tmux has no use for it.
+const hookedOption = "@rat_hooked"
+
 // promptCommand returns the PROMPT_COMMAND of terminals, run by bash before each prompt, after its
 // startup files, and reaching the server with the tmux at tmuxPath. In order, it:
 //   - reads the exit status of the last command: anything run before would change it;
@@ -151,7 +156,8 @@ const inputOption = "@rat_input"
 //     file of rat's to maintain;
 //   - marks the prompt as being recorded, on promptOption, with a mark of its own (promptMark, the
 //     PID of the bash and a count), and waits for tmux to hold it: an input reaching the window
-//     from then on clears it (see clearPrompt), and the mark of a newer prompt replaces it;
+//     from then on clears it (see clearPrompt), and the mark of a newer prompt replaces it. The
+//     same tmux command sets hookedOption, with no client of its own;
 //   - stops there if a line waits on the terminal, which read -t 0 tells without reading it: typed
 //     while a command ran or bash started, bash runs it right after this prompt, which does not end
 //     the command sent last. A whole line: until readline takes the terminal, after
@@ -180,7 +186,8 @@ func promptCommand(tmuxPath string) string {
 	return `__rat_status=$?; [ -n "${__rat_prompted-}" ] || __rat_status=-; __rat_prompted=1; ` +
 		bracketedPasteCommand + `; [ -z "${TMUX-}" ] || [ -z "${TMUX_PANE-}" ] || ` +
 		`{ __rat_marks=$((${__rat_marks-0}+1)); __rat_mark="` + promptMark + ` $$.$__rat_marks"; ` +
-		`: "$(` + tmux + ` set-option -p -t "$TMUX_PANE" ` + promptOption + ` "$__rat_mark" </dev/null 2>&1)"; ` +
+		`: "$(` + tmux + ` set-option -p -t "$TMUX_PANE" ` + promptOption + ` "$__rat_mark" ';' ` +
+		`set-option -p -t "$TMUX_PANE" ` + hookedOption + ` 1 </dev/null 2>&1)"; ` +
 		`read -t 0 || { printf -v __rat_time '%(%s)T' -1 2>/dev/null || __rat_time=$(date +%s); ` +
 		`(` + tmux + ` if-shell -F -t "$TMUX_PANE" "#{==:#{` + promptOption + `},$__rat_mark}" ` +
 		`"set-option -p -t $TMUX_PANE ` + promptOption + ` '$__rat_status $__rat_time'" ` +

@@ -187,8 +187,12 @@ once.
   do not record statuses right (see Startup), neither the windows nor the description tell them:
   the description tells instead that bash in the foreground means the terminal waits for input,
   with its caveats (bash scripts, builtins and loops show as bash, see Prompts in
-  `tmux/README.md`). When it creates the session (see Plumbing), a header says so: the agent
-  learns its terminals did not exist, rather than finding a lone `main`.
+  `tmux/README.md`). Where the terminals record prompts, a window whose bash has not run rat's
+  hook yet says so ("no prompt recorded yet: bash still starting, or its startup files replace
+  PROMPT_COMMAND"): startup files changed since ratd checked them at its start, which the windows
+  created afterwards show (see Hooked windows in `tmux/README.md`). When it creates the session
+  (see Plumbing), a header says so: the agent learns its terminals did not exist, rather than
+  finding a lone `main`.
 - **`create_window`** `{name}`: makes sure the session exists, then the window. Asking for
   `main` in a missing session is a success: creating the session made it. An existing window is
   not an error but a message saying it was not created, with what it runs and where: the agent
@@ -267,7 +271,12 @@ once.
   without Enter), `read_window` telling which: a script shows as bash. Not seen as finished, which
   the description tells: a program waiting for input, and what runs within ssh or an interpreter,
   which show no prompt of rat's bash. Seen as finished at once, which it tells too: a command run
-  in the background, bash showing its prompt as soon as it started it. The exit status is told
+  in the background, bash showing its prompt as soon as it started it. A window whose bash has
+  not run rat's hook, once the wait is over, is told as such rather than as running: still
+  starting, or startup files replacing `PROMPT_COMMAND`, changed since ratd checked them, and
+  then what the window loses (`wait_window`, the exit statuses, bracketed paste) and the fix, add
+  to `PROMPT_COMMAND` rather than replace it. Told whole: the agent may have changed them itself,
+  an installer editing `.bashrc`, and can repair them. The exit status is told
   where the terminals record it right (see Startup). Where they record no prompt, the tool is
   offered all the same, its description and its answer telling why it can not wait, and what to
   use instead: the same tools everywhere, and an agent told why rather than left wondering where a
@@ -547,7 +556,9 @@ In this order, a failure at steps 1, 2 or 4 making ratd exit while the admin is 
    agents, in the MCP instructions and the description of `send_text`. A check that can not run is
    taken as nothing holding. A startup file blocking also blocks every terminal: the log says so.
    Checked once rather than at each tmux restart: clients receive the instructions and the tools
-   once, and must not be told something the server no longer believes. A startup file changed while ratd runs is caught at its next start.
+   once, and must not be told something the server no longer believes. A startup file changed
+   while ratd runs is caught at its next start, and shows meanwhile in the windows created since,
+   which `list_windows` and `wait_window` tell as recording no prompt.
 4. **Listen**: a second ratd for the same tenant fails at step 2, before opening an endpoint.
 
 When less than a year of validity remains on the bundle, ratd warns at startup and every 24 hours:

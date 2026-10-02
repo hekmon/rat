@@ -52,6 +52,12 @@ type Window struct {
 	// long the command sent last has run, while it still does. The zero Time when nothing was sent
 	// since the window was created.
 	Input time.Time
+	// Hooked tells the bash of the terminal ran rat's prompt hook once at least (see StartServer).
+	// Until it does, no prompt is recorded, nor bracketed paste enforced: bash is still starting,
+	// or its startup files replace PROMPT_COMMAND, which CheckTerminals only checks when called.
+	// It stays true once set: a bash started afterwards in the terminal, or PROMPT_COMMAND
+	// replaced there, goes unnoticed.
+	Hooked bool
 }
 
 // Prompt is a prompt the bash of a terminal displayed, as it recorded it.
@@ -70,17 +76,18 @@ const NoStatus = -1
 // separated by spaces: tmux replaces control characters (such as tabs) by '_' in its output, so
 // the separator has to be printable. The name (validated) and the numbers can not contain it,
 // the prompt, the input and the command are quoted by tmux (q: escapes spaces and special
-// characters with a backslash), and the path comes last so it needs no quoting. The prompt and
-// the input are options a command typed in a terminal can write: they are read leniently.
-const windowFormat = "#{window_name} #{window_activity} #{alternate_on} #{history_size} #{q:" + promptOption +
-	"} #{q:" + inputOption + "} #{q:pane_current_command} #{pane_current_path}"
+// characters with a backslash), and the path comes last so it needs no quoting. The prompt, the
+// input and the hook marker are options a command typed in a terminal can write: they are read
+// leniently, the marker turned into 0 or 1 by tmux (set, and not 0).
+const windowFormat = "#{window_name} #{window_activity} #{alternate_on} #{history_size} #{?#{" + hookedOption +
+	"},1,0} #{q:" + promptOption + "} #{q:" + inputOption + "} #{q:pane_current_command} #{pane_current_path}"
 
 func parseWindow(line string) (w Window, err error) {
-	fields := strings.SplitN(line, " ", 5)
-	if len(fields) != 5 {
+	fields := strings.SplitN(line, " ", 6)
+	if len(fields) != 6 {
 		return w, fmt.Errorf("unexpected window description %q", line)
 	}
-	prompt, rest, ok := cutQuoted(fields[4])
+	prompt, rest, ok := cutQuoted(fields[5])
 	if !ok {
 		return w, fmt.Errorf("unexpected window description %q", line)
 	}
@@ -92,8 +99,8 @@ func parseWindow(line string) (w Window, err error) {
 	if !ok {
 		return w, fmt.Errorf("unexpected window description %q", line)
 	}
-	var numbers [3]int64
-	for i, field := range fields[1:4] {
+	var numbers [4]int64
+	for i, field := range fields[1:5] {
 		if numbers[i], err = strconv.ParseInt(field, 10, 64); err != nil {
 			return w, fmt.Errorf("unexpected window description %q: %w", line, err)
 		}
@@ -107,6 +114,7 @@ func parseWindow(line string) (w Window, err error) {
 		Scrollback: int(numbers[2]),
 		Prompt:     parsePrompt(prompt),
 		Input:      parseInput(input),
+		Hooked:     numbers[3] == 1,
 	}, nil
 }
 

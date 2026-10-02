@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -87,21 +89,27 @@ func TestWaitWindow(t *testing.T) {
 // TestRunningText guards what wait_window tells of a command still running: the time since the
 // last input and the time without output, both from the clock of the machine whatever the call
 // waited, which an agent adding up its waits miscounts; the time waited without an input recorded.
-// bash in the foreground is told as a script or builtin running, or a text on the command line.
+// bash in the foreground is told as a script or builtin running, or a text on the command line. A
+// window whose bash has not run rat's hook is told as such, with the fix of its startup files.
 func TestRunningText(t *testing.T) {
 	now := time.Unix(1790000000, 0)
 	waited := 50 * time.Second
 	quiet := " No output for 5m, which is normal for some commands: read_window shows whether it waits for input."
 	bashRunning := "A bash script or builtin (read) may still be running, or a text may wait on the command line " +
 		"(sent without Enter): read_window shows which."
-	running := tmux.Window{Command: "make", Activity: now.Add(-5 * time.Minute), Input: now.Add(-7 * time.Minute)}
+	running := tmux.Window{Command: "make", Activity: now.Add(-5 * time.Minute), Input: now.Add(-7 * time.Minute), Hooked: true}
 	bash := running
 	bash.Command = "bash"
 	for expected, w := range map[string]tmux.Window{
 		"build: still running, 7m since your last input, make in the foreground." + quiet:                               running,
-		"build: still running after 50s, make in the foreground." + quiet:                                               {Command: "make", Activity: running.Activity},
+		"build: still running after 50s, make in the foreground." + quiet:                                               {Command: "make", Activity: running.Activity, Hooked: true},
 		"build: nothing finished since your last input, 7m ago: bash has shown no prompt since. " + bashRunning + quiet: bash,
-		"build: nothing finished after 50s: bash has shown no prompt since your last input. " + bashRunning + quiet:     {Command: "bash", Activity: running.Activity},
+		"build: nothing finished after 50s: bash has shown no prompt since your last input. " + bashRunning + quiet:     {Command: "bash", Activity: running.Activity, Hooked: true},
+		"build: no prompt recorded in this window yet: its bash has not run rat's prompt hook. Either it is still " +
+			"starting (its startup files running: read_window shows it), or its startup files replace PROMPT_COMMAND: " +
+			"wait_window then can not tell when its commands finish, nor list_windows how they exited, and multi-line " +
+			"text runs line by line. A startup file must add to PROMPT_COMMAND rather than replace it " +
+			`(PROMPT_COMMAND="mine;$PROMPT_COMMAND"): windows created afterwards record their prompts again.`: {Command: "bash"},
 	} {
 		if text := runningText("build", w, waited, now); text != expected {
 			t.Errorf("%+v: expected\n%s\ngot\n%s", w, expected, text)
@@ -209,4 +217,30 @@ func TestRunStopsWaits(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the wait did not return")
 	}
+}
+
+// TestWaitWindowNotHooked guards what agents are told of a window whose startup files changed
+// after ratd checked them, and replace PROMPT_COMMAND: list_windows tells no prompt is recorded,
+// and wait_window why, with the fix, while the windows created before keep recording prompts.
+func TestWaitWindowNotHooked(t *testing.T) {
+	session, controller, _, home := connectTools(t, "test-ratd-nothooked")
+	expectTool(t, session, "list_windows", nil, false)
+	waitPrompt(t, session, controller, tmux.FirstWindow)
+	if err := os.WriteFile(filepath.Join(home, ".bash_profile"), []byte(`PROMPT_COMMAND="history -a"`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expectTool(t, session, "create_window", map[string]any{"name": "w"}, false)
+	// bash started in the new window, and showed its prompt
+	expectTool(t, session, "send_text", map[string]any{"window": "w", "text": "echo ready", "enter": true}, false)
+	eventually(t, "prompt after the command", screenOf(controller, "w", "\nready\n"))
+	text := expectTool(t, session, "list_windows", nil, false,
+		"w: bash in "+home+", active ", ", no prompt recorded yet: bash still starting, or its startup files replace PROMPT_COMMAND")
+	if strings.Contains(strings.Split(text, "\n")[0], "no prompt recorded") {
+		t.Errorf("expected main to record its prompts, got:\n%s", text)
+	}
+	expectTool(t, session, "wait_window", map[string]any{"window": "w", "max_seconds": 1}, false,
+		"w: no prompt recorded in this window yet: its bash has not run rat's prompt hook.",
+		`(PROMPT_COMMAND="mine;$PROMPT_COMMAND")`)
+	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 1}, false,
+		"main: the command finished ")
 }

@@ -81,7 +81,9 @@ func TestReadWindowBudget(t *testing.T) {
 
 	expectTool(t, session, "send_text", map[string]any{"window": "main", "enter": true,
 		"text": `seq 1 20000 | sed 's/$/ padding padding padding/'`}, false)
-	eventually(t, "long output displayed", screenOf(controller, tmux.FirstWindow, "\n20000 padding"))
+	// the line after the last one as well: until bash displays its prompt there, the screen ends
+	// with the last line, without a new line (a capture drops trailing blanks)
+	eventually(t, "long output displayed", screenOf(controller, tmux.FirstWindow, "\n20000 padding padding padding\n"))
 	text := expectTool(t, session, "read_window", map[string]any{"window": "main", "scrollback_rows": 10000}, false,
 		"\n20000 padding padding padding\n")
 	if !strings.HasPrefix(text, cutHeader) || len(text) != defaultReadBudget {

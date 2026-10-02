@@ -38,22 +38,23 @@ func foregroundIs(c *Controller, session, window, command string) func() (bool, 
 }
 
 // TestParseWindow guards the parsing of the window format, whose prompt, input and command are
-// quoted by tmux and whose path comes last unquoted, and the parsing of prompts and inputs: the
-// mark of a prompt being recorded reads as no prompt, and a value rat did not write, which a
-// command typed in a terminal can, as no prompt or no input, rather than failing.
+// quoted by tmux and whose path comes last unquoted, the hook marker, and the parsing of prompts
+// and inputs: the mark of a prompt being recorded reads as no prompt, and a value rat did not
+// write, which a command typed in a terminal can, as no prompt or no input, rather than failing.
 func TestParseWindow(t *testing.T) {
-	w, err := parseWindow(`w 1700000000 1 42 0\ 1790000000 1790000100 my\ prog\|x /tmp/a dir|b`)
+	w, err := parseWindow(`w 1700000000 1 42 1 0\ 1790000000 1790000100 my\ prog\|x /tmp/a dir|b`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	expected := Window{Name: "w", Command: "my prog|x", Path: "/tmp/a dir|b", Activity: time.Unix(1700000000, 0),
 		FullScreen: true, Scrollback: 42, Prompt: Prompt{Time: time.Unix(1790000000, 0), Status: 0},
-		Input: time.Unix(1790000100, 0)}
+		Input: time.Unix(1790000100, 0), Hooked: true}
 	if w != expected {
 		t.Errorf("got %+v, expected %+v", w, expected)
 	}
-	for _, line := range []string{"", "w", "w 1700000000 0 0", "w 1700000000 0 0 1\\ 1790000000 bash",
-		"w 1700000000 0 0  1790000100 bash", "w notanumber 0 0   bash /tmp", "w 1700000000 0 x   bash /tmp"} {
+	for _, line := range []string{"", "w", "w 1700000000 0 0 0", "w 1700000000 0 0 0 1\\ 1790000000 bash",
+		"w 1700000000 0 0 0  1790000100 bash", "w notanumber 0 0 0   bash /tmp", "w 1700000000 0 x 0   bash /tmp",
+		"w 1700000000 0 0 x   bash /tmp"} {
 		if _, err := parseWindow(line); err == nil {
 			t.Errorf("%q: expected an error", line)
 		}
@@ -66,7 +67,7 @@ func TestParseWindow(t *testing.T) {
 		`-5`:            {},
 		`1790000100\ 2`: {},
 	} {
-		w, err := parseWindow("w 1700000000 0 0  " + value + " bash /tmp")
+		w, err := parseWindow("w 1700000000 0 0 0  " + value + " bash /tmp")
 		if err != nil || !w.Input.Equal(expected) {
 			t.Errorf("input %q: expected %v, got %v, %v", value, expected, w.Input, err)
 		}
@@ -83,7 +84,7 @@ func TestParseWindow(t *testing.T) {
 		// a prompt being recorded
 		promptMark + `\ 123.4`: {},
 	} {
-		w, err := parseWindow("w 1700000000 0 0 " + value + "  bash /tmp")
+		w, err := parseWindow("w 1700000000 0 0 0 " + value + "  bash /tmp")
 		if err != nil || w.Prompt != expected {
 			t.Errorf("prompt %q: expected %+v, got %+v, %v", value, expected, w.Prompt, err)
 		}
@@ -135,6 +136,38 @@ func TestPrompt(t *testing.T) {
 	}
 	if w, err := c.Window(ctx, "s", FirstWindow); err != nil || w.Prompt != (Prompt{}) {
 		t.Errorf("expected no prompt from a value rat did not write, got %+v, %v", w.Prompt, err)
+	}
+}
+
+// TestHooked guards that a window tells whether rat's hook ran in it: once its bash showed a
+// prompt, unless its startup files replace PROMPT_COMMAND, here in a window created after they
+// changed, while the windows created before stay hooked.
+func TestHooked(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	c := startTestServer(t, "hooked")
+	ctx := context.Background()
+	if err := c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "first prompt", promptIs(c, "s", FirstWindow, NoStatus))
+	if w, err := c.Window(ctx, "s", FirstWindow); err != nil || !w.Hooked {
+		t.Fatalf("expected a hooked window, got %+v, %v", w, err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".bash_profile"), []byte(`PROMPT_COMMAND="history -a"`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.NewWindow(ctx, "s", "w"); err != nil {
+		t.Fatal(err)
+	}
+	// a prompt displayed after the output of a command: bash started, and showed its prompts
+	typeCommand(t, c, "s", "w", "echo ready")
+	eventually(t, "prompt after the command", screenContains(c, "s", "w", "\nready\n"))
+	if w, err := c.Window(ctx, "s", "w"); err != nil || w.Hooked || !w.Prompt.Time.IsZero() {
+		t.Errorf("expected a window neither hooked nor recording prompts, got %+v, %v", w, err)
+	}
+	if w, err := c.Window(ctx, "s", FirstWindow); err != nil || !w.Hooked {
+		t.Errorf("expected the window created before to stay hooked, got %+v, %v", w, err)
 	}
 }
 

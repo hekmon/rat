@@ -260,7 +260,7 @@ Terminals inherit rat's environment, plus variables enforced at `StartServer`:
   rat started in a terminal of another tmux inherits a `TMUX_PANE`, naming a pane of rat's server
   as well, measured). It runs bash directly: tmux 3.3 does not return the output of `run-shell`
   to the client asking for it. It is a snapshot: a startup file changed afterwards goes unnoticed
-  until the next check.
+  until the next check, but for the windows created since, which tell it (see Hooked windows).
 
 `TMUX` is kept, on purpose. tmux sets it in every terminal (it can not be removed with
 `set-environment`, only by the command starting the terminal), and a `tmux` command typed in a
@@ -650,12 +650,32 @@ still runs. Whether it finished is not read from it, the prompt tells by itself:
 caller a time from the clock of the machine, where an agent adding up its waits miscounts them
 (see `wait_window` in the README of ratd).
 
+### Hooked windows
+
+`CheckTerminals` is a snapshot (see Terminal environment): a startup file assigning
+`PROMPT_COMMAND` afterwards (an agent running an installer editing `.bashrc`) goes unnoticed, and
+the windows created from then on record no prompt, nor get bracketed paste. So the hook also sets
+the pane option `@rat_hooked` at each prompt, in the tmux command setting the mark, without a
+client of its own, and nothing clears it. The window description reads it (`Window.Hooked`):
+without it, bash is still starting, or its startup files replace `PROMPT_COMMAND`. The two can not
+be told apart, the first prompt of a bash coming once its startup files ran, however long they
+take: the caller tells both. The windows created before the change keep their bash, which read
+the startup files before it, and stay hooked.
+
+Limit: once set, it stays. A bash started in the terminal with other startup files, or
+`PROMPT_COMMAND` replaced by a command typed in the terminal, goes unnoticed.
+
+Rejected: running `CheckTerminals` again at each window creation, which adds a bash running its
+startup files (up to the timeout of the check) to each, and misses the windows tmux creates by
+itself (the first of a session).
+
 ### Reading it
 
-Both options are read with the window description, quoted (`#{q:@rat_prompt}`,
-`#{q:@rat_input}`). The mark of a prompt being recorded reads as no prompt. A command typed in a
-terminal can write them, `TMUX` being kept: a value rat did not write reads as no prompt or no
-input, never as an error failing the description.
+The options are read with the window description: the prompt and the input quoted
+(`#{q:@rat_prompt}`, `#{q:@rat_input}`), the hook marker as 0 or 1 (`#{?#{@rat_hooked},1,0}`).
+The mark of a prompt being recorded reads as no prompt. A command typed in a terminal can write
+them, `TMUX` being kept: a value rat did not write reads as no prompt or no input, never as an
+error failing the description.
 
 Rejected:
 

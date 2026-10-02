@@ -28,8 +28,9 @@
 // [Controller.Window] describe them as tmux currently sees them: foreground command, working
 // directory, last activity, full-screen program, size of the scrollback, the last prompt of their
 // bash, with the exit status of the command before it ([Prompt]), which bash records in tmux
-// itself, and the time of the last input, which inputs record there too. Nothing is cached: tmux
-// is the single source of truth.
+// itself, the time of the last input, which inputs record there too, and whether their bash ran
+// the hook recording prompts ([Window].Hooked), which startup files changed since
+// [Controller.CheckTerminals] can prevent. Nothing is cached: tmux is the single source of truth.
 //
 // # Input and capture
 //
