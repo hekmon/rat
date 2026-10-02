@@ -14,12 +14,13 @@ import (
 )
 
 // TestWaitWindow guards wait_window: it returns as soon as the command sent last finished, telling
-// how it exited, or after the seconds asked, telling what still runs, with a calm hint when nothing
-// was displayed for a while; a command sent while another runs is the one waited for, even run by
-// bash, which shows as bash in the foreground; bash in the foreground with no prompt since the last
-// input, a bash script running or a text left on the command line, is not taken for a command
-// finished, and the hint tells both; the seconds asked are bounded. A command run in the
-// background is seen as finished at once, as the instructions and the description tell agents.
+// how it exited, or after the seconds asked, telling what still runs and since the last input, with
+// a calm hint when nothing was displayed for a while; a command sent while another runs is the one
+// waited for, even run by bash, which shows as bash in the foreground; bash in the foreground with
+// no prompt since the last input, a bash script running or a text left on the command line, is not
+// taken for a command finished, and the hint tells both; the seconds asked are bounded. A command
+// run in the background is seen as finished at once, as the instructions and the description tell
+// agents.
 func TestWaitWindow(t *testing.T) {
 	hint := quietHint
 	quietHint = 0
@@ -39,8 +40,10 @@ func TestWaitWindow(t *testing.T) {
 	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 10}, false,
 		"main: the command finished ", " ago, exit status 3.")
 	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": "sleep 30", "enter": true}, false)
+	// the time since the input, recorded by tmux: a second or two
 	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 1}, false,
-		"main: still running after 1s, sleep in the foreground. No output for ", "read_window shows whether it waits for input.")
+		"main: still running, ", "s since your last input, sleep in the foreground. No output for ",
+		"read_window shows whether it waits for input.")
 	expectTool(t, session, "send_keys", map[string]any{"window": "main", "keys": []string{"C-c"}}, false)
 	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 5}, false, "exit status 130.")
 	// the job outlasts the wait: what finished is starting it
@@ -49,15 +52,15 @@ func TestWaitWindow(t *testing.T) {
 		"main: the command finished ", " ago, exit status 0.")
 	// bash in the foreground, with no prompt since the input: a script running, or a text left on
 	// the command line
-	bashRunning := "main: nothing finished after 1s: bash has shown no prompt since your last input. A bash script " +
-		"or builtin (read) may still be running, or a text may wait on the command line (sent without Enter): " +
-		"read_window shows which."
+	bashRunning := []string{"main: nothing finished since your last input, ", "s ago: bash has shown no prompt since. " +
+		"A bash script or builtin (read) may still be running, or a text may wait on the command line (sent without " +
+		"Enter): read_window shows which."}
 	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": "bash -c 'sleep 30; true'", "enter": true}, false)
-	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 1}, false, bashRunning)
+	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 1}, false, bashRunning...)
 	expectTool(t, session, "send_keys", map[string]any{"window": "main", "keys": []string{"C-c"}}, false)
 	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 5}, false, "exit status 130.")
 	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": "echo pending", "enter": false}, false)
-	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 1}, false, bashRunning)
+	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 1}, false, bashRunning...)
 	expectTool(t, session, "wait_window", map[string]any{"window": "nope", "max_seconds": 1}, true, "No window nope")
 	for _, seconds := range []int{0, tools.MaxWaitSeconds + 1} {
 		if text, isError := callTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": seconds}); !isError {
@@ -67,6 +70,31 @@ func TestWaitWindow(t *testing.T) {
 	if out := logs.String(); !strings.Contains(out, "tool=wait_window window=main outcome=ok") ||
 		!strings.Contains(out, "max_seconds=1") || !strings.Contains(out, "finished=false") {
 		t.Errorf("expected the waits to be logged:\n%s", out)
+	}
+}
+
+// TestRunningText guards what wait_window tells of a command still running: the time since the
+// last input and the time without output, both from the clock of the machine whatever the call
+// waited, which an agent adding up its waits miscounts; the time waited without an input recorded.
+// bash in the foreground is told as a script or builtin running, or a text on the command line.
+func TestRunningText(t *testing.T) {
+	now := time.Unix(1790000000, 0)
+	waited := 50 * time.Second
+	quiet := " No output for 5m, which is normal for some commands: read_window shows whether it waits for input."
+	bashRunning := "A bash script or builtin (read) may still be running, or a text may wait on the command line " +
+		"(sent without Enter): read_window shows which."
+	running := tmux.Window{Command: "make", Activity: now.Add(-5 * time.Minute), Input: now.Add(-7 * time.Minute)}
+	bash := running
+	bash.Command = "bash"
+	for expected, w := range map[string]tmux.Window{
+		"build: still running, 7m since your last input, make in the foreground." + quiet:                               running,
+		"build: still running after 50s, make in the foreground." + quiet:                                               {Command: "make", Activity: running.Activity},
+		"build: nothing finished since your last input, 7m ago: bash has shown no prompt since. " + bashRunning + quiet: bash,
+		"build: nothing finished after 50s: bash has shown no prompt since your last input. " + bashRunning + quiet:     {Command: "bash", Activity: running.Activity},
+	} {
+		if text := runningText("build", w, waited, now); text != expected {
+			t.Errorf("%+v: expected\n%s\ngot\n%s", w, expected, text)
+		}
 	}
 }
 

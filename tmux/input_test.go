@@ -517,6 +517,40 @@ func TestInputClearsPrompt(t *testing.T) {
 	noPrompt("key on the command line")
 }
 
+// TestInputRecorded guards that each input records its time, which the window description reads:
+// none before the first input of a window, then the time of the text sent, then of the keys
+// pressed, to the second.
+func TestInputRecorded(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	c := startTestServer(t, "inputrecorded")
+	ctx := context.Background()
+	if err := c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	if w, err := c.Window(ctx, "s", FirstWindow); err != nil || !w.Input.IsZero() {
+		t.Errorf("expected no input recorded in a new window, got %v, %v", w.Input, err)
+	}
+	recordedSince := func(what string, before time.Time) {
+		t.Helper()
+		w, err := c.Window(ctx, "s", FirstWindow)
+		if err != nil || w.Input.Before(before.Truncate(time.Second)) || w.Input.After(time.Now()) {
+			t.Errorf("%s: expected an input recorded since %v, got %v, %v", what, before, w.Input, err)
+		}
+	}
+	before := time.Now()
+	if err := c.SendText(ctx, "s", FirstWindow, "sleep 30", true); err != nil {
+		t.Fatal(err)
+	}
+	recordedSince("text", before)
+	// the keys come a second later: the time of the text would not do
+	time.Sleep(1100 * time.Millisecond)
+	before = time.Now()
+	if err := c.SendKeys(ctx, "s", FirstWindow, "C-c"); err != nil {
+		t.Fatal(err)
+	}
+	recordedSince("keys", before)
+}
+
 // TestPendingInputPrompt guards that bash records no prompt while a line waits on the terminal:
 // text sent with Enter before bash shows its first prompt, or while a command runs, runs right
 // after that prompt, and the prompt recorded next is the one after the text, with its status. Not

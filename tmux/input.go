@@ -33,7 +33,8 @@ var keyFormat = regexp.MustCompile(`^(?:[CMS]-)*(?:[!-~]|Enter|Escape|Tab|BTab|B
 // pasted while bash was starting or running a command. It has no size limit, and reaches the
 // terminal whole: no other input can interleave with it. A tmux mode a human left the window in
 // (copy mode, to scroll back) is left first: in a mode, tmux would paste the text unmarked.
-// Sending something clears the prompt recorded until then (see Window.Prompt).
+// Sending something clears the prompt recorded until then (see Window.Prompt), and records its time
+// (see Window.Input).
 // The error wraps ErrSessionNotFound or ErrWindowNotFound if they do not exist.
 //
 // A paste is all or nothing: a command ended by its context while the text streams to tmux pastes
@@ -73,6 +74,8 @@ func (c *Controller) sendText(ctx context.Context, session, window string, text 
 	if text != nil || enter {
 		args = append(args, ";")
 		args = append(args, clearPrompt(tg)...)
+		args = append(args, ";")
+		args = append(args, recordInput(tg, time.Now())...)
 	}
 	if text != nil {
 		// paste the buffer into the window, where:
@@ -112,7 +115,7 @@ func CheckKey(key string) error {
 // "C-c", "Escape", "Up" or "F5"; the error wraps ErrInvalidKey for an unknown one, and nothing
 // is sent. A tmux mode a human left the window in (copy mode, to scroll back) is left first: in a
 // mode, tmux would take the keys for itself, or drop them. Pressing keys clears the prompt
-// recorded until then (see Window.Prompt).
+// recorded until then (see Window.Prompt), and records their time (see Window.Input).
 // The error wraps ErrSessionNotFound or ErrWindowNotFound if they do not exist.
 func (c *Controller) SendKeys(ctx context.Context, session, window string, keys ...string) error {
 	if err := checkNames(session, window); err != nil {
@@ -126,6 +129,8 @@ func (c *Controller) SendKeys(ctx context.Context, session, window string, keys 
 	tg := target(session, window)
 	args := append(leaveModes(tg), ";")
 	args = append(args, clearPrompt(tg)...)
+	args = append(args, ";")
+	args = append(args, recordInput(tg, time.Now())...)
 	args = append(args, ";", "send-keys", "-t", tg, "--")
 	for _, key := range keys {
 		args = append(args, tmuxArg(key))
@@ -154,6 +159,13 @@ func leaveModes(target string) []string {
 // input.
 func clearPrompt(target string) []string {
 	return []string{"set-option", "-pu", "-t", target, promptOption}
+}
+
+// recordInput returns the tmux command recording now as the time of an input on the window target
+// (see Window.Input), to chain in an input invocation. tmux formats have no clock: the time is
+// rat's, which runs on the machine of tmux.
+func recordInput(target string, now time.Time) []string {
+	return []string{"set-option", "-p", "-t", target, inputOption, strconv.FormatInt(now.Unix(), 10)}
 }
 
 // TerminalsCheck is what the bash of terminals ends up with at its prompt, once its startup files

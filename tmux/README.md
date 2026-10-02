@@ -607,11 +607,21 @@ Limits, where the prompt recorded is not the one of the command sent:
   after its first line is recorded while the next ones run.
 - Input typed by a human attached to the terminal does not go through rat: it clears nothing.
 
+### Inputs record their time
+
+Each input also records its time on the pane option `@rat_input`, in the same invocation, in
+seconds: tmux formats have no clock, so the time is rat's, which runs on the machine of tmux. The
+window description reads it (`Window.Input`): how long the command sent last has run, while it
+still runs. Whether it finished is not read from it, the prompt tells by itself: it gives the
+caller a time from the clock of the machine, where an agent adding up its waits miscounts them
+(see `wait_window` in the README of ratd).
+
 ### Reading it
 
-The option is read with the window description, quoted (`#{q:@rat_prompt}`). The mark of a prompt
-being recorded reads as no prompt. A command typed in a terminal can write it, `TMUX` being kept:
-a value rat did not write reads as no prompt as well, never as an error failing the description.
+Both options are read with the window description, quoted (`#{q:@rat_prompt}`,
+`#{q:@rat_input}`). The mark of a prompt being recorded reads as no prompt. A command typed in a
+terminal can write them, `TMUX` being kept: a value rat did not write reads as no prompt or no
+input, never as an error failing the description.
 
 Rejected:
 

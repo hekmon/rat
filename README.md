@@ -69,7 +69,7 @@ terminals are on another machine, and sending a command does not wait for it.
 | `send_text` | `window`, `text`, `enter` | Pastes text as a human pastes, then presses Enter if `enter` is true (required: the agent decides each time whether the text runs). |
 | `send_keys` | `window`, `keys` | Presses keys by name, in order: `C-c`, `Escape`, `Up`, `Tab`… |
 | `read_window` | `window`, `scrollback_rows` (optional, 0) | Returns what the window displays: its screen (200 columns, 24 rows), with rows of history above it on demand. |
-| `wait_window` | `window`, `max_seconds` (optional, 20, 50 at most) | Waits until the command sent last finished, then tells how it exited, or what still runs once `max_seconds` passed. |
+| `wait_window` | `window`, `max_seconds` (optional, 20, 50 at most) | Waits until the command sent last finished, then tells how it exited, or what still runs and since when once `max_seconds` passed. |
 
 **Files**, copied to and from the machine of ratd, as its user:
 

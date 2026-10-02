@@ -35,9 +35,9 @@ const noPromptsText = "rat can not tell when a command finishes on this machine:
 func (d *daemon) addWaitTool(server *mcp.Server, session string) {
 	description := fmt.Sprintf("Wait until the command sent last to a window finished: bash is back at its "+
 		"prompt. Returns as soon as it is, or after max_seconds (%d by default, %d at most), in one line: how the "+
-		"command exited, or what still runs. Call it again to keep waiting, read_window to see the screen. Not "+
-		"seen as finished: a program waiting for input (y/n, a password), and what runs within ssh or an "+
-		"interpreter. Seen as finished at once: a command run in the background (&, nohup).",
+		"command exited, or what still runs and since when. Call it again to keep waiting, read_window to see the "+
+		"screen. Not seen as finished: a program waiting for input (y/n, a password), and what runs within ssh or "+
+		"an interpreter. Seen as finished at once: a command run in the background (&, nohup).",
 		tools.DefaultWaitSeconds, tools.MaxWaitSeconds)
 	if !d.terminals.Prompts {
 		description = "Wait until the command sent last to a window finished. Unavailable: " + noPromptsText
@@ -147,18 +147,30 @@ func (d *daemon) finishedText(window string, w tmux.Window, now time.Time) strin
 	}
 }
 
-// runningText tells that the command sent last to window w is still running after waited,
-// relatively to now: what runs in the foreground, and when nothing was displayed for quietHint,
-// that it is normal, or that it may wait for input, which the screen shows. Calm on purpose: an
-// agent told its command looks stuck interrupts it. bash in the foreground, with no prompt since
-// the input, is a bash script or builtin running as well as a text left on the command line (see
+// runningText tells that the command sent last to window w is still running, relatively to now:
+// since when, what runs in the foreground, and when nothing was displayed for quietHint, that it
+// is normal, or that it may wait for input, which the screen shows. Calm on purpose: an agent told
+// its command looks stuck interrupts it. bash in the foreground, with no prompt since the input,
+// is a bash script or builtin running as well as a text left on the command line (see
 // tmux.Window.Command): both are told, the screen telling which.
+// The time is the one since the last input, as the time without output, both from the clock of
+// the machine, rather than the time waited by this call: an agent adding up its waits miscounts
+// them, waiting on a window several times at once, and then takes the time without output for
+// running slow. Without an input recorded (none sent since the window was created), the time is
+// the one waited.
 func runningText(window string, w tmux.Window, waited time.Duration, now time.Time) string {
-	text := fmt.Sprintf("%s: still running after %s, %s in the foreground.", window, sinceText(waited), w.Command)
+	running, finished := "still running after "+sinceText(waited), "nothing finished after "+sinceText(waited)
+	noPromptSince := "since your last input"
+	if !w.Input.IsZero() {
+		since := sinceText(now.Sub(w.Input))
+		running = fmt.Sprintf("still running, %s since your last input", since)
+		finished, noPromptSince = fmt.Sprintf("nothing finished since your last input, %s ago", since), "since"
+	}
+	text := fmt.Sprintf("%s: %s, %s in the foreground.", window, running, w.Command)
 	if w.Command == "bash" {
-		text = fmt.Sprintf("%s: nothing finished after %s: bash has shown no prompt since your last input. A bash "+
-			"script or builtin (read) may still be running, or a text may wait on the command line (sent without "+
-			"Enter): read_window shows which.", window, sinceText(waited))
+		text = fmt.Sprintf("%s: %s: bash has shown no prompt %s. A bash script or builtin (read) may still be "+
+			"running, or a text may wait on the command line (sent without Enter): read_window shows which.", window,
+			finished, noPromptSince)
 	}
 	if quiet := now.Sub(w.Activity); quiet >= quietHint {
 		text += fmt.Sprintf(" No output for %s, which is normal for some commands: read_window shows whether it "+

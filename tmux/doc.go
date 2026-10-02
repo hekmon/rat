@@ -26,9 +26,10 @@
 // them back. Tenant, session and window names are plain names: package tmux/names holds the
 // rule, for callers to check a name without tmux. [Controller.ListWindows] and
 // [Controller.Window] describe them as tmux currently sees them: foreground command, working
-// directory, last activity, full-screen program, size of the scrollback, and the last prompt of
-// their bash, with the exit status of the command before it ([Prompt]), which bash records in
-// tmux itself. Nothing is cached: tmux is the single source of truth.
+// directory, last activity, full-screen program, size of the scrollback, the last prompt of their
+// bash, with the exit status of the command before it ([Prompt]), which bash records in tmux
+// itself, and the time of the last input, which inputs record there too. Nothing is cached: tmux
+// is the single source of truth.
 //
 // # Input and capture
 //

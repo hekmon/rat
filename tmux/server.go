@@ -139,6 +139,10 @@ const promptOption = "@rat_prompt"
 // reads as no prompt.
 const promptMark = "recording"
 
+// inputOption is the pane option where inputs record their time (see recordInput), which Window
+// reads: a user option, tmux has no use for it.
+const inputOption = "@rat_input"
+
 // promptCommand returns the PROMPT_COMMAND of terminals, run by bash before each prompt, after its
 // startup files, and reaching the server with the tmux at tmuxPath. In order, it:
 //   - reads the exit status of the last command: anything run before would change it;

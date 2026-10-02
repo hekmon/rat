@@ -48,6 +48,10 @@ type Window struct {
 	// recorded is the one after the text. With bash 4.4 and 5.0, the lines of a text run at once
 	// each get a prompt, recorded while the next ones run.
 	Prompt Prompt
+	// Input is when the last input reached the terminal (SendText, SendKeys), to the second: how
+	// long the command sent last has run, while it still does. The zero Time when nothing was sent
+	// since the window was created.
+	Input time.Time
 }
 
 // Prompt is a prompt the bash of a terminal displayed, as it recorded it.
@@ -65,10 +69,11 @@ const NoStatus = -1
 // windowFormat is the tmux format describing a window, parsed by parseWindow. Fields are
 // separated by spaces: tmux replaces control characters (such as tabs) by '_' in its output, so
 // the separator has to be printable. The name (validated) and the numbers can not contain it,
-// the prompt and the command are quoted by tmux (q: escapes spaces and special characters with a
-// backslash), and the path comes last so it needs no quoting.
+// the prompt, the input and the command are quoted by tmux (q: escapes spaces and special
+// characters with a backslash), and the path comes last so it needs no quoting. The prompt and
+// the input are options a command typed in a terminal can write: they are read leniently.
 const windowFormat = "#{window_name} #{window_activity} #{alternate_on} #{history_size} #{q:" + promptOption +
-	"} #{q:pane_current_command} #{pane_current_path}"
+	"} #{q:" + inputOption + "} #{q:pane_current_command} #{pane_current_path}"
 
 func parseWindow(line string) (w Window, err error) {
 	fields := strings.SplitN(line, " ", 5)
@@ -76,6 +81,10 @@ func parseWindow(line string) (w Window, err error) {
 		return w, fmt.Errorf("unexpected window description %q", line)
 	}
 	prompt, rest, ok := cutQuoted(fields[4])
+	if !ok {
+		return w, fmt.Errorf("unexpected window description %q", line)
+	}
+	input, rest, ok := cutQuoted(rest)
 	if !ok {
 		return w, fmt.Errorf("unexpected window description %q", line)
 	}
@@ -97,7 +106,19 @@ func parseWindow(line string) (w Window, err error) {
 		FullScreen: numbers[1] == 1,
 		Scrollback: int(numbers[2]),
 		Prompt:     parsePrompt(prompt),
+		Input:      parseInput(input),
 	}, nil
+}
+
+// parseInput returns the time of the input recorded as value (see recordInput), or the zero Time
+// for anything else: a value rat did not write, which a command typed in a terminal can, must not
+// fail the description of the window.
+func parseInput(value string) time.Time {
+	seconds, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || seconds <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(seconds, 0)
 }
 
 // parsePrompt returns the prompt recorded as value (see promptCommand), or the zero Prompt for

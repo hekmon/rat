@@ -238,16 +238,22 @@ once.
 
 - **`wait_window`** `{window, max_seconds}`: waits until the command sent last to the window
   finished, then tells how it exited (`build: the command finished 3s ago, exit status 1.`), or,
-  after `max_seconds` (20 by default, from 1 to 50, bounded by the schema), what still runs
-  (`build: still running after 20s, make in the foreground.`). Finished means the window recorded a
-  prompt since the last input, with bash in the foreground. A text sent while a command ran is
-  waited for: bash records no prompt while a line waits to run. bash 4.4 and 5.0 record a prompt
-  after each line of a text run at once, while the next ones run: the foreground command tells,
-  unless bash runs them (see Prompts in `tmux/README.md`). It asks tmux every
-  quarter of a second rather than being told: ratd keeps no state, and faster would only load
-  tmux, the refresh of terminal UIs (about 100 ms) being for human eyes. Answers are one line,
-  never the screen: waiting 50 seconds at a time for a twenty minute build costs 24 lines, where
-  reading the screen each time would cost 24 screens. Two hints, worded calmly, as an agent
+  after `max_seconds` (20 by default, from 1 to 50, bounded by the schema), what still runs, and
+  since when (`build: still running, 3m since your last input, make in the foreground.`). Finished
+  means the window recorded a prompt since the last input, with bash in the foreground. A text
+  sent while a command ran is waited for: bash records no prompt while a line waits to run. bash
+  4.4 and 5.0 record a prompt after each line of a text run at once, while the next ones run: the
+  foreground command tells, unless bash runs them (see Prompts in `tmux/README.md`). It asks tmux
+  every quarter of a second rather than being told: ratd keeps no state, and faster would only
+  load tmux, the refresh of terminal UIs (about 100 ms) being for human eyes. Answers are one
+  line, never the screen: waiting 50 seconds at a time for a twenty minute build costs 24 lines,
+  where reading the screen each time would cost 24 screens. The time told is the one since the
+  last input, which tmux records with each input, as is the time without output: both from the
+  clock of the machine, rather than the time this call waited. An agent adding up its waits
+  miscounts them: one waited on a window three or four times at once (seen in ratd's logs), each
+  wait telling 50 seconds when all of them took 50, and found the time without output running
+  slow. Without an input recorded (none since the window was created), the time told is the one
+  waited. Two hints, worded calmly, as an agent
   told its command looks stuck interrupts it: when nothing was displayed for ten seconds, that it
   is normal for some commands, and that `read_window` shows whether it waits for input; when bash
   is in the foreground with no prompt since the last input, that a bash script or builtin may
