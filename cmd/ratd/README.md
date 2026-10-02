@@ -253,20 +253,21 @@ once.
   miscounts them: one waited on a window three or four times at once (seen in ratd's logs), each
   wait telling 50 seconds when all of them took 50, and found the time without output running
   slow. Without an input recorded (none since the window was created), the time told is the one
-  waited. Two hints, worded calmly, as an agent
-  told its command looks stuck interrupts it: when nothing was displayed for ten seconds, that it
-  is normal for some commands, and that `read_window` shows whether it waits for input; when bash
-  is in the foreground with no prompt since the last input, that a bash script or builtin may
-  still be running, or a text wait on the command line (sent without Enter), `read_window` telling
-  which: a script shows as bash. Not seen as finished, which the description tells:
-  a program waiting for input, and what runs within ssh or an interpreter, which show no prompt of
-  rat's bash. Seen as finished at once, which it tells too: a command run in the background, bash
-  showing its prompt as soon as it started it. The exit status is told where the terminals record
-  it right (see Startup). Where they record no prompt, the tool is offered all the same, its
-  description and its answer telling why it can not wait, and what to use instead: the same tools
-  everywhere, and an agent told why rather than left wondering where a tool went. A missing
-  session is created, as by the other tools: waiting on `main` then waits for its first prompt. It
-  returns at once when ratd stops (see Shutdown).
+  waited. The description tells how to wait longer, which those waits at once were for: call it
+  again once it returns, several calls at once on a window waiting together, no longer than one.
+  Two hints, worded calmly, as an agent told its command looks stuck interrupts it: when nothing
+  was displayed for ten seconds, that it is normal for some commands, and that `read_window` shows
+  whether it waits for input; when bash is in the foreground with no prompt since the last input,
+  that a bash script or builtin may still be running, or a text wait on the command line (sent
+  without Enter), `read_window` telling which: a script shows as bash. Not seen as finished, which
+  the description tells: a program waiting for input, and what runs within ssh or an interpreter,
+  which show no prompt of rat's bash. Seen as finished at once, which it tells too: a command run
+  in the background, bash showing its prompt as soon as it started it. The exit status is told
+  where the terminals record it right (see Startup). Where they record no prompt, the tool is
+  offered all the same, its description and its answer telling why it can not wait, and what to
+  use instead: the same tools everywhere, and an agent told why rather than left wondering where a
+  tool went. A missing session is created, as by the other tools: waiting on `main` then waits for
+  its first prompt. It returns at once when ratd stops (see Shutdown).
 
   50 seconds at most: a harness cuts a tool call at a limit of its own, which ratd can not see,
   nor push back without a stream to send progress on. That limit is 60 seconds by default for

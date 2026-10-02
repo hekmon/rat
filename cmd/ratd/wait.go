@@ -35,9 +35,10 @@ const noPromptsText = "rat can not tell when a command finishes on this machine:
 func (d *daemon) addWaitTool(server *mcp.Server, session string) {
 	description := fmt.Sprintf("Wait until the command sent last to a window finished: bash is back at its "+
 		"prompt. Returns as soon as it is, or after max_seconds (%d by default, %d at most), in one line: how the "+
-		"command exited, or what still runs and since when. Call it again to keep waiting, read_window to see the "+
-		"screen. Not seen as finished: a program waiting for input (y/n, a password), and what runs within ssh or "+
-		"an interpreter. Seen as finished at once: a command run in the background (&, nohup).",
+		"command exited, or what still runs and since when. To wait longer, call it again once it returns: several "+
+		"calls at once on a window wait together, no longer than one. read_window shows the screen. Not seen as "+
+		"finished: a program waiting for input (y/n, a password), and what runs within ssh or an interpreter. Seen "+
+		"as finished at once: a command run in the background (&, nohup).",
 		tools.DefaultWaitSeconds, tools.MaxWaitSeconds)
 	if !d.terminals.Prompts {
 		description = "Wait until the command sent last to a window finished. Unavailable: " + noPromptsText

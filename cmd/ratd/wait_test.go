@@ -20,12 +20,23 @@ import (
 // no prompt since the last input, a bash script running or a text left on the command line, is not
 // taken for a command finished, and the hint tells both; the seconds asked are bounded. A command
 // run in the background is seen as finished at once, as the instructions and the description tell
-// agents.
+// agents. The description tells how to wait longer: several calls at once on a window wait
+// together, where an agent wanting to wait longer counted them one after the other.
 func TestWaitWindow(t *testing.T) {
 	hint := quietHint
 	quietHint = 0
 	t.Cleanup(func() { quietHint = hint })
 	session, _, logs, _ := connectTools(t, "test-ratd-wait")
+	list, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range list.Tools {
+		if tool.Name == "wait_window" && !strings.Contains(tool.Description, "To wait longer, call it again once it "+
+			"returns: several calls at once on a window wait together, no longer than one.") {
+			t.Errorf("expected wait_window to tell how to wait longer, got %q", tool.Description)
+		}
+	}
 	expectTool(t, session, "wait_window", map[string]any{"window": "main"}, false, "main: bash is at its prompt, waiting for input.")
 	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": "sleep 1; false", "enter": true}, false)
 	start := time.Now()
