@@ -664,6 +664,16 @@ logs are kept and who reads them is the operator's call (journald, log shipping)
 option to leave the address out. An operator who must not keep it can filter it out of the logs,
 one who needs it could not get it back once left out.
 
+Not provided: the content of inputs, even as an option (`--log-input`). The trail it would give
+is partial: only what is typed in terminals, not what `write_file` writes (a script then run by
+one line), nor what scripts, detached commands and cron jobs run, which never go through ratd,
+and a text cut to fit a log line loses the long heredocs an inquiry needs. It would also put the
+secrets agents type (passwords at a `sudo` prompt, tokens) in logs readable by whoever reads the
+journal, and wherever logs are shipped. The trail is elsewhere, whole: the logs of ratd tell who
+called, from where, when, which tool on which window; the transcripts of harnesses hold every
+call with its arguments and its result; the audit of the system (`auditd`) records every process
+the user of ratd runs, with its arguments, whatever started it (see Security in the README).
+
 At debug level, one line per MCP request (the session, the address, the method, the duration),
 whatever the protocol version: clients initialize, or discover the server from protocol 2026-07-28
 on (the Go SDK does). The SDK logs every stateless request at info level (a session connecting,

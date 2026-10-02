@@ -431,6 +431,19 @@ leaves the rest to how you deploy it:
   between its windows with `C-b n`, `C-b p`, `C-b l` and `C-b 0` to `C-b 9`; read-only refuses
   the window list (`C-b w`), and scrolling back (`C-b [`) before tmux 3.7. The terminals are the
   agents': what you type would reach them, and a window you resize stays so.
+- **Keep a trail.** The logs of ratd tell who called, from where, when, which tool on which
+  window, never what was typed or read (see Logs in `cmd/ratd/README.md`): the transcripts of the
+  harnesses hold that. The audit of the system records every process the user runs, with its
+  arguments, whatever started it (scripts and detached commands included), out of the reach of
+  agents. With `auditd`, in `/etc/audit/rules.d/rat.rules`:
+
+  ```
+  -a always,exit -F arch=b64 -S execve -F uid=rat -k rat
+  -a always,exit -F arch=b32 -S execve -F uid=rat -k rat
+  ```
+
+  Then `ausearch -k rat -i` lists them. A command run through `sudo` runs as root: sudo logs it
+  itself.
 - **What outlives the service.** Stopping the service stops the terminals and whatever agents
   started, detached or not (with systemd; on macOS, end what is left with `pkill -u rat`, see
   Deployment). What an agent set up to outlive it, as the user (crontab, user services,
@@ -449,7 +462,8 @@ it off), each line of a pasted text then runs as soon as it is pasted. It also r
 RAT when a command finished, and how: so does one running a command before RAT's that changes the
 exit status (starship does, `history -a` added in front does), for the status only. RAT checks
 what the bash prompt ends up with when it starts, warns, and only tells agents what holds, but
-does not refuse to run. A startup file changed while RAT runs is only checked at its next start.
+does not refuse to run. A startup file changed while RAT runs is only checked at its next start:
+meanwhile, the windows created since tell agents they record no prompt, and why.
 
 With a user for RAT alone (see Deployment), these startup files are RAT's: leave them as the
 account was created. What makes a shell pleasant to a human has no use for agents, and gets in
