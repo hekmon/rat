@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/hekmon/rat/cmd/ratd/tools"
@@ -20,13 +21,13 @@ const keyNames = "a printable character, Space, Enter, Tab, BTab, BSpace, Escape
 
 // addInputTools adds the tools sending input to the windows of session. What runs in a terminal can
 // reach anything: an open world.
-func (d *daemon) addInputTools(server *mcp.Server, session string) {
+func (d *daemon) addInputTools(server *mcp.Server, session string, logger *slog.Logger) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        tools.SendText,
 		InputSchema: d.inputSchemas[tools.SendText],
 		Description: d.sendTextDescription(),
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(true), OpenWorldHint: ptr(true)},
-	}, tool(d, session, tools.SendText, func(in tools.SendTextInput) string { return in.Window },
+	}, tool(logger, tools.SendText, func(in tools.SendTextInput) string { return in.Window },
 		func(ctx context.Context, in tools.SendTextInput) result { return d.sendText(ctx, session, in) }))
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        tools.SendKeys,
@@ -34,7 +35,7 @@ func (d *daemon) addInputTools(server *mcp.Server, session string) {
 		Description: "Press keys in a window, in order: to interrupt (C-c), drive a full-screen program (q, Escape, " +
 			"arrows), complete (Tab). Key names: " + keyNames + ". To type text, use send_text.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(true), OpenWorldHint: ptr(true)},
-	}, tool(d, session, tools.SendKeys, func(in tools.SendKeysInput) string { return in.Window },
+	}, tool(logger, tools.SendKeys, func(in tools.SendKeysInput) string { return in.Window },
 		func(ctx context.Context, in tools.SendKeysInput) result { return d.sendKeys(ctx, session, in) }))
 }
 

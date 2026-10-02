@@ -59,23 +59,24 @@ type result struct {
 	attrs []any
 }
 
-// tool returns the handler of a tool of session: it runs do within toolTimeout, logs the call and
-// turns its result into a tool result. window tells the window the input names, for the log line.
-func tool[In any](d *daemon, session, name string, window func(In) string,
+// tool returns the handler of a tool: it runs do within toolTimeout, logs the call with logger,
+// which names the client (see newServer), and turns its result into a tool result. window tells the
+// window the input names, for the log line.
+func tool[In any](logger *slog.Logger, name string, window func(In) string,
 	do func(ctx context.Context, in In) result) mcp.ToolHandlerFor[In, any] {
-	return timedTool(d, session, name, window, func(In) time.Duration { return 0 }, do)
+	return timedTool(logger, name, window, func(In) time.Duration { return 0 }, do)
 }
 
 // timedTool is tool, for a tool whose input asks to wait: do runs within toolTimeout plus what
 // wait returns.
-func timedTool[In any](d *daemon, session, name string, window func(In) string, wait func(In) time.Duration,
+func timedTool[In any](logger *slog.Logger, name string, window func(In) string, wait func(In) time.Duration,
 	do func(ctx context.Context, in In) result) mcp.ToolHandlerFor[In, any] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 		start := time.Now()
 		ctx, cancel := context.WithTimeout(ctx, wait(in)+toolTimeout)
 		defer cancel()
 		r := do(ctx, in)
-		attrs := []any{"session", session, "tool", name}
+		attrs := []any{"tool", name}
 		if w := window(in); w != "" {
 			attrs = append(attrs, "window", w)
 		}
@@ -84,7 +85,7 @@ func timedTool[In any](d *daemon, session, name string, window func(In) string, 
 		if r.err != nil {
 			attrs = append(attrs, "error", r.err)
 		}
-		d.logger.Log(context.Background(), r.level, "tool", attrs...)
+		logger.Log(context.Background(), r.level, "tool", attrs...)
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: r.text}},
 			IsError: r.outcome == failed,

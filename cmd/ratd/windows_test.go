@@ -19,6 +19,10 @@ import (
 // toolsSession is the tmux session of the client the tool tests act for.
 const toolsSession = "alice"
 
+// toolsRemote is the address of the client the tool tests act for, connected in memory (TEST-NET-1,
+// RFC 5737).
+const toolsRemote = "192.0.2.1:50000"
+
 // connectTools starts a tmux server for tenant, with a fresh home, and returns an MCP client
 // connected in memory to the tools of session alice (tools need nothing from HTTP), the controller
 // and the logs of ratd. All is stopped when the test ends.
@@ -73,7 +77,7 @@ func connectDaemon(t *testing.T, controller *tmux.Controller, terminals tmux.Ter
 		t.Fatal(err)
 	}
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
-	serverSession, err := d.newServer(toolsSession).Connect(ctx, serverTransport, nil)
+	serverSession, err := d.newServer(toolsSession, toolsRemote).Connect(ctx, serverTransport, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +240,7 @@ func TestToolFailures(t *testing.T) {
 	const tenant = "test-ratd-failures"
 	session, controller, logs, _ := connectTools(t, tenant)
 	expectTool(t, session, "create_window", map[string]any{"name": "build"}, false)
-	if !strings.Contains(logs.String(), "msg=tool session=alice tool=create_window window=build outcome=ok") {
+	if !strings.Contains(logs.String(), "msg=tool session=alice remote="+toolsRemote+" tool=create_window window=build outcome=ok") {
 		t.Errorf("expected the call to be logged:\n%s", logs)
 	}
 
@@ -253,7 +257,7 @@ func TestToolFailures(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = exec.Command("kill", "-CONT", pid).Run() })
 	expectTool(t, session, "list_windows", nil, true, "The terminals did not answer in time: retrying may work.")
-	if !strings.Contains(logs.String(), "level=WARN msg=tool session=alice tool=list_windows outcome=error") {
+	if !strings.Contains(logs.String(), "level=WARN msg=tool session=alice remote="+toolsRemote+" tool=list_windows outcome=error") {
 		t.Errorf("expected the timeout to be logged as a warning:\n%s", logs)
 	}
 	_ = exec.Command("kill", "-CONT", pid).Run()

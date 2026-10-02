@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -16,13 +17,13 @@ import (
 
 // addWindowTools adds the tools listing, creating and closing the windows of session. They act on
 // rat's terminals only: no open world.
-func (d *daemon) addWindowTools(server *mcp.Server, session string) {
+func (d *daemon) addWindowTools(server *mcp.Server, session string, logger *slog.Logger) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        tools.ListWindows,
 		InputSchema: d.inputSchemas[tools.ListWindows],
 		Description: d.listWindowsDescription(),
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: ptr(false)},
-	}, tool(d, session, tools.ListWindows, func(tools.NoInput) string { return "" },
+	}, tool(logger, tools.ListWindows, func(tools.NoInput) string { return "" },
 		func(ctx context.Context, _ tools.NoInput) result { return d.listWindows(ctx, session) }))
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        tools.CreateWindow,
@@ -32,14 +33,14 @@ func (d *daemon) addWindowTools(server *mcp.Server, session string) {
 			"exists, and close the windows you are done with (close_window). Wait for the prompt of a new window (" +
 			d.promptTool() + ") before sending text to it.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(false), IdempotentHint: true, OpenWorldHint: ptr(false)},
-	}, tool(d, session, tools.CreateWindow, func(in tools.NameInput) string { return in.Name },
+	}, tool(logger, tools.CreateWindow, func(in tools.NameInput) string { return in.Name },
 		func(ctx context.Context, in tools.NameInput) result { return d.createWindow(ctx, session, in.Name) }))
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        tools.CloseWindow,
 		InputSchema: d.inputSchemas[tools.CloseWindow],
 		Description: "Close a window, terminating what runs in it.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(true), IdempotentHint: true, OpenWorldHint: ptr(false)},
-	}, tool(d, session, tools.CloseWindow, func(in tools.NameInput) string { return in.Name },
+	}, tool(logger, tools.CloseWindow, func(in tools.NameInput) string { return in.Name },
 		func(ctx context.Context, in tools.NameInput) result { return d.closeWindow(ctx, session, in.Name) }))
 }
 

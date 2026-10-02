@@ -234,14 +234,19 @@ func (d *daemon) getServer(req *http.Request) *mcp.Server {
 	if session == "" {
 		return nil
 	}
-	return d.newServer(session)
+	return d.newServer(session, req.RemoteAddr)
 }
 
 // newServer returns the MCP server of session, one per request: stateless, and cheap enough
 // (about 0.1 ms with the schemas cached, measured with 8 tools, next to tool calls taking
 // milliseconds of tmux). The tools are the same whatever the terminals record (see checkTerminals):
-// where they record no prompt, wait_window tells why it can not wait.
-func (d *daemon) newServer(session string) *mcp.Server {
+// where they record no prompt, wait_window tells why it can not wait. remote is the address of the
+// client, logged with each of its requests and calls.
+func (d *daemon) newServer(session, remote string) *mcp.Server {
+	// The address is the peer of the connection, never a header naming the client
+	// (X-Forwarded-For): mutual TLS ends at ratd, no proxy can be trusted to set it (see Logs in
+	// the README).
+	logger := d.logger.With("session", session, "remote", remote)
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "ratd",
 		Title:   fmt.Sprintf("rat %s on %s", d.side.Tenant, d.host),
@@ -251,27 +256,28 @@ func (d *daemon) newServer(session string) *mcp.Server {
 		SchemaCache:  d.schemas,
 		Logger:       d.sdkLogger,
 	})
-	server.AddReceivingMiddleware(d.logRequests(session))
-	d.addWindowTools(server, session)
-	d.addInputTools(server, session)
-	d.addScreenTools(server, session)
-	d.addWaitTool(server, session)
-	d.addFileTools(server, session)
+	server.AddReceivingMiddleware(logRequests(logger))
+	d.addWindowTools(server, session, logger)
+	d.addInputTools(server, session, logger)
+	d.addScreenTools(server, session, logger)
+	d.addWaitTool(server, session, logger)
+	d.addFileTools(server, logger)
 	return server
 }
 
-// logRequests logs each MCP request of session at debug level, whatever the protocol version
-// (initialize, or server/discover from 2026-07-28 on, then the calls).
-func (d *daemon) logRequests(session string) mcp.Middleware {
+// logRequests logs each MCP request at debug level with logger, which names the client (see
+// newServer), whatever the protocol version (initialize, or server/discover from 2026-07-28 on,
+// then the calls).
+func logRequests(logger *slog.Logger) mcp.Middleware {
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 			start := time.Now()
 			result, err := next(ctx, method, req)
-			attrs := []any{"session", session, "method", method, "duration", time.Since(start)}
+			attrs := []any{"method", method, "duration", time.Since(start)}
 			if err != nil {
 				attrs = append(attrs, "error", err)
 			}
-			d.logger.Debug("request", attrs...)
+			logger.Debug("request", attrs...)
 			return result, err
 		}
 	}

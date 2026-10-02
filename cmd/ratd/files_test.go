@@ -209,7 +209,7 @@ func TestWriteFileTimeout(t *testing.T) {
 	expectTool(t, session, "write_file", map[string]any{"path": "~/x", "content": "x"}, true,
 		"The file system did not answer in time: "+path+" may still be written, partially or not. Check it before "+
 			"writing again.")
-	if !strings.Contains(logs.String(), "level=WARN msg=tool session=alice tool=write_file outcome=error") {
+	if !strings.Contains(logs.String(), "level=WARN msg=tool session=alice remote="+toolsRemote+" tool=write_file outcome=error") {
 		t.Errorf("expected a warning:\n%s", logs)
 	}
 }

@@ -210,7 +210,7 @@ func TestReadFileTimeout(t *testing.T) {
 	})
 	expectTool(t, session, "read_file", map[string]any{"path": "~/x"}, true,
 		"The file system did not answer in time: "+filepath.Join(home, "x")+" could not be read.")
-	if !strings.Contains(logs.String(), "level=WARN msg=tool session=alice tool=read_file outcome=error") {
+	if !strings.Contains(logs.String(), "level=WARN msg=tool session=alice remote="+toolsRemote+" tool=read_file outcome=error") {
 		t.Errorf("expected a warning:\n%s", logs)
 	}
 }

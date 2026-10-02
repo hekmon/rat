@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"unicode/utf8"
 
@@ -19,7 +20,7 @@ const freshMainHeader = "[your terminals did not exist: main was just created, b
 
 // addScreenTools adds the tool reading the windows of session. It reads rat's terminals only: no
 // open world.
-func (d *daemon) addScreenTools(server *mcp.Server, session string) {
+func (d *daemon) addScreenTools(server *mcp.Server, session string, logger *slog.Logger) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        tools.ReadWindow,
 		InputSchema: d.inputSchemas[tools.ReadWindow],
@@ -28,7 +29,7 @@ func (d *daemon) addScreenTools(server *mcp.Server, session string) {
 			"command with | tee /tmp/name.log and use read_file.", tmux.ScreenColumns, tmux.ScreenRows,
 			sizeText(d.readBudget)),
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: ptr(false)},
-	}, tool(d, session, tools.ReadWindow, func(in tools.ReadWindowInput) string { return in.Window },
+	}, tool(logger, tools.ReadWindow, func(in tools.ReadWindowInput) string { return in.Window },
 		func(ctx context.Context, in tools.ReadWindowInput) result { return d.readWindow(ctx, session, in) }))
 }
 

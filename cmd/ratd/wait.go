@@ -32,7 +32,7 @@ const noPromptsText = "rat can not tell when a command finishes on this machine:
 // reads rat's terminals only: no open world. Where the terminals record no prompt, it is offered
 // all the same, telling why it can not wait: an agent is better told than left wondering where a
 // tool went.
-func (d *daemon) addWaitTool(server *mcp.Server, session string) {
+func (d *daemon) addWaitTool(server *mcp.Server, session string, logger *slog.Logger) {
 	description := fmt.Sprintf("Wait until the command sent last to a window finished: bash is back at its "+
 		"prompt. Returns as soon as it is, or after max_seconds (%d by default, %d at most), in one line: how the "+
 		"command exited, or what still runs and since when. To wait longer, call it again once it returns: several "+
@@ -48,7 +48,7 @@ func (d *daemon) addWaitTool(server *mcp.Server, session string) {
 		InputSchema: d.inputSchemas[tools.WaitWindow],
 		Description: description,
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: ptr(false)},
-	}, timedTool(d, session, tools.WaitWindow, func(in tools.WaitWindowInput) string { return in.Window },
+	}, timedTool(logger, tools.WaitWindow, func(in tools.WaitWindowInput) string { return in.Window },
 		func(in tools.WaitWindowInput) time.Duration { return waitOf(in) },
 		func(ctx context.Context, in tools.WaitWindowInput) result { return d.waitWindow(ctx, session, in) }))
 }

@@ -21,7 +21,7 @@ import (
 )
 
 // addReadFileTool adds read_file.
-func (d *daemon) addReadFileTool(server *mcp.Server, session string) {
+func (d *daemon) addReadFileTool(server *mcp.Server, logger *slog.Logger) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        tools.ReadFile,
 		InputSchema: d.inputSchemas[tools.ReadFile],
@@ -30,7 +30,7 @@ func (d *daemon) addReadFileTool(server *mcp.Server, session string) {
 			"The result holds at most %s: a larger file read without a range tells its size and line count, for you "+
 			"to pick a range. The path is absolute or starts with ~/.", sizeText(d.readBudget)),
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: ptr(false)},
-	}, tool(d, session, tools.ReadFile, func(tools.ReadFileInput) string { return "" },
+	}, tool(logger, tools.ReadFile, func(tools.ReadFileInput) string { return "" },
 		func(ctx context.Context, in tools.ReadFileInput) result { return d.readFile(ctx, in) }))
 }
 

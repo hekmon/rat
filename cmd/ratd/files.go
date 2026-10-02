@@ -19,7 +19,7 @@ import (
 // addFileTools adds the tools copying files to and from the machine of ratd, which reads and writes
 // them itself, as its user: tmux, its terminal backend, would only add a round trip. They act on
 // files of rat's machine only: no open world.
-func (d *daemon) addFileTools(server *mcp.Server, session string) {
+func (d *daemon) addFileTools(server *mcp.Server, logger *slog.Logger) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        tools.WriteFile,
 		InputSchema: d.inputSchemas[tools.WriteFile],
@@ -27,9 +27,9 @@ func (d *daemon) addFileTools(server *mcp.Server, session string) {
 			"the content given: nothing is added, end it with a new line if the file needs one. The path is absolute " +
 			"or starts with ~/. Missing directories are created. For binary content, use the terminal (base64 -d).",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(true), IdempotentHint: true, OpenWorldHint: ptr(false)},
-	}, tool(d, session, tools.WriteFile, func(tools.WriteFileInput) string { return "" },
+	}, tool(logger, tools.WriteFile, func(tools.WriteFileInput) string { return "" },
 		func(ctx context.Context, in tools.WriteFileInput) result { return d.writeFile(ctx, in) }))
-	d.addReadFileTool(server, session)
+	d.addReadFileTool(server, logger)
 }
 
 // errRelativePath refuses a path relative to nothing ratd knows: the directory of a window is the

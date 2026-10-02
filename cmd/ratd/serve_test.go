@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -128,8 +129,9 @@ func post(t *testing.T, client *http.Client, addr, host, path string) (*http.Res
 // TestServe guards that a standard MCP client, the one of the Go SDK, presenting a client
 // certificate of the bundle, connects: it gets the instructions naming the host, and ratd serves
 // its requests in the session its certificate names, whatever the protocol version (the SDK
-// discovers the server, 2026-07-28; older clients initialize). The client opens its optional
-// standalone stream, which a stateless ratd refuses (405): the client carries on.
+// discovers the server, 2026-07-28; older clients initialize), logging the address the client
+// connects from. The client opens its optional standalone stream, which a stateless ratd refuses
+// (405): the client carries on.
 func TestServe(t *testing.T) {
 	bundle := newBundle(t, "t")
 	addr, logs := startRatd(t, bundle, slog.LevelDebug)
@@ -155,8 +157,9 @@ func TestServe(t *testing.T) {
 		t.Fatalf("initialize: expected 200, got %v, %v", resp, err)
 	}
 	for _, method := range []string{"server/discover", "initialize"} {
-		if !strings.Contains(logs.String(), "msg=request session=alice method="+method) {
-			t.Errorf("expected %s to be served in session alice:\n%s", method, logs)
+		served := regexp.MustCompile(`msg=request session=alice remote=127\.0\.0\.1:\d+ method=` + regexp.QuoteMeta(method) + " ")
+		if !served.MatchString(logs.String()) {
+			t.Errorf("expected %s to be served in session alice, logged with the address of the client:\n%s", method, logs)
 		}
 	}
 }

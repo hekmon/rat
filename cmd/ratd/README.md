@@ -121,7 +121,8 @@ Mutual TLS, always, loopback included: ratd hands out a user shell, and a loopba
 reachable by every user of the machine. There is no plain HTTP mode. Clients present a
 certificate from the bundle of the tenant (package `mtls`: a closed bundle, generated with
 `rat-tool`), and ratd presents the server certificate of that bundle. The client name, which is
-its session, is logged with each call, telling which client did what.
+its session, is logged with each call along with the address it connects from, telling which client
+did what, and from where (see Logs).
 
 Rejected: a bearer token. It is a secret stored next to the terminals, in a file or an
 environment that agents, running as the same user, can read; with mTLS, nothing on the server
@@ -602,19 +603,28 @@ clients share: both sides of the contract in one place.
 ## Logs
 
 One line per tool call, at info level, or warning for a failure the agent did not cause (tmux not
-answering, an internal error): the session (the client name), the tool, the window, the outcome
-(`ok`, `message` for a result that is not an error, `error` with its cause) and the duration,
-plus what tells the action without its content: the size of a text and whether Enter was
-pressed, the number of keys, the rows of history asked and read (and the size of a screen
-refused), the path and size of a file. Never the content: neither text, nor keys (they can spell
-a password one key at a time), nor files. And the lifecycle: startup (version, tenant, address,
-read budget, bundle expiry), the check of the terminals, tmux exits and restarts, the crash budget,
-shutdown.
+answering, an internal error): the session (the client name), the address of the client, the tool,
+the window, the outcome (`ok`, `message` for a result that is not an error, `error` with its
+cause) and the duration, plus what tells the action without its content: the size of a text and
+whether Enter was pressed, the number of keys, the rows of history asked and read (and the size of
+a screen refused), the path and size of a file. Never the content: neither text, nor keys (they
+can spell a password one key at a time), nor files. And the lifecycle: startup (version, tenant,
+address, read budget, bundle expiry), the check of the terminals, tmux exits and restarts, the
+crash budget, shutdown.
 
-At debug level, one line per MCP request (the session, the method, the duration), whatever the
-protocol version: clients initialize, or discover the server from protocol 2026-07-28 on (the Go
-SDK does). The SDK logs every stateless request at info level (a session connecting, then
-disconnecting): only its warnings and errors are kept, all of it at debug level.
+The address tells apart the agents sharing a client certificate, and shows a certificate used from
+an unexpected machine. It is the peer of the connection: behind a proxy, the proxy's, whose own
+logs carry the trail on. A header naming the client (`X-Forwarded-For`) is never read: mutual TLS
+ends at ratd, so no proxy can be trusted to set it. The address may be personal data (GDPR): it is
+logged for security, as a web server logs its clients. ratd keeps nothing itself: how long the
+logs are kept and who reads them is the operator's call (journald, log shipping). Not provided: an
+option to leave the address out. An operator who must not keep it can filter it out of the logs,
+one who needs it could not get it back once left out.
+
+At debug level, one line per MCP request (the session, the address, the method, the duration),
+whatever the protocol version: clients initialize, or discover the server from protocol 2026-07-28
+on (the Go SDK does). The SDK logs every stateless request at info level (a session connecting,
+then disconnecting): only its warnings and errors are kept, all of it at debug level.
 
 ## Configuration
 
