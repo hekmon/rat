@@ -345,9 +345,13 @@ A file is written in place, as `cp` does: truncated, then written. It keeps its 
 hard links and extended attributes, and a symbolic link is followed, writing its target, as a
 human editing it would. The cost: a write failing midway (no space left) leaves the file partial,
 which the error says, the agent still holding the content to write again; and two writes of the
-same file at once can mix. Rejected: writing a temporary file renamed over the target, atomic,
-but breaking hard links, turning a symbolic link into a file, possibly changing the owner, and
-needing to write in the directory.
+same file at once can mix. A program reading the file during a write may see it partial, as with
+`cp`: an agent for which it matters writes another file and renames it in the terminal. Rejected:
+writing a temporary file renamed over the target, atomic, but breaking hard links, turning a
+symbolic link into a file, possibly changing the owner, and needing to write in the directory;
+an `atomic` parameter, which small models would set "to be safe", a second way to write to test;
+renaming for new files only, which have nothing to keep, a second way as well, for programs
+watching new files only.
 
 Only a regular file is written: a FIFO would block, and a device is not a file to replace. The
 file is checked before opening (opening some devices has effects), opened without blocking (a
