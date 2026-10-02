@@ -28,7 +28,7 @@ type NoInput struct{}
 
 // NameInput is the input of a tool acting on a window it names: create_window, close_window.
 type NameInput struct {
-	Name string `json:"name" jsonschema:"the name of the window: letters, digits, '_' and '-', up to 32 characters"`
+	Name string `json:"name" jsonschema:"the name of the window: letters, digits, '_' and '-', up to 32 characters, not digits only"`
 }
 
 // SendTextInput is the input of send_text. Enter is required, with no default: the agent decides

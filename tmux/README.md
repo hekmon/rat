@@ -289,6 +289,16 @@ digits, `_` and `-`, up to 32 characters. In targets, `:` and `.` separate the s
 and pane parts, and a leading `=` asks for an exact match: any of them in a name would change
 what it targets.
 
+A window name is not made of digits only either: tmux reads the window part of a target as an
+index first (`07` as index 7), and `=` only turns off prefix and pattern matching. `=s:=1` reaches
+the window at index 1 when there is one, whatever its name, and the window named `1` only
+otherwise. Measured with tmux 3.4, windows main, a, b and 1 at indexes 0 to 3: `=s:=1` reached a,
+text sent to 1 ran in a, and closing 1 closed a, while the window description, looked up by name,
+told of 1. Session targets have no index, and a tenant is no target: the rule is the window's alone
+(`names.CheckWindow`), certificates naming tenants and clients as before. Rejected: resolving the
+name to its window ID first (`@1`), which rat never uses (see Exact targets, never IDs), and which
+would take a second invocation, the window changing in between.
+
 Window names are unique within a session, as they are how agents find their terminals. tmux
 accepts duplicates, and an exact target then fails as if the window did not exist, so rat
 checks the name is free before creating a window (under a lock, the check and the creation

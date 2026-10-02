@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/hekmon/rat/tmux/names"
 )
 
 // eventually fails the test if condition does not become true within 3 seconds: terminals
@@ -173,6 +175,56 @@ func TestListWindows(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventually(t, "sleep in the foreground", foregroundIs(c, "s", FirstWindow, "sleep"))
+}
+
+// TestWindowsDigitNames guards that a window name made of digits only is refused before reaching
+// tmux, by every command on a window: tmux reads the window part of a target as an index first,
+// even after '=', and =s:=1 reaches the window at index 1 whatever its name, here a, rather than
+// the window named 1. Digits with other characters name a window as any name does.
+func TestWindowsDigitNames(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	c := startTestServer(t, "windowsdigits")
+	ctx := context.Background()
+	if err := c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.NewWindow(ctx, "s", "a"); err != nil {
+		t.Fatal(err)
+	}
+	// the pitfall, with tmux alone: a takes index 1, 1 index 2
+	if _, err := c.run(ctx, "new-window", "-d", "-t", "=s:", "-n", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if name, err := c.run(ctx, "display-message", "-p", "-t", "=s:=1", "#{window_name}"); err != nil || name != "a\n" {
+		t.Fatalf("expected tmux to read =s:=1 as the window at index 1, a, got %q, %v", name, err)
+	}
+	_, captureErr := c.Capture(ctx, "s", "1", 0)
+	_, windowErr := c.Window(ctx, "s", "1")
+	for command, err := range map[string]error{
+		"NewWindow":  c.NewWindow(ctx, "s", "2"),
+		"SendText":   c.SendText(ctx, "s", "1", "echo sent", true),
+		"SendKeys":   c.SendKeys(ctx, "s", "1", "C-c"),
+		"Capture":    captureErr,
+		"Window":     windowErr,
+		"KillWindow": c.KillWindow(ctx, "s", "1"),
+	} {
+		if !errors.Is(err, names.ErrInvalid) {
+			t.Errorf("%s: expected names.ErrInvalid, got %v", command, err)
+		}
+	}
+	windows, err := c.ListWindows(ctx, "s")
+	if err != nil || len(windows) != 3 || windows[1].Name != "a" {
+		t.Errorf("expected main, a and 1 untouched, got %+v, %v", windows, err)
+	}
+	for _, name := range []string{"1a", "-1"} {
+		if err := c.NewWindow(ctx, "s", name); err != nil {
+			t.Fatal(name, err)
+		}
+		if got, err := c.run(ctx, "display-message", "-p", "-t", target("s", name), "#{window_name}"); err != nil ||
+			got != name+"\n" {
+			t.Errorf("expected %s to reach the window named so, got %q, %v", target("s", name), got, err)
+		}
+	}
 }
 
 // TestForegroundBash guards that bash shows in the foreground for what bash runs, not only at its

@@ -50,11 +50,15 @@ func New(tenant string) (c *Controller, err error) {
 	return
 }
 
-// checkNames returns an error wrapping names.ErrInvalid if one of the session or window names of
-// a target is invalid, before anything reaches tmux.
-func checkNames(targetNames ...string) error {
-	for _, name := range targetNames {
-		if err := names.Check(name); err != nil {
+// checkNames returns an error wrapping names.ErrInvalid if the session name or the window name of
+// a target is invalid, before anything reaches tmux. A window name is not made of digits only
+// (names.CheckWindow): tmux would read it as the index of another window.
+func checkNames(session string, window ...string) error {
+	if err := names.Check(session); err != nil {
+		return err
+	}
+	for _, name := range window {
+		if err := names.CheckWindow(name); err != nil {
 			return err
 		}
 	}

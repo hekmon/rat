@@ -22,3 +22,19 @@ func TestCheck(t *testing.T) {
 		}
 	}
 }
+
+// TestCheckWindow guards the rule of window names: plain names, but not made of digits only,
+// which tmux reads as a window index in a target, even after '='. Digits with anything else, a
+// leading '-' included, read as a name.
+func TestCheckWindow(t *testing.T) {
+	for _, name := range []string{"main", "1a", "a1", "-1", "build_2"} {
+		if err := CheckWindow(name); err != nil {
+			t.Errorf("name %q: %v", name, err)
+		}
+	}
+	for _, name := range []string{"0", "1", "07", "123", "", "a:b"} {
+		if err := CheckWindow(name); !errors.Is(err, ErrInvalid) {
+			t.Errorf("name %q: expected ErrInvalid, got %v", name, err)
+		}
+	}
+}

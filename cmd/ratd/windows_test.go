@@ -183,10 +183,10 @@ func TestListWindowsStatusesUntold(t *testing.T) {
 }
 
 // TestCreateWindow guards creating windows: main in a missing session is created by creating the
-// session, an existing window is not recreated but described, and an invalid name is refused with
-// the naming rule. Its description points to wait_window to wait for the prompt of a new window,
-// and invites to close the windows an agent is done with, as the instructions do: clients may not
-// pass the instructions on.
+// session, an existing window is not recreated but described, and an invalid name, digits only
+// included, is refused with the naming rule. Its description points to wait_window to wait for the
+// prompt of a new window, and invites to close the windows an agent is done with, as the
+// instructions do: clients may not pass the instructions on.
 func TestCreateWindow(t *testing.T) {
 	session, _, _, home := connectTools(t, "test-ratd-create")
 	tools, err := session.ListTools(context.Background(), nil)
@@ -208,6 +208,8 @@ func TestCreateWindow(t *testing.T) {
 	expectTool(t, session, "create_window", map[string]any{"name": "build"}, false,
 		"Window build already exists, not created: it runs bash in "+home+".")
 	expectTool(t, session, "create_window", map[string]any{"name": "a b"}, true, `Invalid window name "a b": `+nameRule)
+	// tmux would read it as the index of another window
+	expectTool(t, session, "create_window", map[string]any{"name": "1"}, true, `Invalid window name "1": `+nameRule)
 }
 
 // TestCloseWindow guards closing windows: nothing to close is a message that creates nothing, and

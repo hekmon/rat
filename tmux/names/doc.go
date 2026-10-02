@@ -6,7 +6,8 @@
 //     the private directory of tmux, and whose path is bounded (104 bytes on macOS, 108 on Linux);
 //   - session and window names end up in tmux targets, where ':' and '.' separate the session,
 //     window and pane parts, and a leading '=' asks for an exact match: any of them in a name
-//     would change what it targets.
+//     would change what it targets. A window name is not made of digits only either
+//     (CheckWindow): tmux reads the window part of a target as an index first, even after '='.
 //
 // It is a package of its own so that packages naming tenants and sessions without driving tmux
 // apply the same rule without depending on the controller: package mtls, whose certificates

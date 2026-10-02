@@ -19,8 +19,8 @@ import (
 // A variable for tests.
 var toolTimeout = 10 * time.Second
 
-// nameRule tells agents what a window name may be (package names).
-const nameRule = "only letters, digits, '_' and '-', up to 32 characters"
+// nameRule tells agents what a window name may be (names.CheckWindow).
+const nameRule = "only letters, digits, '_' and '-', up to 32 characters, not digits only"
 
 // outcome is how a tool call ended.
 type outcome int
