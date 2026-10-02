@@ -17,12 +17,13 @@
 //
 // # Tools
 //
-// Six tools act on terminals: list_windows, create_window, close_window, send_text (pasted as a
-// human pastes, then Enter if asked), send_keys (by their tmux names) and read_window (the
-// screen, with optional scrollback above it). Two copy files to and from the machine, which ratd
-// reads and writes itself: write_file and read_file. No tool waits for a command. What they send back is checked
-// and bounded by the read budget. Missing tmux sessions are created on the fly, so an agent
-// closing all its windows finds a fresh main.
+// Seven tools act on terminals: list_windows, create_window, close_window, send_text (pasted as a
+// human pastes, then Enter if asked), send_keys (by their tmux names), read_window (the screen,
+// with optional scrollback above it) and wait_window (until the command sent last finished). Two
+// copy files to and from the machine, which ratd reads and writes itself: write_file and
+// read_file. Sending returns at once: only wait_window waits for a command, when an agent has
+// nothing else to do. What they send back is checked and bounded by the read budget. Missing tmux
+// sessions are created on the fly, so an agent closing all its windows finds a fresh main.
 //
 // # tmux server
 //
