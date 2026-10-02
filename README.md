@@ -212,6 +212,11 @@ ExecStart=/usr/local/bin/ratd --bundle /etc/rat/prod/server --listen :7281
 KillMode=control-group
 # above the worst stop of ratd: 10 seconds for the calls in flight, then 7 for its terminals
 TimeoutStopSec=30
+# what the service may take of the machine, every process counted, terminals included: values to
+# fit the machine and the work of the agents (see Resources below)
+#TasksMax=2048
+#MemoryMax=8G
+#CPUQuota=400%
 
 [Install]
 WantedBy=multi-user.target
@@ -245,6 +250,20 @@ journalctl -u ratd-prod -f
   terminals.
 - **No `Restart=`, on purpose.** ratd restarts its terminals when they die, and only exits when
   it can not keep them up: the service then shows as failed, for whoever monitors it.
+- **Resources are bounded by the service, not by ratd.** Whoever calls ratd has a shell: a loop
+  of `tmux new-window`, a fork bomb or a build eating the memory gets around any count ratd could
+  keep of windows or calls. The control group of the service counts every process it holds,
+  terminals and detached commands included. `TasksMax=` caps its processes and threads (the
+  default of systemd, 15% of the limit of the system, usually allows thousands), `MemoryMax=`
+  keeps the out-of-memory killer within the service, which kills its largest process (a build,
+  rather than another service of the machine), `CPUQuota=` keeps the machine responsive. Their
+  values depend on the machine and the work of the agents: the unit holds them commented. At a
+  limit, starting a process fails: windows and commands do not start, tool calls fail, and the
+  stop still ends everything, systemd killing what is left in the group. A file operation stuck
+  on a hung file system holds its content in ratd until it returns, the agent being told to check
+  the file before writing again: `MemoryMax=` also bounds what retries could pile up. Rejected:
+  limits in ratd (windows per session, calls at once), which a single command typed in a
+  terminal gets around.
 - **One unit per tenant**, each with its bundle and port. The tenants of a user keep their agents
   apart from mistakes, not from each other (see Users, tenants and sessions).
 - **Logs** go to the journal: every tool call (the client, the tool, the outcome, never the
