@@ -42,7 +42,10 @@ func eventually(t *testing.T, what string, condition func() bool) {
 }
 
 // runRatd runs ratd with the server directory of bundle, on a loopback port, until stop is
-// called, which returns the error of run. It returns the address and the logs of ratd.
+// called, which returns the error of run. It returns the address and the logs of ratd once it
+// serves, and fails the test with the error of run if ratd exits before: the listener is bound
+// beforehand, and a client would otherwise wait on it for a ratd that is gone (a stray tmux server
+// holding the socket of the tenant, left by a test run that was killed).
 func runRatd(t *testing.T, bundle string) (addr string, logs *logBuffer, stop func() error) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -67,6 +70,19 @@ func runRatd(t *testing.T, bundle string) (addr string, logs *logBuffer, stop fu
 		return runErr
 	}
 	t.Cleanup(func() { _ = stop() })
+	// above the check of the terminals, which a blocking startup file makes last its whole time
+	deadline := time.After(terminalsCheckTimeout + 10*time.Second)
+	for !strings.Contains(logs.String(), "msg=serving") {
+		select {
+		case runErr = <-ran:
+			stopped = true
+			cancel()
+			t.Fatalf("ratd exited before serving: %v\n%s", runErr, logs)
+		case <-deadline:
+			t.Fatalf("ratd never served:\n%s", logs)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 	return listener.Addr().String(), logs, stop
 }
 
