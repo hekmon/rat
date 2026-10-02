@@ -61,7 +61,7 @@ func command(logs io.Writer) *cli.Command {
 				Name:     "read-budget",
 				OnlyOnce: true,
 				Aliases:  []string{"r"},
-				Usage:    "the most a read of a window or a file sends back, with its unit, 32KiB at least",
+				Usage:    "the most a read of a window or a file sends back, with its unit, 20KiB at least",
 				Value:    "64KiB",
 			},
 			&cli.StringFlag{

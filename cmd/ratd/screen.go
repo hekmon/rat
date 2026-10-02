@@ -81,8 +81,7 @@ func (d *daemon) readWindow(ctx context.Context, session string, in tools.ReadWi
 	if len(text) > d.readBudget {
 		// The history is cut, keeping the end that fits: the screen, whole, and the rows closest
 		// to it. Once cut, lines could be counted, not rows: the header tells no number.
-		header = fmt.Sprintf("[history cut to fit the read budget (%s): tee long output to a file (command "+
-			"2>&1 | tee /tmp/name.log) and use read_file]", sizeText(d.readBudget))
+		header = cutHeader(d.readBudget)
 		room := d.readBudget - len(header) - len("\n")
 		if snapshot.ExtraLines == 0 || snapshot.ScreenBytes > room {
 			// A screen cut would be read as the whole screen, and one sent whole would flood the
@@ -95,6 +94,12 @@ func (d *daemon) readWindow(ctx context.Context, session string, in tools.ReadWi
 		text, cut = withHeader(header, tail(snapshot.Content, room)), true
 	}
 	return result{text: text, attrs: append(attrs, "bytes", len(text), "cut", cut)}
+}
+
+// cutHeader returns the header of a history cut to fit budget, and how to read a long output whole.
+func cutHeader(budget int) string {
+	return fmt.Sprintf("[history cut to fit the read budget (%s): tee long output to a file (command 2>&1 | tee "+
+		"/tmp/name.log) and use read_file]", sizeText(budget))
 }
 
 // withHeader returns content preceded by header on a line of its own, if any.

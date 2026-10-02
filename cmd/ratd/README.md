@@ -418,18 +418,31 @@ characters), and dropping it would take the screen away. Once cut, lines could b
 rows: the header tells no number.
 
 The screen itself is never cut: a cut screen would be read as the whole screen. A screen usually
-takes about 5 KB, 20 KB with multibyte characters, and ratd refuses a budget under 32 KiB. But
-characters piling up combining accents take more: a screen of them measured 78 KB. A screen over
-the budget is refused, telling its size, and the agent is told to close the window and start
-over in a new one: sent whole, it would flood a context the agent could not recover from. The
-controller tells the size of the screen alone (see `tmux/README.md`), which the joined content
-can not.
+takes about 5 KB, and at most 18.8 KiB, its 200×24 cells each holding the longest UTF-8
+character (4 bytes), wide characters taking 2 cells for as much. ratd refuses a budget under 20
+KiB (about 5k tokens): that screen, its line breaks and its longest header take 19349 bytes, and
+about 1 KiB is left for a header to change (`TestMinReadBudget` fails if a header or the size of
+the terminals outgrows it). Rejected: a larger margin, which would only let a screen full of
+4-byte characters carry some combining accents as well, at the cost of tokens for the small
+models a low budget is for. Characters piling up combining accents take more a cell (tmux holds
+21 bytes a cell in 3.3a, 32 in its current source, up to 150 KiB a screen, beyond the default
+budget): a screen of them measured 78 KB. A screen over the budget is refused, telling its size,
+and the agent is told to close the window and start over in a new one: sent whole, it would
+flood a context the agent could not recover from. The controller tells the size of the screen
+alone (see `tmux/README.md`), which the joined content can not.
 
 It is a setting of ratd, not a parameter of the tools: the admin knows which models and harnesses
 connect, and long reads stay possible, one range at a time. The descriptions state the value.
 Rejected: an agent parameter under a ceiling set on ratd (small models set it large "to be
 safe", and it does nothing while the ceiling is the default), a constant (a rebuild for a
-number).
+number), a floor of a screen of ASCII (8 KiB): box-drawing characters (full-screen programs) and
+CJK take 3 bytes, a screen of them would be refused, its window unusable.
+
+The budget bounds a single read, not what reads usually take: `read_window` returns the screen
+alone unless asked for history (`scrollback_rows`, as many rows as the agent asks), about 1 to 2k
+tokens, and `read_file` over the budget without a range returns what the file is, not its
+content. For models whose context degrades early (local models), `--read-budget 20KiB` bounds
+the largest read to about 5k tokens.
 
 ### Annotations
 
@@ -665,7 +678,7 @@ ratd --bundle DIR [--listen :7281] [--read-budget 64KiB] [--log-level info]
 `--bundle` is the server directory of a bundle (see `rat-tool`); the tenant comes from its
 certificate. `--read-budget` takes a size with its unit (`64KiB`, `1MiB`, `65536B`, parsed by
 `github.com/hekmon/cunits`). Decimal units are accepted too, and so are bits (`Kb`): such a
-mistake usually falls under 32 KiB, and the refusal tells the size read. No configuration file
+mistake usually falls under the minimum, and the refusal tells the size read. No configuration file
 nor environment variable: nothing ratd needs is secret on a command line.
 
 ## Open questions
