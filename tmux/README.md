@@ -36,6 +36,18 @@ admin stopping the service counts on (see AGENTS.md). Rejected: adopting a serve
 running on the socket at startup, which would let terminals survive a rat restart, but loses
 that guarantee, and the ability to wait for the server (it is not rat's child anymore).
 
+A rat killed without a chance to stop its server (SIGKILL, a crash) leaves it running: the kernel
+does not stop a child with its parent, the server is reparented to init, holding the socket of
+the tenant, its terminals and their commands (seen with a test run killed: its servers were still
+there hours later). As a service, the control group ends it with the rest (see AGENTS.md). Started
+by hand, the next rat on the tenant is refused with the PID of that server
+(`ErrServerSocketInUse`), for the admin to stop it: nothing is left silently. Rejected:
+`Pdeathsig`, the signal the kernel sends a child when its parent dies, which fires when the
+thread that started it exits, not the process. Go ends a thread when a goroutine locked to it
+(`runtime.LockOSThread`) returns: rat locks none today, but a later change starting the server
+from such a goroutine would stop the terminals under a running rat, with nothing in the code
+showing the dependency. Linux only as well, for a gap the service already closes.
+
 ### One socket per tenant
 
 The server listens on `-L rat-<tenant>` (`rat` for the default tenant). tmux puts sockets in a
