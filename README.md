@@ -308,15 +308,19 @@ running as that user, in `/Library/LaunchDaemons/com.github.hekmon.rat.prod.plis
   <key>RunAtLoad</key>
   <true/>
   <key>StandardErrorPath</key>
-  <string>/Users/rat/Library/Logs/ratd-prod.log</string>
+  <string>/Library/Logs/rat/ratd-prod.log</string>
 </dict>
 </plist>
 ```
 
 ```sh
+sudo install -d -o root -g wheel -m 755 /Library/Logs/rat
+sudo touch /Library/Logs/rat/ratd-prod.log
+sudo chown rat /Library/Logs/rat/ratd-prod.log
+sudo chflags sappnd /Library/Logs/rat/ratd-prod.log
 sudo chown root:wheel /Library/LaunchDaemons/com.github.hekmon.rat.prod.plist
 sudo launchctl bootstrap system /Library/LaunchDaemons/com.github.hekmon.rat.prod.plist
-tail -f /Users/rat/Library/Logs/ratd-prod.log
+tail -f /Library/Logs/rat/ratd-prod.log
 ```
 
 - **The kill switch is partial.** `sudo launchctl bootout system/com.github.hekmon.rat.prod`
@@ -325,6 +329,14 @@ tail -f /Users/rat/Library/Logs/ratd-prod.log
   their terminals (`nohup`, `setsid`, daemons) outlive it (measured: a `nohup` command started by
   an agent is left running). macOS has nothing like the control groups of systemd. With a user
   for rat alone, end them all after the service: `sudo pkill -KILL -u rat`.
+- **The log is out of the agents' reach**, as the journal is on Linux. launchd opens it as the
+  user of the job, `rat`, appending to it: the file has to be that user's, or the job does not
+  start. In a directory of root, with the system append-only flag (`sappnd`), which only root
+  clears, agents can add lines to it, but neither rewrite, truncate, rename nor remove it. To
+  rotate it, stop the service (ratd keeps writing to the file it opened), clear the flag (`sudo
+  chflags nosappnd`), move the file, and create it again as above. Taken from the source of launchd
+  (`launchd-842`, the last one published: the user is taken before the file is opened, with
+  `O_APPEND`) and from measures of others on recent macOS, not measured with RAT.
 - **No `KeepAlive`, on purpose**, as there is no `Restart=` on Linux.
 - **One plist per tenant**, each with its label, bundle and port.
 
