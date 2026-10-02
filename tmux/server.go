@@ -114,6 +114,9 @@ type serverProcess struct {
 	waitErr error
 	// stopRequested is set by StopServer before asking the server to exit: its exit is expected
 	stopRequested atomic.Bool
+	// promptCommand is the PROMPT_COMMAND of its terminals, as StartServer set it (see
+	// promptCommand), for CheckTerminals: tmux 3.4 escapes $ in what show-environment prints
+	promptCommand string
 }
 
 // exitedOnItsOwn returns the error reporting the server exited on its own, once done is closed.
@@ -359,6 +362,7 @@ readiness:
 	if err != nil {
 		return fmt.Errorf("failed to configure server: %w", err)
 	}
+	p.promptCommand = promptCommand(tmuxPath)
 	var args []string
 	for _, option := range options {
 		args = append(args, "set-option", "-g", option[0], option[1], ";")
@@ -369,7 +373,7 @@ readiness:
 	for _, key := range windowKeys {
 		args = append(args, "bind-key", "-T", "prefix", key[0], "switch-client", "-t", key[1], ";")
 	}
-	args = append(args, "set-environment", "-g", "PROMPT_COMMAND", promptCommand(tmuxPath))
+	args = append(args, "set-environment", "-g", "PROMPT_COMMAND", p.promptCommand)
 	if out, err := c.cmd(optsCtx, args).CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to configure server: %w: %s", err, strings.TrimSpace(string(out)))
 	}

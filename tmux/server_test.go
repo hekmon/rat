@@ -3,10 +3,12 @@ package tmux
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -282,7 +284,8 @@ func TestServerIgnoresUserConfig(t *testing.T) {
 }
 
 // TestServerOptions guards the options and terminal environment rat relies on, set on top of
-// the tmux defaults.
+// the tmux defaults. The environment is the one a terminal gets, rather than what show-environment
+// prints: tmux 3.4 escapes $ in it (\${…}).
 func TestServerOptions(t *testing.T) {
 	c := newTestController(t, "options")
 	if err := c.StartServer(context.Background()); err != nil {
@@ -314,6 +317,20 @@ func TestServerOptions(t *testing.T) {
 			t.Errorf("%s = %q, expected %q", option, got, expected)
 		}
 	}
+	// a terminal writing its environment, without bash startup files (not a login shell), renamed
+	// once whole
+	dir := t.TempDir()
+	environment, written := filepath.Join(dir, "environment"), filepath.Join(dir, "written")
+	if _, err = c.run(context.Background(), "new-session", "-d", "-s", "environment",
+		"env > "+shellQuote(written)+" && mv "+shellQuote(written)+" "+shellQuote(environment)); err != nil {
+		t.Fatal(err)
+	}
+	var variables []string
+	eventually(t, "environment written", func() (bool, string) {
+		data, err := os.ReadFile(environment)
+		variables = strings.Split(string(data), "\n")
+		return err == nil, fmt.Sprint(err)
+	})
 	for variable, expected := range map[string]string{
 		"LC_ALL":         "C.UTF-8",
 		"PAGER":          "cat",
@@ -322,12 +339,8 @@ func TestServerOptions(t *testing.T) {
 		"SYSTEMD_PAGER":  "cat",
 		"PROMPT_COMMAND": promptCommand(tmuxPath),
 	} {
-		out, err := c.cmd(context.Background(), []string{"show-environment", "-g", variable}).Output()
-		if err != nil {
-			t.Fatalf("%s: %v", variable, err)
-		}
-		if got := strings.TrimSpace(string(out)); got != variable+"="+expected {
-			t.Errorf("got %q, expected %s=%s", got, variable, expected)
+		if !slices.Contains(variables, variable+"="+expected) {
+			t.Errorf("expected %s=%s in the environment of terminals", variable, expected)
 		}
 	}
 }

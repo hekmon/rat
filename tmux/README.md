@@ -237,7 +237,8 @@ Terminals inherit rat's environment, plus variables enforced at `StartServer`:
   startup file adds in front of rat's may change the exit status rat's gets. rat does not refuse
   to run then (single line inputs still work), but `CheckTerminals` detects both, for the caller
   to warn: it runs bash once as terminals start it (login, interactive, their environment, `TERM`
-  and `TMUX` included, as startup files often run tmux when `TMUX` is empty), and types commands
+  and `TMUX` included, as startup files often run tmux when `TMUX` is empty, and `PROMPT_COMMAND`
+  as `StartServer` set it, not read back: see show-environment escapes `$`), and types commands
   into it:
 
   1. `unset HISTFILE`: an interactive bash saves the commands it read in the history of the user
@@ -337,6 +338,16 @@ The window description is therefore separated by spaces, which must not be ambig
   format modifier escaping spaces and special characters with a backslash, and unquoted by rat;
 - the working directory comes last, so it needs no quoting: everything after the command is
   the path.
+
+### show-environment escapes `$`
+
+tmux 3.4 escapes `$` followed by a name or `{` in what `show-environment` prints (`\$b`, `\${c}`;
+`$?`, `$(` and `$$` aside), as if its output were to be read back as a tmux command, where tmux
+expands such variables. `-s` escapes for a shell on top of that (`\\$b`), which a shell then
+expands. Terminals get the value as it was set: only what is printed changes (measured with tmux
+3.4, no changelog entry). rat never reads its variables back: `CheckTerminals` runs bash with the
+`PROMPT_COMMAND` that `StartServer` set, a copy read back being garbled, and `TestServerOptions`
+reads the environment of a terminal.
 
 ## Input
 

@@ -363,6 +363,30 @@ func TestCheckTerminals(t *testing.T) {
 	}
 }
 
+// TestCheckTerminalsHook guards that the check runs bash with the PROMPT_COMMAND of terminals, as
+// StartServer set it: tmux 3.4 escapes $ in what show-environment prints (\${…}), and a copy read
+// back from tmux would be garbled. Startup files leave it alone here: it ends up as set, as bash
+// quotes it.
+func TestCheckTerminalsHook(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	c := startTestServer(t, "checkhook")
+	check, err := c.CheckTerminals(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmuxPath, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	quoted, err := exec.Command("bash", "-c", `printf %q "$1"`, "bash", promptCommand(tmuxPath)).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if check.PromptCommand != string(quoted) {
+		t.Errorf("expected the check to run the hook of terminals:\n%s\ngot:\n%s", quoted, check.PromptCommand)
+	}
+}
+
 // TestCheckTerminalsNoPane guards that the check records no prompt in a window: a rat started in a
 // terminal of another tmux inherits a TMUX_PANE, which would name a pane of rat's server too.
 func TestCheckTerminalsNoPane(t *testing.T) {
