@@ -601,6 +601,13 @@ In this order, a failure at steps 1, 2 or 4 making ratd exit while the admin is 
    windows created since, which `list_windows` and `wait_window` tell as recording no prompt.
 4. **Listen**: a second ratd for the same tenant fails at step 2, before opening an endpoint.
 
+Started by systemd with `Type=notify`, ratd tells it it is ready (`READY=1` on `NOTIFY_SOCKET`)
+once it serves: `systemctl start` returns on a ratd answering, or reports the failure of any step,
+where a `Type=simple` service shows started, then failed a moment later. A few lines rather than a
+library: one datagram on a socket. Not used: the watchdog (`WatchdogSec=`), which restarts or fails
+a ratd that stopped pinging: ratd keeps its terminals up itself, and exits when it can not, with no
+`Restart=` on purpose.
+
 When less than a year of validity remains on the bundle, ratd warns at startup and every 24 hours:
 sysadmins need reminding, an expired bundle stops every client at once.
 
@@ -619,6 +626,10 @@ socket (a command racing a crash can start one), which `ErrServerSocketInUse` na
 times of recent deaths are kept, for this budget.
 
 ### Shutdown
+
+Started by systemd with `Type=notify`, ratd tells it it is stopping (`STOPPING=1`) as soon as the
+door starts closing, whatever stops it: a signal, or the terminals dying too often, which systemd
+would otherwise only learn when ratd exits.
 
 On SIGTERM or SIGINT, the door closes before the terminals: ratd stops accepting connections and
 gives the calls in flight 10 seconds, then stops the tmux server (with the controller's own
@@ -710,7 +721,8 @@ Logs are text lines on stderr (`log/slog`). When stderr is the journal stream, w
 names in `JOURNAL_STREAM`, each line goes without its time, which the journal records itself,
 and without its level, which a `<N>` prefix turns into the priority of the entry
 (`SyslogLevelPrefix=`, on by default): `journalctl` shows the time once, highlights warnings and
-errors, and filters them (`-p warning`). Detected by the device and inode of stderr rather than
+errors, and filters them (`-p warning`). The error ratd exits with, printed outside the logs, is
+an error there too. Detected by the device and inode of stderr rather than
 `INVOCATION_ID`, which every service gets, logging to the journal or not, and which a command
 started from a service inherits. Rejected: the native protocol of the journal, whose fields
 (`SESSION=`, `TOOL=`) would take a second format, where `journalctl --grep` finds the same in the

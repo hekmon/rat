@@ -169,6 +169,8 @@ func (h minLevel) WithGroup(name string) slog.Handler {
 // the door: no connection is accepted anymore, and the calls in flight get shutdownGrace to end
 // before being cut. A call waiting (wait_window) returns as soon as ctx is done: http.Server
 // cancels no call when shutting down, it waits for them. It returns early if serving fails.
+// Started by systemd with Type=notify, it tells it ratd is ready once serving, and stopping once
+// ctx is done.
 func (d *daemon) serve(ctx context.Context, listener net.Listener) error {
 	d.stopping = ctx.Done()
 	tlsConfig, err := mtls.ServerConfig(d.side)
@@ -209,10 +211,20 @@ func (d *daemon) serve(ctx context.Context, listener net.Listener) error {
 		// then serve plain HTTP.
 		served <- server.Serve(tls.NewListener(listener, tlsConfig))
 	}()
+	// The listener accepts already: with Type=notify, systemctl start returns now, or reports the
+	// failure of any step of the startup before.
+	if err = notifySystemd("READY=1"); err != nil {
+		d.logger.Warn("failed to tell systemd ratd is ready", "error", err)
+	}
 	select {
 	case err = <-served:
 		return fmt.Errorf("failed to serve: %w", err)
 	case <-ctx.Done():
+	}
+	// Whatever stops ratd (a signal, the terminals dying too often), systemd shows it stopping
+	// while the door closes and the terminals stop.
+	if err = notifySystemd("STOPPING=1"); err != nil {
+		d.logger.Warn("failed to tell systemd ratd is stopping", "error", err)
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancel()

@@ -22,9 +22,20 @@ import (
 
 func main() {
 	if err := command(os.Stderr).Run(context.Background(), os.Args); err != nil {
-		fmt.Fprintln(os.Stderr, "ratd:", err)
+		printExitError(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// printExitError prints to logs the error ratd exits with: outside the logs, the command line
+// failing before they exist, but with the priority of an error in the journal, where it would
+// otherwise be taken for information.
+func printExitError(logs io.Writer, err error) {
+	prefix := ""
+	if isJournalStream(logs) {
+		prefix = journalPriority(slog.LevelError)
+	}
+	fmt.Fprintln(logs, prefix+"ratd:", err)
 }
 
 // defaultListen is the default listen address: every interface, which mutual TLS makes safe. An

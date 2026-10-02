@@ -184,9 +184,10 @@ func TestRunCallInFlight(t *testing.T) {
 }
 
 // TestRunGivesUp guards that ratd exits with an error, closing the door, when its tmux server dies
-// too often: whoever monitors the service sees it failed.
+// too often: whoever monitors the service sees it failed, and systemd sees it stopping first.
 func TestRunGivesUp(t *testing.T) {
 	requireTmux(t)
+	next := listenNotify(t)
 	policy := defaultRestartPolicy
 	defaultRestartPolicy = restartPolicy{delay: 10 * time.Millisecond, deaths: 2, window: time.Minute}
 	t.Cleanup(func() { defaultRestartPolicy = policy })
@@ -205,6 +206,9 @@ func TestRunGivesUp(t *testing.T) {
 	eventually(t, "door closed", func() bool { return strings.Contains(logs.String(), `msg="door closed"`) })
 	if err := stop(); err == nil || !strings.Contains(err.Error(), "died 2 times") {
 		t.Errorf("expected ratd to exit with an error after 2 deaths, got %v:\n%s", err, logs)
+	}
+	if ready, stopping := next(time.Second), next(time.Second); ready != "READY=1" || stopping != "STOPPING=1" {
+		t.Errorf("expected READY=1 then STOPPING=1, got %q and %q", ready, stopping)
 	}
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -58,6 +59,19 @@ func TestLogsToJournal(t *testing.T) {
 		"<4>msg=grouped session=s g.level=x g.time=y\n"
 	if got := readLogs(t, file); got != expected {
 		t.Errorf("expected\n%s\ngot\n%s", expected, got)
+	}
+}
+
+// TestExitErrorToJournal guards that the error ratd exits with, printed outside its logs, is an
+// error in the journal, and a plain line elsewhere.
+func TestExitErrorToJournal(t *testing.T) {
+	file, stream := logFile(t)
+	t.Setenv("JOURNAL_STREAM", stream)
+	printExitError(file, errors.New("failed"))
+	other, _ := logFile(t)
+	printExitError(other, errors.New("failed"))
+	if journal, plain := readLogs(t, file), readLogs(t, other); journal != "<3>ratd: failed\n" || plain != "ratd: failed\n" {
+		t.Errorf("expected a line with the priority of an error in the journal only, got %q and %q", journal, plain)
 	}
 }
 

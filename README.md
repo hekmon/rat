@@ -207,6 +207,8 @@ After=network-online.target
 [Service]
 # a Unix user for RAT alone: what agents do is bounded by it
 User=rat
+# ratd tells systemd when it serves: systemctl start waits for it, and reports a failed startup
+Type=notify
 ExecStart=/usr/local/bin/ratd --bundle /etc/rat/prod/server --listen :7281
 # the default, and what the kill switch relies on: stopping the service kills every process
 # left in its control group, detached commands (nohup, setsid, daemons) included
