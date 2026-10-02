@@ -43,6 +43,15 @@ Rejected:
   keeps Go's standard client certificate verification, with the same guarantees.
 - **One client certificate shared by every client**: clients could not be told apart, neither
   in logs nor by session.
+- **A deny list of clients**, in the server directory, reloaded by ratd: revoking one client
+  without deploying the others. It is no revocation once the key was used: whoever used it had a
+  shell as the user of ratd, which reads the server key, and could copy it to pose as ratd to
+  every client. A key leaked but never used is the only case it serves, which a new bundle covers
+  too. Its cost: a file of the server that its user must not write, a reload in ratd, a check on
+  every request (connections kept alive outlive a check at the handshake), and what to do with
+  the terminals of the client revoked.
+- **A short validity**: a bundle expiring stops every client at once, the warnings a year ahead
+  would start with it, and a key leaked stays valid until then, long enough to be used.
 
 ## Names in the certificates
 

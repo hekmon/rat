@@ -407,7 +407,11 @@ leaves the rest to how you deploy it:
   restricted on the other side (`authorized_keys` options, a restricted command).
 - **Client keys are credentials.** A client key grants a shell as that user: give each harness its
   own (logs then tell who did what), never copy one elsewhere, and generate a new bundle to revoke
-  one (bundles are closed: no certificate can be added nor removed).
+  one (bundles are closed: no certificate can be added nor removed). A leaked client key is an
+  incident: whoever used it had that shell, and could copy the server key (see below) or leave
+  something behind. The logs tell whether it was used, each call naming its client and the
+  address it came from. Then revoking the client alone would not be enough: generate a new
+  bundle, deploy it to ratd and every client, and look for what the user may have kept.
 - **The server key is readable by the agents.** ratd reads it as its user, the one the terminals
   run as: an agent can copy it off the machine. It lets no one into ratd, but whoever holds it can
   pose as ratd to its clients, wherever they reach for it: on their way to the machine, or on its
