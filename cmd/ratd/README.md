@@ -522,7 +522,21 @@ ratd would repeat it, and make names vary with the tenant.
 
 In this order, a failure at steps 1, 2 or 4 making ratd exit while the admin is still there:
 
-1. **Load and check the bundle**: the server certificate names the tenant.
+1. **Load and check the bundle**: the server certificate names the tenant. Then warn of a
+   deployment handing agents more than the user ratd runs as:
+   - **Root**: every agent, and whoever holds a client key, is root. The likely mistake is a
+     service missing its `User=`, which nothing else shows.
+   - **A bundle that user can replace**, the key aside, which ratd owns: an agent could put one of
+     its own in place, whose clients ratd would let in at its next start, a door left open after
+     an incident was cleaned up. Writable means for the process (`access(2)`, groups and ACLs
+     included): the certificates, and every directory above them up to the root, through which a
+     file or a directory below can be renamed and another put in its place, for the path as given
+     and for the target of its links. Not checked as root, which can write anything.
+
+   Warnings rather than refusals: root is a choice for a machine given whole to the agents, and
+   ratd started by hand, as one tries it, runs as a user owning its bundle. Rejected: refusing
+   both, which needs a flag kept forever for root (`--allow-root`), and breaks a first try; telling sticky directories (`/tmp`) apart, which needs owners compared,
+   while a bundle there is a mistake anyway.
 2. **Start the tmux server**, which takes the tenant: a server already answering on its socket
    (`tmux.ErrServerSocketInUse`) means another ratd serves it on this machine, which the error
    names with its PID. Other failures: tmux missing, bash missing or too old.

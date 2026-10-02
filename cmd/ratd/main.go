@@ -93,8 +93,9 @@ func command(logs io.Writer) *cli.Command {
 
 // run starts ratd with the server directory of a bundle, its reads bounded by readBudget bytes,
 // then listens with listen, and serves until ctx is done. The steps of the startup run in order, a failure making ratd exit while the
-// admin is still there: loading the bundle, starting the tmux server of its tenant, checking
-// its terminals, listening. A second ratd for the same tenant thus fails before listening.
+// admin is still there: loading the bundle, warning of a deployment handing agents more than
+// ratd's user (root, a bundle that user can replace), starting the tmux server of its tenant,
+// checking its terminals, listening. A second ratd for the same tenant thus fails before listening.
 // Stopping closes the door first (no call gets in anymore), then stops the terminals.
 // It also returns an error when the tmux server died too often: ratd then shows as failed.
 func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int, listen func() (net.Listener, error)) error {
@@ -105,6 +106,7 @@ func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int
 	if side.Role != mtls.Server {
 		return fmt.Errorf("bundle: %w: %s is the directory of a client, not of the server", mtls.ErrRole, bundle)
 	}
+	warnDeployment(logger, bundle, os.Geteuid())
 	controller, err := tmux.New(side.Tenant)
 	if err != nil {
 		return err

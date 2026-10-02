@@ -58,6 +58,13 @@ const caFile = "ca.crt"
 func certFile(r Role) string { return r.String() + ".crt" }
 func keyFile(r Role) string  { return r.String() + ".key" }
 
+// CertificateFiles returns the paths of the certificates in dir, the directory of the side role:
+// the CA's and the side's own, the files of the side but its key. Nothing in them is secret, but
+// whoever replaces them chooses whom the side trusts: for the caller to check who can write them.
+func CertificateFiles(dir string, role Role) []string {
+	return []string{filepath.Join(dir, caFile), filepath.Join(dir, certFile(role))}
+}
+
 // ExpiryWarning is how long before a bundle expires its sides warn about it: an expired bundle
 // stops every client at once, years after anyone remembers how it was made.
 const ExpiryWarning = 365 * 24 * time.Hour

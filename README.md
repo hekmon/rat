@@ -234,9 +234,10 @@ journalctl -u ratd-prod -f
   command itself, where `su -` and `sudo -i` run the login shell, and are refused.
 - **The bundle belongs to root, but for its key.** ratd only reads it, and the agents run as its
   user: a bundle that user could write, an agent could replace with one of its own, whose clients
-  ratd would let in at its next start (measured on Debian 12). The key stays the user's, ratd
-  having to read it and refusing it readable by others: an agent can spoil it, and ratd then
-  refuses to start, or copy it, which stopping the service does not revoke (see Security).
+  ratd would let in at its next start (measured on Debian 12): ratd warns at startup of a bundle
+  its user can write, naming the paths. The key stays the user's, ratd having to read it and
+  refusing it readable by others: an agent can spoil it, and ratd then refuses to start, or copy
+  it, which stopping the service does not revoke (see Security).
 - **The kill switch.** `systemctl stop ratd-prod` stops ratd, its endpoint first, the terminals
   and the commands they run, and whatever else is left in the service: commands detached from
   their terminals included (measured with systemd 252: a `nohup` command started by an agent is
@@ -358,7 +359,8 @@ leaves the rest to how you deploy it:
 - **Avoid root.** ratd as root hands root to every agent, and to whoever holds a client key: one
   mistaken command, or an instruction an agent read in a web page or a file, and the machine is
   lost. Unless the machine is meant to be the agent's (a machine you can lose, given to it whole),
-  run ratd as an unprivileged user (see Deployment).
+  run ratd as an unprivileged user (see Deployment). ratd warns at startup when run as root: a
+  service missing its `User=` runs silently as root otherwise.
 - **A Unix user for RAT, and for nothing else.** What agents do is bounded by what this user can
   do: give it none of your own files, no password, and no login but ratd (no login shell, and
   sshd refusing it: see Deployment). Its tenants keep their agents apart from mistakes only (see
