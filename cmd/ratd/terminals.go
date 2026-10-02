@@ -17,12 +17,12 @@ var terminalsCheckTimeout = 10 * time.Second
 
 // checkTerminals checks once what the bash prompt of terminals ends up with (bracketed paste, the
 // prompts, statuses and pipelines recorded), logs what bash startup files defeat, and returns it, for ratd to
-// tell agents only what holds. Terminals keep working either way (single line input is fine): an
+// tell agents only what holds, with what it warned of, for the status. Terminals keep working either way (single line input is fine): an
 // override is only a warning. A check that can not run, such as a startup file blocking (which
 // blocks every terminal as well), is taken as nothing holding. Checked once rather than at each
 // tmux restart: clients receive the instructions and the tools once, and must not be told
 // something ratd no longer believes.
-func checkTerminals(ctx context.Context, logger *slog.Logger, controller *tmux.Controller) tmux.TerminalsCheck {
+func checkTerminals(ctx context.Context, logger *slog.Logger, controller *tmux.Controller) (tmux.TerminalsCheck, []degradation) {
 	ctx, cancel := context.WithTimeout(ctx, terminalsCheckTimeout)
 	defer cancel()
 	check, err := controller.CheckTerminals(ctx)
@@ -30,30 +30,35 @@ func checkTerminals(ctx context.Context, logger *slog.Logger, controller *tmux.C
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		logger.Warn("bash startup files did not finish: they block every terminal as well, agents are told to "+
 			"send one line at a time", "timeout", terminalsCheckTimeout)
-		return tmux.TerminalsCheck{}
+		return tmux.TerminalsCheck{}, []degradation{checkUnfinished}
 	case err != nil:
 		logger.Warn("the check of the terminals failed: agents are told to send one line at a time", "error", err)
-		return tmux.TerminalsCheck{}
+		return tmux.TerminalsCheck{}, []degradation{checkFailed}
 	}
+	var found []degradation
 	if check.BracketedPaste {
 		logger.Info("bracketed paste enforced in terminals")
 	} else {
 		logger.Warn("bash startup files override bracketed paste: multi-line text may run line by line even at "+
 			"a prompt, agents are told to send one line at a time", "prompt_command", check.PromptCommand)
+		found = append(found, pasteOverridden)
 	}
 	switch {
 	case !check.Prompts:
 		logger.Warn("bash startup files replace PROMPT_COMMAND: the prompts of terminals are not recorded, ratd "+
 			"can not tell when commands finish", "prompt_command", check.PromptCommand)
+		found = append(found, promptsReplaced)
 	case !check.Statuses:
 		logger.Warn("bash startup files run a command changing the exit status before rat's, in PROMPT_COMMAND: "+
 			"ratd does not tell how commands exited", "prompt_command", check.PromptCommand)
+		found = append(found, statusesLost)
 	case !check.Pipelines:
 		logger.Warn("bash startup files run a command before rat's, in PROMPT_COMMAND: ratd does not tell the "+
 			"status of each command of a pipeline, and command | tee log exits with the status of tee",
 			"prompt_command", check.PromptCommand)
+		found = append(found, pipelinesLost)
 	}
-	return check
+	return check, found
 }
 
 // restartPolicy is how ratd keeps its tmux server running.
@@ -75,9 +80,9 @@ var defaultRestartPolicy = restartPolicy{delay: time.Second, deaths: 5, window: 
 // starts it again with the context terminals, every terminal and its command being lost. It
 // returns nil once ctx is done or the server was stopped by ratd, and an error when the server
 // died too often (a restart failing counts as a death): ratd then exits. Only the times of recent
-// deaths are kept.
+// deaths are kept. Each death is told to status.
 func supervise(ctx context.Context, logger *slog.Logger, controller *tmux.Controller, terminals context.Context,
-	policy restartPolicy) error {
+	policy restartPolicy, status *status) error {
 	var deaths []time.Time
 	for {
 		err := controller.WaitServer(ctx)
@@ -88,6 +93,7 @@ func supervise(ctx context.Context, logger *slog.Logger, controller *tmux.Contro
 		for {
 			now := time.Now()
 			deaths = append(slices.DeleteFunc(deaths, func(death time.Time) bool { return now.Sub(death) > policy.window }), now)
+			status.died(now, policy.window)
 			if len(deaths) >= policy.deaths {
 				return fmt.Errorf("the tmux server died %d times within %s", len(deaths), policy.window)
 			}

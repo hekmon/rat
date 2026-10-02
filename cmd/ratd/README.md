@@ -608,8 +608,50 @@ library: one datagram on a socket. Not used: the watchdog (`WatchdogSec=`), whic
 a ratd that stopped pinging: ratd keeps its terminals up itself, and exits when it can not, with no
 `Restart=` on purpose.
 
+ratd takes `NOTIFY_SOCKET` out of its environment before starting tmux, as `sd_notify` does when
+asked (`unset_environment`): the terminals inherit ratd's environment, and systemd's own tools
+report how they exit to that socket (`EXIT_STATUS=`, `ERRNO=`, measured with systemd 255). Each
+`systemctl` or `journalctl` an agent runs, or `systemd-detect-virt` in the MOTD of a login shell
+(Ubuntu), would reach systemd, which drops what is not from ratd (`NotifyAccess=main`, the default
+of `Type=notify`) with a warning in ratd's journal each time, burying ratd's own.
+
 When less than a year of validity remains on the bundle, ratd warns at startup and every 24 hours:
 sysadmins need reminding, an expired bundle stops every client at once.
+
+### Status
+
+Started by systemd with `Type=notify`, ratd also tells it a status line (`STATUS=`), the one line
+`systemctl status` shows whatever the logs did since: with one line per tool call, the last log
+lines are calls, burying what was logged earlier. It tells first what degrades ratd while it
+serves, then whether stopping ratd now cuts anyone:
+
+```
+serving tenant prod on [::]:7281 · bracketed paste overridden, bundle expires in 212 days · last seen: alice now, bob 25m ago, carol 3h ago · 1 wait in flight
+```
+
+- **Degradations**: known issues of a ratd serving all the same, logged once when found, and shown
+  for as long as they hold, in a fixed order, with short labels (the log tells the details):
+  running as root or a bundle its user can write (see Startup), what bash startup files defeat in
+  the terminals or the check not running, the bundle expiring within a year (updated daily), the
+  deaths of the tmux server within the window of its restart budget (gone once older). At most
+  five at once: some exclude others. First in the line, should a terminal cut it.
+- **Last seen**, per session, the time of its last request, whatever the method: the five most
+  recent, then a count of the others. Last seen rather than active or idle: requests are
+  stateless, no connection stays open between them.
+- **Waits in flight**: the calls of `wait_window` waiting, what a stop cuts. The other calls take
+  milliseconds, too short to be seen at a render: a count of them would read 0 nearly always.
+- **Stopping**: the step of the stop replaces the line, `stopping: closing the door`, then
+  `stopping: stopping the terminals`: a stop lasting shows where. No waits there: a stop makes them
+  return at once.
+
+This is state ratd keeps, of its calls, which tmux knows nothing of: lost when ratd stops, which is
+fine for a display. Rendered every 10 seconds, and sent only when it changed: times are coarse
+(`now` under a minute, then minutes, hours and days), most renders send nothing. A degradation
+found and a step of the stop are sent at once. Nothing is sent before ratd is ready. Not shown:
+totals (calls, bytes), which grow forever and answer no question of an operator; the windows and
+the commands they run, which are tmux's to tell, fresh: `list_windows`, or a human attaching. Any
+local user can read the status of a system unit, where reading the journal takes a group: session
+names are shown, never the addresses of clients.
 
 ### tmux server
 

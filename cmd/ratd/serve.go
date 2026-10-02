@@ -113,6 +113,10 @@ type daemon struct {
 	// stopping is closed once ratd stops (see serve): calls waiting return then, rather than hold
 	// the door open. Nil until serving, as in tests calling the tools without HTTP.
 	stopping <-chan struct{}
+	// status is what systemd shows of ratd to a human operator
+	status *status
+	// notifier tells systemd the state of ratd, when started by it (see takeNotifySocket)
+	notifier notifier
 }
 
 // newDaemon returns ratd serving the tenant of side, the server directory of its bundle, with the
@@ -144,7 +148,7 @@ func newDaemon(logger *slog.Logger, side *mtls.Side, controller *tmux.Controller
 	}
 	return &daemon{logger: logger, sdkLogger: sdkLogger, side: side, controller: controller, host: host, user: username,
 		terminals: terminals, instructions: instructions, readBudget: readBudget, inputSchemas: inputSchemas,
-		schemas: mcp.NewSchemaCache()}, nil
+		schemas: mcp.NewSchemaCache(), status: newStatus(logger)}, nil
 }
 
 // minLevel passes on the records of its handler from a minimum level only.
@@ -169,8 +173,8 @@ func (h minLevel) WithGroup(name string) slog.Handler {
 // the door: no connection is accepted anymore, and the calls in flight get shutdownGrace to end
 // before being cut. A call waiting (wait_window) returns as soon as ctx is done: http.Server
 // cancels no call when shutting down, it waits for them. It returns early if serving fails.
-// Started by systemd with Type=notify, it tells it ratd is ready once serving, and stopping once
-// ctx is done.
+// Started by systemd with Type=notify, it tells it ratd is ready once serving, its status while
+// serving (see status), and stopping once ctx is done.
 func (d *daemon) serve(ctx context.Context, listener net.Listener) error {
 	d.stopping = ctx.Done()
 	tlsConfig, err := mtls.ServerConfig(d.side)
@@ -213,9 +217,10 @@ func (d *daemon) serve(ctx context.Context, listener net.Listener) error {
 	}()
 	// The listener accepts already: with Type=notify, systemctl start returns now, or reports the
 	// failure of any step of the startup before.
-	if err = notifySystemd("READY=1"); err != nil {
+	if err = d.notifier.notify("READY=1"); err != nil {
 		d.logger.Warn("failed to tell systemd ratd is ready", "error", err)
 	}
+	go d.status.run(ctx, d.side.Tenant, listener.Addr().String())
 	select {
 	case err = <-served:
 		return fmt.Errorf("failed to serve: %w", err)
@@ -223,9 +228,10 @@ func (d *daemon) serve(ctx context.Context, listener net.Listener) error {
 	}
 	// Whatever stops ratd (a signal, the terminals dying too often), systemd shows it stopping
 	// while the door closes and the terminals stop.
-	if err = notifySystemd("STOPPING=1"); err != nil {
+	if err = d.notifier.notify("STOPPING=1"); err != nil {
 		d.logger.Warn("failed to tell systemd ratd is stopping", "error", err)
 	}
+	d.status.stop("closing the door")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancel()
 	if err = server.Shutdown(shutdownCtx); err != nil {
@@ -268,7 +274,7 @@ func (d *daemon) newServer(session, remote string) *mcp.Server {
 		SchemaCache:  d.schemas,
 		Logger:       d.sdkLogger,
 	})
-	server.AddReceivingMiddleware(logRequests(logger))
+	server.AddReceivingMiddleware(logRequests(logger), seeRequests(d.status, session))
 	d.addWindowTools(server, session, logger)
 	d.addInputTools(server, session, logger)
 	d.addScreenTools(server, session, logger)
@@ -291,6 +297,17 @@ func logRequests(logger *slog.Logger) mcp.Middleware {
 			}
 			logger.Debug("request", attrs...)
 			return result, err
+		}
+	}
+}
+
+// seeRequests records each MCP request of session in status, whatever the method: a client
+// initializing or listing the tools is there as well.
+func seeRequests(status *status, session string) mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			status.see(session, time.Now())
+			return next(ctx, method, req)
 		}
 	}
 }

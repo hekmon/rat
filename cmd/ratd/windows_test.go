@@ -70,12 +70,19 @@ var terminalsHold = tmux.TerminalsCheck{BracketedPaste: true, Prompts: true, Sta
 // is stopped when the test ends.
 func connectDaemon(t *testing.T, controller *tmux.Controller, terminals tmux.TerminalsCheck) (*mcp.ClientSession, *logBuffer) {
 	t.Helper()
-	ctx := context.Background()
 	logs := &logBuffer{}
 	d, err := newDaemon(slog.New(slog.NewTextHandler(logs, nil)), &mtls.Side{Tenant: "t"}, controller, terminals, defaultReadBudget)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return connectTo(t, d), logs
+}
+
+// connectTo returns an MCP client connected in memory to the tools of session alice of d. All is
+// stopped when the test ends.
+func connectTo(t *testing.T, d *daemon) *mcp.ClientSession {
+	t.Helper()
+	ctx := context.Background()
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	serverSession, err := d.newServer(toolsSession, toolsRemote).Connect(ctx, serverTransport, nil)
 	if err != nil {
@@ -87,7 +94,7 @@ func connectDaemon(t *testing.T, controller *tmux.Controller, terminals tmux.Ter
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = session.Close() })
-	return session, logs
+	return session
 }
 
 // callTool calls tool with args, and returns the text of its result and whether it is an error.

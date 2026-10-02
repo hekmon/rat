@@ -117,7 +117,9 @@ func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int
 	if side.Role != mtls.Server {
 		return fmt.Errorf("bundle: %w: %s is the directory of a client, not of the server", mtls.ErrRole, bundle)
 	}
-	warnDeployment(logger, bundle, os.Geteuid())
+	// before anything inherits NOTIFY_SOCKET, the tmux server first, its terminals with it
+	notifier := takeNotifySocket()
+	deployment := warnDeployment(logger, bundle, os.Geteuid())
 	controller, err := tmux.New(side.Tenant)
 	if err != nil {
 		return err
@@ -137,11 +139,13 @@ func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int
 		}
 		logger.Info("terminals stopped")
 	}()
-	checked := checkTerminals(ctx, logger, controller)
+	checked, degraded := checkTerminals(ctx, logger, controller)
 	d, err := newDaemon(logger, side, controller, checked, readBudget)
 	if err != nil {
 		return err
 	}
+	d.notifier, d.status.notifier = notifier, notifier
+	d.status.degrade(append(deployment, degraded...)...)
 	listener, err := listen()
 	if err != nil {
 		return err
@@ -154,13 +158,14 @@ func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int
 	var supervisorErr error
 	go func() {
 		defer close(supervised)
-		if supervisorErr = supervise(serving, logger, controller, terminals, defaultRestartPolicy); supervisorErr != nil {
+		if supervisorErr = supervise(serving, logger, controller, terminals, defaultRestartPolicy, d.status); supervisorErr != nil {
 			stopServing()
 		}
 	}()
-	go warnExpiry(serving, logger, side)
+	go warnExpiry(serving, logger, side, d.status)
 	err = d.serve(serving, listener)
 	logger.Info("door closed")
+	d.status.stop("stopping the terminals")
 	// no restart once stopping: the terminals are stopped next
 	stopServing()
 	<-supervised
@@ -172,14 +177,15 @@ func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int
 
 // warnExpiry warns now, then every day until ctx is done, if the bundle of side expires within a
 // year: an expired bundle stops every client at once, years after anyone remembers how it was
-// made. Sysadmins need reminding, often.
-func warnExpiry(ctx context.Context, logger *slog.Logger, side *mtls.Side) {
+// made. Sysadmins need reminding, often: the expiry is told to status as well.
+func warnExpiry(ctx context.Context, logger *slog.Logger, side *mtls.Side, status *status) {
 	ticker := time.NewTicker(expiryCheckInterval)
 	defer ticker.Stop()
 	for {
 		if left := time.Until(side.NotAfter()); left < mtls.ExpiryWarning {
 			logger.Warn("the bundle expires within a year: an expired bundle stops every client at once, "+
 				"generate a new one and deploy it to every side", "expiry", side.NotAfter(), "days_left", int(left.Hours()/24))
+			status.expires(side.NotAfter())
 		}
 		select {
 		case <-ctx.Done():

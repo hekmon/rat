@@ -51,7 +51,11 @@ func (d *daemon) addWaitTool(server *mcp.Server, session string, logger *slog.Lo
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: ptr(false)},
 	}, timedTool(logger, tools.WaitWindow, func(in tools.WaitWindowInput) string { return in.Window },
 		func(in tools.WaitWindowInput) time.Duration { return waitOf(in) },
-		func(ctx context.Context, in tools.WaitWindowInput) result { return d.waitWindow(ctx, session, in) }))
+		func(ctx context.Context, in tools.WaitWindowInput) result {
+			d.status.waitStarted()
+			defer d.status.waitEnded()
+			return d.waitWindow(ctx, session, in)
+		}))
 }
 
 // promptTool names the tool an agent waits for the prompt of a window with: wait_window where it

@@ -12,10 +12,13 @@ import (
 )
 
 // TestWarnDeploymentRoot guards that ratd run as root warns of it, and checks nothing else: root
-// can write any bundle.
+// can write any bundle, which the status tells as well.
 func TestWarnDeploymentRoot(t *testing.T) {
 	logs := &logBuffer{}
-	warnDeployment(slog.New(slog.NewTextHandler(logs, nil)), writableServerDir(t), 0)
+	found := warnDeployment(slog.New(slog.NewTextHandler(logs, nil)), writableServerDir(t), 0)
+	if !slices.Equal(found, []degradation{runningAsRoot}) {
+		t.Errorf("expected running as root for the status, got %v", found)
+	}
 	out := logs.String()
 	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "ratd runs as root") ||
 		strings.Contains(out, "replace the bundle") {
@@ -24,18 +27,22 @@ func TestWarnDeploymentRoot(t *testing.T) {
 }
 
 // TestWarnDeploymentWritable guards that ratd warns of a bundle its user can write, naming the
-// paths, and that a bundle out of its reach is not warned of.
+// paths, and that a bundle out of its reach is not warned of, nor told in the status.
 func TestWarnDeploymentWritable(t *testing.T) {
 	requireNotRoot(t)
 	dir := writableServerDir(t)
 	logs := &logBuffer{}
-	warnDeployment(slog.New(slog.NewTextHandler(logs, nil)), dir, os.Geteuid())
+	if found := warnDeployment(slog.New(slog.NewTextHandler(logs, nil)), dir, os.Geteuid()); !slices.Equal(found, []degradation{bundleWritable}) {
+		t.Errorf("expected bundle writable for the status, got %v", found)
+	}
 	if out := logs.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "replace the bundle") ||
 		!strings.Contains(out, filepath.Join(dir, "ca.crt")) {
 		t.Errorf("expected a warning naming the writable paths:\n%s", out)
 	}
 	logs = &logBuffer{}
-	warnDeployment(slog.New(slog.NewTextHandler(logs, nil)), "/", os.Geteuid())
+	if found := warnDeployment(slog.New(slog.NewTextHandler(logs, nil)), "/", os.Geteuid()); found != nil {
+		t.Errorf("expected nothing for the status, got %v", found)
+	}
 	if out := logs.String(); out != "" {
 		t.Errorf("expected no warning for a bundle out of reach:\n%s", out)
 	}

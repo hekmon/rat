@@ -278,9 +278,14 @@ func TestWarnExpiry(t *testing.T) {
 		expiry := &x509.Certificate{NotAfter: time.Now().Add(tc.left)}
 		side := &mtls.Side{CA: expiry, Certificate: tls.Certificate{Leaf: expiry}}
 		logs := &logBuffer{}
-		warnExpiry(ctx, slog.New(slog.NewTextHandler(logs, nil)), side)
+		logger := slog.New(slog.NewTextHandler(logs, nil))
+		s := newStatus(logger)
+		warnExpiry(ctx, logger, side, s)
 		if warned := strings.Contains(logs.String(), "expires within a year"); warned != tc.warn {
 			t.Errorf("%s left: expected a warning %v, got:\n%s", tc.left, tc.warn, logs)
+		}
+		if told := s.expiry.Equal(expiry.NotAfter); told != tc.warn {
+			t.Errorf("%s left: expected the expiry told to the status %v, got %v", tc.left, tc.warn, s.expiry)
 		}
 	}
 }

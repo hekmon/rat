@@ -200,7 +200,8 @@ func TestRunCallInFlight(t *testing.T) {
 }
 
 // TestRunGivesUp guards that ratd exits with an error, closing the door, when its tmux server dies
-// too often: whoever monitors the service sees it failed, and systemd sees it stopping first.
+// too often: whoever monitors the service sees it failed, and systemd sees it stopping first. The
+// status tells each death meanwhile.
 func TestRunGivesUp(t *testing.T) {
 	requireTmux(t)
 	next := listenNotify(t)
@@ -223,8 +224,14 @@ func TestRunGivesUp(t *testing.T) {
 	if err := stop(); err == nil || !strings.Contains(err.Error(), "died 2 times") {
 		t.Errorf("expected ratd to exit with an error after 2 deaths, got %v:\n%s", err, logs)
 	}
-	if ready, stopping := next(time.Second), next(time.Second); ready != "READY=1" || stopping != "STOPPING=1" {
-		t.Errorf("expected READY=1 then STOPPING=1, got %q and %q", ready, stopping)
+	if ready := next(time.Second, "READY"); ready != "READY=1" {
+		t.Errorf("expected READY=1, got %q", ready)
+	}
+	if died := next(time.Second, "tmux server died once in 1m"); died == "" {
+		t.Error("expected the status to tell the death")
+	}
+	if stopping := next(time.Second, "STOPPING"); stopping != "STOPPING=1" {
+		t.Errorf("expected STOPPING=1, got %q", stopping)
 	}
 }
 
@@ -233,7 +240,8 @@ func TestRunGivesUp(t *testing.T) {
 // when the check could not run (startup files blocking it block every terminal as well): in the
 // instructions, and in the description of send_text, which then no longer tells that text pasted at
 // a prompt waits for Enter. An inputrc turns bracketed paste off, so that only rat's command turns
-// it on, whatever the default of the bash running the tests (on from 5.1).
+// it on, whatever the default of the bash running the tests (on from 5.1). The status tells the
+// operator what the warnings told, for as long as ratd runs.
 func TestRunTerminalsWarnings(t *testing.T) {
 	requireTmux(t)
 	inputrc := filepath.Join(t.TempDir(), "inputrc")
@@ -248,14 +256,15 @@ func TestRunTerminalsWarnings(t *testing.T) {
 		name, profile string
 		logs          []string
 		pasteWarning  bool
+		status        string
 	}{
 		{"override", "PROMPT_COMMAND=true\n", []string{"bash startup files override bracketed paste",
-			"bash startup files replace PROMPT_COMMAND"}, true},
+			"bash startup files replace PROMPT_COMMAND"}, true, "bracketed paste overridden, PROMPT_COMMAND replaced"},
 		{"status changed", "PROMPT_COMMAND=\"history -a;$PROMPT_COMMAND\"\n",
-			[]string{"bash startup files run a command changing the exit status"}, false},
+			[]string{"bash startup files run a command changing the exit status"}, false, "exit statuses lost"},
 		{"pipeline lost", "__keep() { local s=$?; true; return $s; }; PROMPT_COMMAND=\"__keep;$PROMPT_COMMAND\"\n",
-			[]string{"ratd does not tell the status of each command of a pipeline"}, false},
-		{"blocking", "sleep 3\n", []string{"bash startup files did not finish"}, true},
+			[]string{"ratd does not tell the status of each command of a pipeline"}, false, "pipeline statuses lost"},
+		{"blocking", "sleep 3\n", []string{"bash startup files did not finish"}, true, "terminals check did not finish"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -263,8 +272,12 @@ func TestRunTerminalsWarnings(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Setenv("HOME", home)
+			next := listenNotify(t)
 			bundle := newBundle(t, "test-ratd-terminals")
 			addr, logs, _ := runRatd(t, bundle)
+			if status := next(time.Second, "STATUS=serving"); !strings.Contains(status, tc.status) {
+				t.Errorf("expected the status to tell %q, got %q", tc.status, status)
+			}
 			client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 			session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{
 				Endpoint:   "https://" + addr + connect.Path,
@@ -318,7 +331,8 @@ func startSupervised(t *testing.T, tenant string, policy restartPolicy) (*tmux.C
 	ctx, cancel := context.WithCancel(context.Background())
 	supervised := make(chan error, 1)
 	go func() {
-		supervised <- supervise(ctx, slog.New(slog.NewTextHandler(logs, nil)), c, context.Background(), policy)
+		logger := slog.New(slog.NewTextHandler(logs, nil))
+		supervised <- supervise(ctx, logger, c, context.Background(), policy, newStatus(logger))
 	}()
 	t.Cleanup(cancel)
 	return c, logs, supervised
