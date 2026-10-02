@@ -65,8 +65,14 @@ type Prompt struct {
 	// Time is when bash displayed it, to the second. The zero Time is no prompt.
 	Time time.Time
 	// Status is the exit status of the command bash ran before it, NoStatus for the first prompt of
-	// a bash, which follows its startup files rather than a command.
+	// a bash, which follows its startup files rather than a command. For a pipeline, it is the
+	// status of its last command, as bash tells it ($?): command | tee log exits with the status
+	// of tee, whatever command did.
 	Status int
+	// Pipeline is the exit status of each command of the pipeline bash ran before the prompt, left
+	// to right, the last one being Status. Nil for a single command, or when the hook does not get
+	// them (see TerminalsCheck.Pipelines).
+	Pipeline []int
 }
 
 // NoStatus is the Status of a Prompt following no command.
@@ -133,18 +139,45 @@ func parseInput(value string) time.Time {
 // anything else: the mark of a prompt still being recorded, or a value rat did not write, which a
 // command typed in a terminal can, and which must not fail the description of the window.
 func parsePrompt(value string) Prompt {
-	statusField, timeField, _ := strings.Cut(value, " ")
-	seconds, err := strconv.ParseInt(timeField, 10, 64)
+	fields := strings.Split(value, " ")
+	if len(fields) < 2 || len(fields) == 3 {
+		return Prompt{}
+	}
+	seconds, err := strconv.ParseInt(fields[1], 10, 64)
 	if err != nil || seconds <= 0 {
 		return Prompt{}
 	}
-	status := NoStatus
-	if statusField != "-" {
-		if status, err = strconv.Atoi(statusField); err != nil || status < 0 || status > 255 {
+	prompt := Prompt{Time: time.Unix(seconds, 0), Status: NoStatus}
+	if fields[0] != "-" {
+		if prompt.Status, err = parseStatus(fields[0]); err != nil {
 			return Prompt{}
 		}
 	}
-	return Prompt{Time: time.Unix(seconds, 0), Status: status}
+	// a pipeline of two commands at least, ending with the status
+	if len(fields) > 3 {
+		if prompt.Status == NoStatus {
+			return Prompt{}
+		}
+		prompt.Pipeline = make([]int, len(fields)-2)
+		for i, field := range fields[2:] {
+			if prompt.Pipeline[i], err = parseStatus(field); err != nil {
+				return Prompt{}
+			}
+		}
+		if prompt.Pipeline[len(prompt.Pipeline)-1] != prompt.Status {
+			return Prompt{}
+		}
+	}
+	return prompt
+}
+
+// parseStatus returns the exit status written as field, which bash keeps between 0 and 255.
+func parseStatus(field string) (int, error) {
+	status, err := strconv.Atoi(field)
+	if err != nil || status < 0 || status > 255 {
+		return 0, fmt.Errorf("invalid exit status %q", field)
+	}
+	return status, nil
 }
 
 // cutQuoted reads a field quoted by the tmux q: format modifier (spaces and special characters

@@ -44,14 +44,23 @@ func (d *daemon) addWindowTools(server *mcp.Server, session string, logger *slog
 		func(ctx context.Context, in tools.NameInput) result { return d.closeWindow(ctx, session, in.Name) }))
 }
 
+// pipelineHint returns what the descriptions of the tools telling how commands exited add for
+// pipelines, where the terminals record their statuses (see pipelineSentence).
+func (d *daemon) pipelineHint() string {
+	if !d.terminals.Pipelines {
+		return ""
+	}
+	return " " + pipelineSentence
+}
+
 // listWindowsDescription returns the description of list_windows, telling the exit status of commands
-// only where the terminals record it.
+// only where the terminals record it, and of the commands of a pipeline where they record those.
 func (d *daemon) listWindowsDescription() string {
 	if d.terminals.Statuses {
 		return "List your terminals: each window with its foreground command, working directory, last activity, " +
 			"and how its last command exited once bash is back at its prompt. The cheap way to check whether a " +
 			"command finished: an exit status shows it did (ssh shows as ssh even when idle, and what runs within " +
-			"it shows no exit status)."
+			"it shows no exit status)." + d.pipelineHint()
 	}
 	return "List your terminals: each window with its foreground command, working directory and last " +
 		"activity. The cheap way to check whether a command finished: bash in the foreground means the " +
@@ -86,7 +95,9 @@ func (d *daemon) listWindows(ctx context.Context, session string) result {
 
 // describeWindow tells what window runs, where, and when it was last active, relatively to now:
 // models do not know the current time. How the last command exited is told where the terminals
-// record it right (see checkTerminals), once bash is back at its prompt after it. Where they
+// record it right (see checkTerminals), once bash is back at its prompt after it, with the commands
+// of its pipeline that failed before the last one, whose status the pipeline has (see
+// finishedText). Where they
 // record prompts, a window whose bash has not run rat's hook yet is told (see notHookedText): bash
 // still starting, or startup files changed since ratd started, which its check did not see. The
 // history is only told when a capture can include it, not under a full-screen program. Paths are
@@ -97,8 +108,12 @@ func describeWindow(w tmux.Window, now time.Time, terminals tmux.TerminalsCheck)
 		description += ", no prompt recorded yet: bash still starting, or its startup files replace PROMPT_COMMAND"
 	}
 	if terminals.Statuses && !w.Prompt.Time.IsZero() && w.Prompt.Status != tmux.NoStatus {
-		description += fmt.Sprintf(", last command exited with status %d (%s ago)", w.Prompt.Status,
-			sinceText(now.Sub(w.Prompt.Time)))
+		description += fmt.Sprintf(", last command exited with status %d", w.Prompt.Status)
+		if failure, failed := failedPipeline(w.Prompt); terminals.Pipelines && failed {
+			description += fmt.Sprintf(", %s with %s%s (statuses: %s)", failure.commands, failure.bare, failure.note,
+				failure.all)
+		}
+		description += fmt.Sprintf(" (%s ago)", sinceText(now.Sub(w.Prompt.Time)))
 	}
 	switch {
 	case w.FullScreen:

@@ -233,6 +233,8 @@ func TestRunTerminalsWarnings(t *testing.T) {
 			"bash startup files replace PROMPT_COMMAND"}, true},
 		{"status changed", "PROMPT_COMMAND=\"history -a;$PROMPT_COMMAND\"\n",
 			[]string{"bash startup files run a command changing the exit status"}, false},
+		{"pipeline lost", "__keep() { local s=$?; true; return $s; }; PROMPT_COMMAND=\"__keep;$PROMPT_COMMAND\"\n",
+			[]string{"ratd does not tell the status of each command of a pipeline"}, false},
 		{"blocking", "sleep 3\n", []string{"bash startup files did not finish"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

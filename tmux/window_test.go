@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -38,9 +40,10 @@ func foregroundIs(c *Controller, session, window, command string) func() (bool, 
 }
 
 // TestParseWindow guards the parsing of the window format, whose prompt, input and command are
-// quoted by tmux and whose path comes last unquoted, the hook marker, and the parsing of prompts
-// and inputs: the mark of a prompt being recorded reads as no prompt, and a value rat did not
-// write, which a command typed in a terminal can, as no prompt or no input, rather than failing.
+// quoted by tmux and whose path comes last unquoted, the hook marker, and the parsing of prompts,
+// with the statuses of a pipeline, and inputs: the mark of a prompt being recorded reads as no
+// prompt, and a value rat did not write, which a command typed in a terminal can, as no prompt or
+// no input, rather than failing.
 func TestParseWindow(t *testing.T) {
 	w, err := parseWindow(`w 1700000000 1 42 1 0\ 1790000000 1790000100 my\ prog\|x /tmp/a dir|b`)
 	if err != nil {
@@ -49,7 +52,7 @@ func TestParseWindow(t *testing.T) {
 	expected := Window{Name: "w", Command: "my prog|x", Path: "/tmp/a dir|b", Activity: time.Unix(1700000000, 0),
 		FullScreen: true, Scrollback: 42, Prompt: Prompt{Time: time.Unix(1790000000, 0), Status: 0},
 		Input: time.Unix(1790000100, 0), Hooked: true}
-	if w != expected {
+	if !reflect.DeepEqual(w, expected) {
 		t.Errorf("got %+v, expected %+v", w, expected)
 	}
 	for _, line := range []string{"", "w", "w 1700000000 0 0 0", "w 1700000000 0 0 0 1\\ 1790000000 bash",
@@ -81,11 +84,18 @@ func TestParseWindow(t *testing.T) {
 		`256\ 1790000000`:  {},
 		`-1\ 1790000000`:   {},
 		`1\ 1790000000\ 2`: {},
+		// a pipeline, ending with the status
+		`0\ 1790000000\ 1\ 0`:    {Time: time.Unix(1790000000, 0), Status: 0, Pipeline: []int{1, 0}},
+		`0\ 1790000000\ 3\ 1\ 0`: {Time: time.Unix(1790000000, 0), Status: 0, Pipeline: []int{3, 1, 0}},
+		`1\ 1790000000\ 0\ 0`:    {},
+		`-\ 1790000000\ 1\ 0`:    {},
+		`0\ 1790000000\ x\ 0`:    {},
+		`0\ 1790000000\ 256\ 0`:  {},
 		// a prompt being recorded
 		promptMark + `\ 123.4`: {},
 	} {
 		w, err := parseWindow("w 1700000000 0 0 0 " + value + "  bash /tmp")
-		if err != nil || w.Prompt != expected {
+		if err != nil || !reflect.DeepEqual(w.Prompt, expected) {
 			t.Errorf("prompt %q: expected %+v, got %+v, %v", value, expected, w.Prompt, err)
 		}
 	}
@@ -134,8 +144,43 @@ func TestPrompt(t *testing.T) {
 	if _, err := c.run(ctx, "set-option", "-p", "-t", target("s", FirstWindow), promptOption, "not rat's"); err != nil {
 		t.Fatal(err)
 	}
-	if w, err := c.Window(ctx, "s", FirstWindow); err != nil || w.Prompt != (Prompt{}) {
+	if w, err := c.Window(ctx, "s", FirstWindow); err != nil || !reflect.DeepEqual(w.Prompt, Prompt{}) {
 		t.Errorf("expected no prompt from a value rat did not write, got %+v, %v", w.Prompt, err)
+	}
+}
+
+// TestPromptPipeline guards the statuses of a pipeline the prompts record, left to right, its last
+// one being the status bash tells: none for a single command, nor for a pipeline negated (!), whose
+// status is not its last command's, and the same whatever IFS startup files set.
+func TestPromptPipeline(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	c := startTestServer(t, "pipeline")
+	ctx := context.Background()
+	if err := c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "first prompt", promptIs(c, "s", FirstWindow, NoStatus))
+	for _, step := range []struct {
+		command  string
+		status   int
+		pipeline []int
+	}{
+		{"false | true", 0, []int{1, 0}},
+		{"true | (exit 3)", 3, []int{0, 3}},
+		{"(exit 2) | (exit 3) | true", 0, []int{2, 3, 0}},
+		{"! (exit 4) | true", 1, nil},
+		{"(exit 5)", 5, nil},
+		{"IFS=,; (exit 6) | true", 0, []int{6, 0}},
+	} {
+		typeCommand(t, c, "s", FirstWindow, step.command)
+		eventually(t, "prompt after "+step.command, func() (bool, string) {
+			w, err := c.Window(ctx, "s", FirstWindow)
+			if err != nil {
+				return false, err.Error()
+			}
+			return !w.Prompt.Time.IsZero() && w.Prompt.Status == step.status &&
+				slices.Equal(w.Prompt.Pipeline, step.pipeline), fmt.Sprintf("%+v", w.Prompt)
+		})
 	}
 }
 
@@ -203,7 +248,7 @@ func TestListWindows(t *testing.T) {
 		w.FullScreen {
 		t.Errorf("unexpected description of a new window: %+v", w)
 	}
-	if w, err := c.Window(ctx, "s", FirstWindow); err != nil || w != windows[0] {
+	if w, err := c.Window(ctx, "s", FirstWindow); err != nil || !reflect.DeepEqual(w, windows[0]) {
 		t.Errorf("expected %+v, got %+v, %v", windows[0], w, err)
 	}
 	// tmux display-message would describe another window of the session instead
@@ -302,7 +347,7 @@ func TestForegroundBash(t *testing.T) {
 			t.Fatal(err)
 		}
 		eventually(t, command+" started", screenContains(c, "s", FirstWindow, fmt.Sprintf("started%d", i)))
-		if w, err := c.Window(ctx, "s", FirstWindow); err != nil || w.Command != "bash" || w.Prompt != (Prompt{}) {
+		if w, err := c.Window(ctx, "s", FirstWindow); err != nil || w.Command != "bash" || !reflect.DeepEqual(w.Prompt, Prompt{}) {
 			t.Errorf("%s: expected bash in the foreground, running, got %+v, %v", command, w, err)
 		}
 		if err := c.SendKeys(ctx, "s", FirstWindow, "C-c"); err != nil {

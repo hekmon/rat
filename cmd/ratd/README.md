@@ -181,9 +181,12 @@ once.
   scrollback size. Activity is relative ("12s ago"): models do not know the current time. The exit
   status is told once bash is back at its prompt after the last input, with when ("last command
   exited with status 1 (12s ago)"): the time tells a status from an earlier command, the absence
-  of a status a command running (see Prompts in `tmux/README.md`). The description tells it is
-  the cheap way to check whether a command finished: an exit status shows it did, with its caveat
-  (ssh shows as ssh even when idle, and what runs within it shows no status). Where the terminals
+  of a status a command running (see Prompts in `tmux/README.md`). For a pipeline whose commands
+  before the last one failed, they follow, by position ("last command exited with status 0,
+  command 1 of its pipeline of 2 with 1 (statuses: 1 0) (12s ago)"), as `wait_window` tells them.
+  The description tells it is the cheap way to check whether a command finished: an exit status
+  shows it did, with its caveat (ssh shows as ssh even when idle, and what runs within it shows no
+  status), and how pipelines exit, where the terminals record them. Where the terminals
   do not record statuses right (see Startup), neither the windows nor the description tell them:
   the description tells instead that bash in the foreground means the terminal waits for input,
   with its caveats (bash scripts, builtins and loops show as bash, see Prompts in
@@ -282,6 +285,25 @@ once.
   use instead: the same tools everywhere, and an agent told why rather than left wondering where a
   tool went. A missing session is created, as by the other tools: waiting on `main` then waits for
   its first prompt. It returns at once when ratd stops (see Shutdown).
+
+  A pipeline exits with the status of its last command, as bash tells it: `command 2>&1 | tee
+  log`, which ratd recommends for long outputs, with the status of tee, 0 almost always. Told "exit
+  status 0", an agent takes a build that failed for a success, and nothing on the screen says
+  otherwise. Where the terminals record the statuses of pipelines (see Startup), the commands
+  before the last one that failed come first, by position (tmux knows no command names), then the
+  status of the pipeline, explained, and every status: `build: the command finished 3s ago:
+  command 1 of its pipeline of 2 exited with status 1. The pipeline exits with the status of its
+  last command, 0, as bash reports it (statuses, left to right: 1 0).` Failures first: a model
+  reading "exit status 0" first anchors on it. No verdict ("failed"): a status other than 0 is
+  not always a failure (`grep` matching nothing exits with 1). 141 is told as usually normal
+  (SIGPIPE: `yes | head`, the reader stopped early), the one status misleading there. Nothing is
+  added for a single command, nor for a pipeline whose last command alone failed, whose status
+  tells it. The descriptions of `wait_window` and `list_windows` say it in a sentence, before the
+  agent meets two statuses for one command. Rejected: the first status other than 0 as the status
+  of the pipeline (what `pipefail` does), which tells `yes | head` failed, and differs from bash;
+  `set -o pipefail` in the terminals, which changes what commands do, for the same reason; the
+  pipeline told whenever it holds several commands, tokens saying nothing for every `ls | grep`.
+
 
   50 seconds at most: a harness cuts a tool call at a limit of its own, which ratd can not see,
   nor push back without a stream to send progress on. That limit is 60 seconds by default for
@@ -568,14 +590,15 @@ In this order, a failure at steps 1, 2 or 4 making ratd exit while the admin is 
    names with its PID. Other failures: tmux missing, bash missing or too old.
 3. **Check the terminals**, once (`tmux.Controller.CheckTerminals`, 10 seconds at most): what bash
    startup files defeat at the prompt of terminals, bracketed paste, and the prompts recorded with
-   the status of commands. Terminals keep working either way (single line input is fine), so an
-   override, or a check that can not run, is a warning: logged, and for bracketed paste told to
-   agents, in the MCP instructions and the description of `send_text`. A check that can not run is
-   taken as nothing holding. A startup file blocking also blocks every terminal: the log says so.
-   Checked once rather than at each tmux restart: clients receive the instructions and the tools
-   once, and must not be told something the server no longer believes. A startup file changed
-   while ratd runs is caught at its next start, and shows meanwhile in the windows created since,
-   which `list_windows` and `wait_window` tell as recording no prompt.
+   the status of commands, and of each command of a pipeline. Terminals keep working either way
+   (single line input is fine), so an override, a command run before rat's (which loses the statuses
+   of pipelines, ratd then telling none), or a check that can not run, is a warning: logged, and for
+   bracketed paste told to agents, in the MCP instructions and the description of `send_text`. A
+   check that can not run is taken as nothing holding. A startup file blocking also blocks every
+   terminal: the log says so. Checked once rather than at each tmux restart: clients receive the
+   instructions and the tools once, and must not be told something the server no longer believes. A
+   startup file changed while ratd runs is caught at its next start, and shows meanwhile in the
+   windows created since, which `list_windows` and `wait_window` tell as recording no prompt.
 4. **Listen**: a second ratd for the same tenant fails at step 2, before opening an endpoint.
 
 When less than a year of validity remains on the bundle, ratd warns at startup and every 24 hours:

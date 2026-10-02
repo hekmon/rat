@@ -40,6 +40,7 @@ func (d *daemon) addWaitTool(server *mcp.Server, session string, logger *slog.Lo
 		"finished: a program waiting for input (y/n, a password), and what runs within ssh or an interpreter. Seen "+
 		"as finished at once: a command run in the background (&, nohup).",
 		tools.DefaultWaitSeconds, tools.MaxWaitSeconds)
+	description += d.pipelineHint()
 	if !d.terminals.Prompts {
 		description = "Wait until the command sent last to a window finished. Unavailable: " + noPromptsText
 	}
@@ -135,11 +136,20 @@ func withAttrs(r result, attrs []any) result {
 
 // finishedText tells that window w, its bash back at its prompt, finished the command sent last,
 // relatively to now: how it exited, when the terminals record it right (see checkTerminals), but
-// for the first prompt of a bash, which follows no command.
+// for the first prompt of a bash, which follows no command. For a pipeline whose commands before
+// the last one failed, where the terminals record it, the failures come first, then the status of
+// the pipeline, explained: an agent reading "exit status 0" first takes the command for a success,
+// command | tee log being the case ratd itself recommends.
 func (d *daemon) finishedText(window string, w tmux.Window, now time.Time) string {
+	failure, failed := failedPipeline(w.Prompt)
 	switch {
 	case w.Prompt.Status == tmux.NoStatus:
 		return fmt.Sprintf("%s: bash is at its prompt, waiting for input.", window)
+	case d.terminals.Pipelines && failed:
+		return fmt.Sprintf("%s: the command finished %s ago: %s exited with %s%s. The pipeline exits with the "+
+			"status of its last command, %d, as bash reports it (statuses, left to right: %s).", window,
+			sinceText(now.Sub(w.Prompt.Time)), failure.commands, failure.statuses, failure.note, w.Prompt.Status,
+			failure.all)
 	case d.terminals.Statuses:
 		return fmt.Sprintf("%s: the command finished %s ago, exit status %d.", window, sinceText(now.Sub(w.Prompt.Time)),
 			w.Prompt.Status)

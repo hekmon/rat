@@ -472,11 +472,13 @@ Terminals run bash as a login shell, which reads the bash startup files of the u
 defeat it: one assigning `PROMPT_COMMAND` (rather than adding to it) removes what makes a pasted
 text wait for Enter, and unless bash does it by itself (5.1 and later, without an inputrc turning
 it off), each line of a pasted text then runs as soon as it is pasted. It also removes what tells
-RAT when a command finished, and how: so does one running a command before RAT's that changes the
-exit status (starship does, `history -a` added in front does), for the status only. RAT checks
-what the bash prompt ends up with when it starts, warns, and only tells agents what holds, but
-does not refuse to run. A startup file changed while RAT runs is only checked at its next start:
-meanwhile, the windows created since tell agents they record no prompt, and why.
+RAT when a command finished, and how. A command run before RAT's does less: one changing the exit
+status hides the status (starship does, `history -a` added in front does), and any, even one
+keeping it (direnv), hides the status of each command of a pipeline: `command | tee log` then
+tells the status of tee only. RAT checks what the bash prompt ends up with when it starts, warns,
+and only tells agents what holds, but does not refuse to run. A startup file changed while RAT
+runs is only checked at its next start: meanwhile, the windows created since tell agents they
+record no prompt, and why.
 
 With a user for RAT alone (see Deployment), these startup files are RAT's: leave them as the
 account was created. What makes a shell pleasant to a human has no use for agents, and gets in

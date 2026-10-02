@@ -210,6 +210,10 @@ type TerminalsCheck struct {
 	// Statuses tells the prompt hook gets the exit status of commands, which a command a startup
 	// file adds in front of rat's, in PROMPT_COMMAND, may change.
 	Statuses bool
+	// Pipelines tells the prompt hook gets the status of each command of a pipeline (see
+	// Prompt.Pipeline), which a command a startup file adds in front of rat's loses, even when it
+	// keeps the status (direnv does).
+	Pipelines bool
 	// PromptCommand is what PROMPT_COMMAND became, quoted for bash, for the caller to tell.
 	PromptCommand string
 }
@@ -222,16 +226,21 @@ const checkMarker = "__rat_check|"
 // hook got: unlike 0 and 1, a status the commands of a PROMPT_COMMAND are unlikely to leave.
 const checkStatus = "7"
 
+// checkPipeline is the pipeline of that command, ending with checkStatus, as the prompt hook
+// records it (see promptCommand).
+const checkPipeline = " 6 " + checkStatus
+
 // checkScript is what CheckTerminals types into bash, a command per line: bash shows its prompt
 // before each, running PROMPT_COMMAND as in a terminal. The first keeps the history of the user as
-// it is: an interactive bash saves the commands it read when it exits. The second exits with
-// checkStatus, for the prompt after it. The third answers after the marker: bracketed paste at the
-// prompt, as readline reports it, the status the prompt hook got (empty if it did not run, see
-// promptCommand), and what PROMPT_COMMAND became, quoted on a single line.
+// it is: an interactive bash saves the commands it read when it exits. The second is a pipeline
+// exiting with checkStatus, for the prompt after it. The third answers after the marker: bracketed
+// paste at the prompt, as readline reports it, the status and the pipeline the prompt hook got
+// (empty if it did not run, see promptCommand), and what PROMPT_COMMAND became, quoted on a single
+// line.
 const checkScript = "unset HISTFILE\n" +
-	"(exit " + checkStatus + ")\n" +
-	`printf '\n%s%s|%s|%q\n' '` + checkMarker + `' "$(bind -v 2>/dev/null | grep -F enable-bracketed-paste)" ` +
-	`"${__rat_status-}" "${PROMPT_COMMAND[*]-}"` + "\n" +
+	"(exit 6) | (exit " + checkStatus + ")\n" +
+	`printf '\n%s%s|%s|%s|%q\n' '` + checkMarker + `' "$(bind -v 2>/dev/null | grep -F enable-bracketed-paste)" ` +
+	`"${__rat_status-}" "${__rat_pipeline-}" "${PROMPT_COMMAND[*]-}"` + "\n" +
 	"exit 0\n"
 
 // CheckTerminals checks what the bash of terminals ends up with at its prompt, once its startup
@@ -239,7 +248,8 @@ const checkScript = "unset HISTFILE\n" +
 // which records prompts and the status of commands (see Window.Prompt). rat sets both through
 // PROMPT_COMMAND, which a startup file assigning it (rather than adding to it) replaces: bracketed
 // paste then depends on bash defaults (on from 5.1) and the inputrc, and no prompt is recorded. A
-// command a startup file adds in front of rat's may change the status rat's gets. What it finds
+// command a startup file adds in front of rat's may change the status rat's gets, or lose the
+// statuses of a pipeline. What it finds
 // are warnings for the caller to relay, terminals keep working: the error tells the check could
 // not run.
 // It runs bash once as terminals start it (login, interactive, their environment), typing commands
@@ -297,15 +307,16 @@ func (c *Controller) CheckTerminals(ctx context.Context) (TerminalsCheck, error)
 	var answer []string
 	for line := range strings.Lines(string(output)) {
 		if fields, found := strings.CutPrefix(strings.TrimSuffix(line, "\n"), checkMarker); found {
-			answer = strings.SplitN(fields, "|", 3)
+			answer = strings.SplitN(fields, "|", 4)
 			break
 		}
 	}
-	if len(answer) != 3 {
+	if len(answer) != 4 {
 		return TerminalsCheck{}, errors.New("failed to run bash as terminals do: no answer at its prompt")
 	}
-	paste, status := answer[0], answer[1]
-	check := TerminalsCheck{Prompts: status != "", Statuses: status == checkStatus, PromptCommand: answer[2]}
+	paste, status, pipeline := answer[0], answer[1], answer[2]
+	check := TerminalsCheck{Prompts: status != "", Statuses: status == checkStatus, Pipelines: pipeline == checkPipeline,
+		PromptCommand: answer[3]}
 	switch paste {
 	case "set enable-bracketed-paste on":
 		check.BracketedPaste = true

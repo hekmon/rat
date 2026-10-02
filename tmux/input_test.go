@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -370,8 +371,9 @@ func TestSendTextMissingTarget(t *testing.T) {
 
 // TestCheckTerminals guards what the check finds at the bash prompt, whatever startup files do with
 // PROMPT_COMMAND: replaced, rat's command does not run (no bracketed paste, no prompt recorded);
-// added to, it runs, and gets the status unless a command run before changes it; run from a
-// function of its own, as starship does, it runs as well. An inputrc turns bracketed paste off, so
+// added to, it runs, and gets the status unless a command run before changes it, and the statuses of
+// a pipeline unless a command runs before, even keeping the status; run from a function of its own,
+// as starship does, it runs as well. An inputrc turns bracketed paste off, so
 // that only rat's command turns it on, whatever the default of the bash running the tests (on from
 // 5.1).
 func TestCheckTerminals(t *testing.T) {
@@ -387,14 +389,15 @@ func TestCheckTerminals(t *testing.T) {
 	if err := c.StartServer(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	all := TerminalsCheck{BracketedPaste: true, Prompts: true, Statuses: true}
+	all := TerminalsCheck{BracketedPaste: true, Prompts: true, Statuses: true, Pipelines: true}
 	for profile, expected := range map[string]TerminalsCheck{
 		"true":                        all,
 		`PROMPT_COMMAND="history -a"`: {},
 		// history -a fails once HISTFILE is unset, the check unsetting it: it changes the status
 		`PROMPT_COMMAND="history -a;$PROMPT_COMMAND"`: {BracketedPaste: true, Prompts: true},
-		// as direnv does: a command added in front, keeping the status
-		`__keep() { local s=$?; true; return $s; }; PROMPT_COMMAND="__keep;$PROMPT_COMMAND"`: all,
+		// as direnv does: a command added in front, keeping the status, but not the pipeline
+		`__keep() { local s=$?; true; return $s; }; PROMPT_COMMAND="__keep;$PROMPT_COMMAND"`: {BracketedPaste: true,
+			Prompts: true, Statuses: true},
 		// as terminals, bash runs within tmux: startup files often run tmux when TMUX is empty
 		`[ -z "$TMUX" ] && PROMPT_COMMAND="outside tmux"`: all,
 		// as starship does: PROMPT_COMMAND kept, and run by a function of its own, which runs
@@ -543,7 +546,7 @@ func TestInputClearsPrompt(t *testing.T) {
 	eventually(t, "first prompt", promptIs(c, "s", FirstWindow, NoStatus))
 	noPrompt := func(what string) {
 		t.Helper()
-		if w, err := c.Window(ctx, "s", FirstWindow); err != nil || w.Prompt != (Prompt{}) {
+		if w, err := c.Window(ctx, "s", FirstWindow); err != nil || !reflect.DeepEqual(w.Prompt, Prompt{}) {
 			t.Errorf("%s: expected no prompt, got %+v, %v", what, w.Prompt, err)
 		}
 	}

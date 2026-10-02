@@ -150,7 +150,12 @@ const hookedOption = "@rat_hooked"
 
 // promptCommand returns the PROMPT_COMMAND of terminals, run by bash before each prompt, after its
 // startup files, and reaching the server with the tmux at tmuxPath. In order, it:
-//   - reads the exit status of the last command: anything run before would change it;
+//   - reads the exit status of the last command, and the status of each command of its pipeline
+//     (PIPESTATUS), in a single assignment: anything run before would change them. The pipeline
+//     is kept when it holds several commands, and its last status is the one of the command: not
+//     after a pipeline negated (!), nor after C-c at the prompt, where bash changes one but not
+//     the other. Joined by a loop rather than ${a[*]}, which joins with the first character of
+//     IFS, which startup files may change;
 //   - turns bracketed paste on, which pasted text relies on, and which bash 4.4 and 5.0 do not
 //     enable by default, and an inputrc can disable: enforced whatever startup files say, with no
 //     file of rat's to maintain;
@@ -164,14 +169,15 @@ const hookedOption = "@rat_hooked"
 //     PROMPT_COMMAND, the terminal is in canonical mode, where a text without Enter is not
 //     readable. It does not run either, waiting on the command line;
 //   - records the prompt on promptOption if its mark is still there: the status, - for the first
-//     prompt of a bash (which follows its startup files, not a command), and the time, in seconds.
+//     prompt of a bash (which follows its startup files, not a command), the time, in seconds,
+//     then the statuses of the pipeline, if kept, each after a space.
 //     The record lands a millisecond or more after the check (see below): an input the check
 //     missed, or a newer prompt, may have replaced the mark by then. The record is dropped then,
 //     rather than read as following that input, or telling the status of the command before the
 //     newer prompt.
 //
-// Startup files assigning PROMPT_COMMAND defeat it: see CheckTerminals, which reads the status it
-// leaves in __rat_status. Nothing it runs writes on the screen. The time comes from printf, without
+// Startup files assigning PROMPT_COMMAND defeat it: see CheckTerminals, which reads the status and
+// the pipeline it leaves in __rat_status and __rat_pipeline. Nothing it runs writes on the screen. The time comes from printf, without
 // starting a process, or from date for a bash older than 4.2 started in a terminal (on macOS,
 // typing bash runs the 3.2 of the system). tmux is the one running the server, at tmuxPath, which
 // StartServer finds in rat's PATH: looked up in the PATH of the terminal, which the agent and its
@@ -183,14 +189,17 @@ const hookedOption = "@rat_hooked"
 // CheckTerminals records nothing.
 func promptCommand(tmuxPath string) string {
 	tmux := shellQuote(tmuxPath)
-	return `__rat_status=$?; [ -n "${__rat_prompted-}" ] || __rat_status=-; __rat_prompted=1; ` +
+	return `__rat_pipe=("${PIPESTATUS[@]}" $?); __rat_n=${#__rat_pipe[@]}; __rat_status=${__rat_pipe[__rat_n-1]}; ` +
+		`__rat_pipeline=; [ "$__rat_n" -lt 3 ] || [ "${__rat_pipe[__rat_n-2]}" != "$__rat_status" ] || ` +
+		`for __rat_s in "${__rat_pipe[@]:0:__rat_n-1}"; do __rat_pipeline="$__rat_pipeline $__rat_s"; done; ` +
+		`[ -n "${__rat_prompted-}" ] || { __rat_status=-; __rat_pipeline=; }; __rat_prompted=1; ` +
 		bracketedPasteCommand + `; [ -z "${TMUX-}" ] || [ -z "${TMUX_PANE-}" ] || ` +
 		`{ __rat_marks=$((${__rat_marks-0}+1)); __rat_mark="` + promptMark + ` $$.$__rat_marks"; ` +
 		`: "$(` + tmux + ` set-option -p -t "$TMUX_PANE" ` + promptOption + ` "$__rat_mark" ';' ` +
 		`set-option -p -t "$TMUX_PANE" ` + hookedOption + ` 1 </dev/null 2>&1)"; ` +
 		`read -t 0 || { printf -v __rat_time '%(%s)T' -1 2>/dev/null || __rat_time=$(date +%s); ` +
 		`(` + tmux + ` if-shell -F -t "$TMUX_PANE" "#{==:#{` + promptOption + `},$__rat_mark}" ` +
-		`"set-option -p -t $TMUX_PANE ` + promptOption + ` '$__rat_status $__rat_time'" ` +
+		`"set-option -p -t $TMUX_PANE ` + promptOption + ` '$__rat_status $__rat_time$__rat_pipeline'" ` +
 		`</dev/null >/dev/null 2>&1 &); }; }`
 }
 

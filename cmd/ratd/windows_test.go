@@ -63,7 +63,7 @@ func testHome(t *testing.T) string {
 
 // terminalsHold is the check of terminals where everything holds: the tests run bash with no
 // startup file of theirs.
-var terminalsHold = tmux.TerminalsCheck{BracketedPaste: true, Prompts: true, Statuses: true}
+var terminalsHold = tmux.TerminalsCheck{BracketedPaste: true, Prompts: true, Statuses: true, Pipelines: true}
 
 // connectDaemon returns an MCP client connected in memory to the tools of session alice, for
 // ratd with the terminals of controller, having found terminals in them, and the logs of ratd. All

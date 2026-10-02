@@ -244,3 +244,40 @@ func TestWaitWindowNotHooked(t *testing.T) {
 	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 1}, false,
 		"main: the command finished ")
 }
+
+// TestWaitWindowPipeline guards, through the tools, that a command failing behind | tee, the
+// pattern ratd recommends for long outputs, is not told as a success: wait_window and list_windows
+// tell the command that failed, and their descriptions tell it before the agent meets it. Where the
+// terminals do not record pipelines, the descriptions do not tell it.
+func TestWaitWindowPipeline(t *testing.T) {
+	session, _, _, _ := connectTools(t, "test-ratd-pipeline")
+	list, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range list.Tools {
+		if (tool.Name == "wait_window" || tool.Name == "list_windows") && !strings.Contains(tool.Description, pipelineSentence) {
+			t.Errorf("expected %s to tell how pipelines exit, got %q", tool.Name, tool.Description)
+		}
+	}
+	expectTool(t, session, "wait_window", map[string]any{"window": "main"}, false, "main: bash is at its prompt, waiting for input.")
+	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": "(echo build; exit 2) 2>&1 | tee /dev/null",
+		"enter": true}, false)
+	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 10}, false,
+		"main: the command finished ", " ago: command 1 of its pipeline of 2 exited with status 2. The pipeline exits "+
+			"with the status of its last command, 0, as bash reports it (statuses, left to right: 2 0).")
+	expectTool(t, session, "list_windows", nil, false,
+		", last command exited with status 0, command 1 of its pipeline of 2 with 2 (statuses: 2 0) (")
+
+	withoutPipelines, _, _, _ := connectToolsWith(t, "test-ratd-nopipeline", tmux.TerminalsCheck{BracketedPaste: true,
+		Prompts: true, Statuses: true})
+	if list, err = withoutPipelines.ListTools(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range list.Tools {
+		if strings.Contains(tool.Description, pipelineSentence) {
+			t.Errorf("expected %s not to tell how pipelines exit where they are not recorded, got %q", tool.Name,
+				tool.Description)
+		}
+	}
+}

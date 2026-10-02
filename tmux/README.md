@@ -232,22 +232,23 @@ Terminals inherit rat's environment, plus variables enforced at `StartServer`:
   rat's (`INPUTRC`), a file to maintain; typing the `bind` command in each new terminal, which
   shows on the screen and in the history, and holds only until something changes the setting.
 
-  Limit: a startup file assigning `PROMPT_COMMAND` (rather than adding to it, as most do)
-  replaces it: the inputrc or bash default applies, and no prompt is recorded. A command a
-  startup file adds in front of rat's may change the exit status rat's gets. rat does not refuse
-  to run then (single line inputs still work), but `CheckTerminals` detects both, for the caller
-  to warn: it runs bash once as terminals start it (login, interactive, their environment, `TERM`
-  and `TMUX` included, as startup files often run tmux when `TMUX` is empty, and `PROMPT_COMMAND`
-  as `StartServer` set it, not read back: see show-environment escapes `$`), and types commands
-  into it:
+  Limit: a startup file assigning `PROMPT_COMMAND` (rather than adding to it, as most do) replaces
+  it: the inputrc or bash default applies, and no prompt is recorded. A command a startup file adds
+  in front of rat's may change the exit status rat's gets, and loses the statuses of a pipeline even
+  when it keeps the status (direnv does: see Pipelines). rat does not refuse to run then (single
+  line inputs still work), but `CheckTerminals` detects them, for the caller to warn: it runs bash
+  once as terminals start it (login, interactive, their environment, `TERM` and `TMUX` included, as
+  startup files often run tmux when `TMUX` is empty, and `PROMPT_COMMAND` as `StartServer` set it,
+  not read back: see show-environment escapes `$`), and types commands into it:
 
   1. `unset HISTFILE`: an interactive bash saves the commands it read in the history of the user
      when it exits.
-  2. `(exit 7)`: a status the commands of a `PROMPT_COMMAND` are unlikely to leave, unlike 0 or 1
-     (`history -a` fails with 1 once `HISTFILE` is unset).
+  2. `(exit 6) | (exit 7)`: a pipeline whose status, 7, the commands of a `PROMPT_COMMAND` are
+     unlikely to leave, unlike 0 or 1 (`history -a` fails with 1 once `HISTFILE` is unset).
   3. A line answering with what bracketed paste is at the prompt, as readline reports it (`bind
-     -v`), the status rat's command got (`__rat_status`, which it leaves in the shell; empty if it
-     did not run), and what `PROMPT_COMMAND` became, for the logs.
+     -v`), the status and the pipeline rat's command got (`__rat_status` and `__rat_pipeline`,
+     which it leaves in the shell; empty if it did not run), and what `PROMPT_COMMAND` became, for
+     the logs.
 
   Typed on its input rather than given with `-c`, the commands make bash show its prompt before
   each, running `PROMPT_COMMAND` as in a terminal: what is checked is what the prompt ends up
@@ -553,7 +554,8 @@ tmux knows which process is in the foreground of a terminal, not when a command 
 subshell running, or bash not having started the command just sent yet. bash knows: it shows its
 prompt again once the command finished, and runs `PROMPT_COMMAND` right before. rat's
 `PROMPT_COMMAND` (see Terminal environment) records each prompt on the pane option `@rat_prompt`:
-the exit status of the command, and the time. The window description reads it (`Window.Prompt`).
+the exit status of the command, the time, and the statuses of a pipeline (see Pipelines). The
+window description reads it (`Window.Prompt`).
 
 tmux names the process leading the foreground after its first argument, the interpreter of a
 script. Measured on Linux with tmux 3.4: a script run by `#!/usr/bin/env bash` or `#!/bin/bash`,
@@ -624,6 +626,38 @@ prompts bash shows for the lines typed while a command runs, only the one after 
 recorded, and for a text sent while bash starts, the one after the text rather than its first
 prompt; a text typed without Enter lets the prompt be recorded.
 
+### Pipelines
+
+A pipeline exits with the status of its last command: `command 2>&1 | tee log`, which ratd
+recommends for long outputs, exits with the status of tee, 0 almost always, whatever command did.
+So the hook also reads the status of each command (`PIPESTATUS`), in the assignment reading `$?`:
+`__rat_pipe=("${PIPESTATUS[@]}" $?)`, before any command changes them, and records them after the
+time when the pipeline holds several commands (`0 1790000000 1 0`). The caller tells what the
+status hides.
+
+- **Kept only when its last status is `$?`**: a pipeline negated (`! false | true`) exits with 1,
+  its last command with 0, and C-c at the prompt changes `$?` (130) but not always `PIPESTATUS`.
+  The status is still recorded, without the pipeline.
+- **Joined by a loop**, not by `${a[*]}`, which joins with the first character of `IFS`, which
+  startup files and agents may change. No negative index (`${a[-1]}`) either: bash 3.2, typed in a
+  terminal on macOS, would print an error at each prompt.
+- **Lost to a command run before rat's**: any command run in `PROMPT_COMMAND` before rat's
+  replaces `PIPESTATUS` with its own, even one keeping `$?` (direnv's). `CheckTerminals` tells.
+- **Lost in a bash that runs no command before its first prompt** (no startup file running one,
+  `bash --norc` typed in a terminal): bash saves `PIPESTATUS` before running `PROMPT_COMMAND` and
+  restores it afterwards, and when no command created it yet, it saves nothing and restores an
+  empty array, which it never fills again (`save_pipestatus_array`, `restore_pipestatus_array` and
+  `set_pipestatus_array` in `variables.c`, bash 5.2). `PIPESTATUS` then stays empty in that shell,
+  for the agent as well: a `PROMPT_COMMAND` alone does it, rat's or any other. Measured with bash
+  3.2 to 5.3; unsetting it from `PROMPT_COMMAND` does not repair it, as the restore empties the
+  variable the commands after the unset create again. A login shell reads `/etc/profile`, which
+  runs commands on every system met: `CheckTerminals`, running bash as terminals start it, tells
+  when it does not.
+
+Measured with bash 3.2, 4.4, 5.0 and 5.3 (tmux 3.7c), and 5.2 (tmux 3.4): `false | true` records
+1 0, `yes | head -1` 141 0, C-c on `sleep 5 | true` 130 0, a pipeline negated and C-c at the
+prompt no pipeline, the same with `IFS=,`.
+
 ### Inputs clear it
 
 Each input clears the option, in its own invocation, right before the text or the keys: a prompt
@@ -673,7 +707,8 @@ itself (the first of a session).
 
 The options are read with the window description: the prompt and the input quoted
 (`#{q:@rat_prompt}`, `#{q:@rat_input}`), the hook marker as 0 or 1 (`#{?#{@rat_hooked},1,0}`).
-The mark of a prompt being recorded reads as no prompt. A command typed in a terminal can write
+The mark of a prompt being recorded reads as no prompt, and so does a pipeline that does not end
+with the status. A command typed in a terminal can write
 them, `TMUX` being kept: a value rat did not write reads as no prompt or no input, never as an
 error failing the description.
 

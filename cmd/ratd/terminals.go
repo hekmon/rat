@@ -16,7 +16,7 @@ import (
 var terminalsCheckTimeout = 10 * time.Second
 
 // checkTerminals checks once what the bash prompt of terminals ends up with (bracketed paste, the
-// prompts and statuses recorded), logs what bash startup files defeat, and returns it, for ratd to
+// prompts, statuses and pipelines recorded), logs what bash startup files defeat, and returns it, for ratd to
 // tell agents only what holds. Terminals keep working either way (single line input is fine): an
 // override is only a warning. A check that can not run, such as a startup file blocking (which
 // blocks every terminal as well), is taken as nothing holding. Checked once rather than at each
@@ -48,6 +48,10 @@ func checkTerminals(ctx context.Context, logger *slog.Logger, controller *tmux.C
 	case !check.Statuses:
 		logger.Warn("bash startup files run a command changing the exit status before rat's, in PROMPT_COMMAND: "+
 			"ratd does not tell how commands exited", "prompt_command", check.PromptCommand)
+	case !check.Pipelines:
+		logger.Warn("bash startup files run a command before rat's, in PROMPT_COMMAND: ratd does not tell the "+
+			"status of each command of a pipeline, and command | tee log exits with the status of tee",
+			"prompt_command", check.PromptCommand)
 	}
 	return check
 }
