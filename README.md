@@ -268,7 +268,9 @@ journalctl -u ratd-prod -f
 - **One unit per tenant**, each with its bundle and port. The tenants of a user keep their agents
   apart from mistakes, not from each other (see Users, tenants and sessions).
 - **Logs** go to the journal: every tool call (the client, the tool, the outcome, never the
-  content of what agents type or read), the start and stop, the bundle expiry warnings.
+  content of what agents type or read), the start and stop, the bundle expiry warnings. Each
+  level is a priority of the journal: `journalctl -u ratd-prod -p warning` shows what needs an
+  admin.
 
 ### macOS, with launchd
 

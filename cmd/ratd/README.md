@@ -706,6 +706,16 @@ whatever the protocol version: clients initialize, or discover the server from p
 on (the Go SDK does). The SDK logs every stateless request at info level (a session connecting,
 then disconnecting): only its warnings and errors are kept, all of it at debug level.
 
+Logs are text lines on stderr (`log/slog`). When stderr is the journal stream, which systemd
+names in `JOURNAL_STREAM`, each line goes without its time, which the journal records itself,
+and without its level, which a `<N>` prefix turns into the priority of the entry
+(`SyslogLevelPrefix=`, on by default): `journalctl` shows the time once, highlights warnings and
+errors, and filters them (`-p warning`). Detected by the device and inode of stderr rather than
+`INVOCATION_ID`, which every service gets, logging to the journal or not, and which a command
+started from a service inherits. Rejected: the native protocol of the journal, whose fields
+(`SESSION=`, `TOOL=`) would take a second format, where `journalctl --grep` finds the same in the
+text lines.
+
 ## Configuration
 
 ```

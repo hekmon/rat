@@ -80,7 +80,7 @@ func command(logs io.Writer) *cli.Command {
 			if err != nil {
 				return err
 			}
-			logger := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: level}))
+			logger := slog.New(newLogHandler(logs, level))
 			ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, os.Interrupt)
 			defer stop()
 			listen := cmd.String("listen")

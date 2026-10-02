@@ -226,4 +226,5 @@ tests written in advance do not: most pitfalls described in `tmux/README.md` wer
   flag is given once (`OnlyOnce`), lists aside (`--client`): the last value silently winning would
   hide a mistake in a copied command line. `--version` tells the version (`internal/version`).
 - Logs go through `log/slog`, text handler, on stderr: readable in `journalctl` and in a
-  terminal.
+  terminal. In the journal, ratd's lines leave the time and level to journald (see Logs in
+  `cmd/ratd/README.md`).
