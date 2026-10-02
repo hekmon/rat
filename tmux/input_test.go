@@ -492,3 +492,60 @@ func TestInputClearsPrompt(t *testing.T) {
 	eventually(t, "key typed", promptEndsWith(c, "s", FirstWindow, "x"))
 	noPrompt("key on the command line")
 }
+
+// TestPendingInputPrompt guards that bash records no prompt while a line waits on the terminal:
+// text sent with Enter before bash shows its first prompt, or while a command runs, runs right
+// after that prompt, and the prompt recorded next is the one after the text, with its status. Not
+// the first prompt of bash, telling it waits for input, nor the prompt of the command running,
+// with its status, nor those of the lines of the text but the last. A text sent without Enter does
+// not wait to run: the prompt after the command is recorded, the text left on its command line.
+func TestPendingInputPrompt(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// bash slow to start: a text sent to its new window arrives before its first prompt
+	if err := os.WriteFile(filepath.Join(home, ".bash_profile"), []byte("sleep 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := startTestServer(t, "pendingprompt")
+	ctx := context.Background()
+	if err := c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	send := func(text string, enter bool) {
+		t.Helper()
+		if err := c.SendText(ctx, "s", FirstWindow, text, enter); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// the texts run for a second: a prompt recorded before them would be seen
+	send("sleep 1; (exit 2)", true)
+	nextPromptIs(t, c, "s", FirstWindow, 2)
+	send("sleep 1; false", true)
+	eventually(t, "command running", foregroundIs(c, "s", FirstWindow, "sleep"))
+	send("(exit 3)\nsleep 1; (exit 4)", true)
+	nextPromptIs(t, c, "s", FirstWindow, 4)
+	send("sleep 1; false", true)
+	eventually(t, "command running", foregroundIs(c, "s", FirstWindow, "sleep"))
+	send("echo typed", false)
+	nextPromptIs(t, c, "s", FirstWindow, 1)
+	eventually(t, "text on the command line", promptEndsWith(c, "s", FirstWindow, "echo typed"))
+}
+
+// nextPromptIs fails the test unless the next prompt window records, the last input having cleared
+// the previous one, follows a command that exited with status.
+func nextPromptIs(t *testing.T, c *Controller, session, window string, status int) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		w, err := c.Window(context.Background(), session, window)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !w.Prompt.Time.IsZero() {
+			if w.Prompt.Status != status {
+				t.Fatalf("expected the next prompt to follow status %d, got %+v", status, w.Prompt)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected a prompt following status %d, got none", status)
+}

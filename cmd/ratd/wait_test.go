@@ -15,9 +15,10 @@ import (
 
 // TestWaitWindow guards wait_window: it returns as soon as the command sent last finished, telling
 // how it exited, or after the seconds asked, telling what still runs, with a calm hint when nothing
-// was displayed for a while; bash at its prompt with nothing run since the last input is not taken
-// for a command finished; the seconds asked are bounded. A command run in the background is seen
-// as finished at once, as the instructions and the description tell agents.
+// was displayed for a while; a command sent while another runs is the one waited for, even run by
+// bash, which shows as bash in the foreground; bash at its prompt with nothing run since the last
+// input is not taken for a command finished; the seconds asked are bounded. A command run in the
+// background is seen as finished at once, as the instructions and the description tell agents.
 func TestWaitWindow(t *testing.T) {
 	hint := quietHint
 	quietHint = 0
@@ -31,6 +32,11 @@ func TestWaitWindow(t *testing.T) {
 	if waited := time.Since(start); waited > 5*time.Second {
 		t.Errorf("expected the wait to end with the command, waited %s", waited)
 	}
+	// bash runs the second command once back at its prompt, which ends the first one
+	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": "sleep 1; false", "enter": true}, false)
+	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": "bash -c 'sleep 1; exit 3'", "enter": true}, false)
+	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 10}, false,
+		"main: the command finished ", " ago, exit status 3.")
 	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": "sleep 30", "enter": true}, false)
 	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 1}, false,
 		"main: still running after 1s, sleep in the foreground. No output for ", "read_window shows whether it waits for input.")

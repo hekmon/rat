@@ -41,8 +41,10 @@ type Window struct {
 	// the zero Prompt while bash displayed none since: a command running, a text left on the command
 	// line, keys typed at the prompt, bash starting. Only the bash of the terminal, and the ones
 	// started in it, record their prompts (see StartServer): not a program displaying a prompt of
-	// its own (ssh, an interpreter). Text sent while a command runs gets the prompt of that command
-	// when it ends: the foreground command then tells whether the text started another one.
+	// its own (ssh, an interpreter). Nor a prompt displayed while a line waits on the terminal: text
+	// sent with Enter while a command runs, or while bash starts, runs right after it, and the prompt
+	// recorded is the one after the text. An input sent within milliseconds of a prompt may still
+	// read as followed by it: bash records it from the background (see promptCommand).
 	Prompt Prompt
 }
 

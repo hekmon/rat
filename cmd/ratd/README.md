@@ -240,8 +240,10 @@ once.
   finished, then tells how it exited (`build: the command finished 3s ago, exit status 1.`), or,
   after `max_seconds` (20 by default, from 1 to 50, bounded by the schema), what still runs
   (`build: still running after 20s, make in the foreground.`). Finished means the window recorded a
-  prompt since the last input, with bash in the foreground: a text sent while a command ran gets
-  the prompt of that command, then runs (see Prompts in `tmux/README.md`). It asks tmux every
+  prompt since the last input, with bash in the foreground. A text sent while a command ran is
+  waited for: bash records no prompt while a line waits to run. An input sent within milliseconds
+  of a prompt may still read as followed by it, while the command it started runs: the foreground
+  command tells, unless bash runs it (see Prompts in `tmux/README.md`). It asks tmux every
   quarter of a second rather than being told: ratd keeps no state, and faster would only load
   tmux, the refresh of terminal UIs (about 100 ms) being for human eyes. Answers are one line,
   never the screen: waiting 50 seconds at a time for a twenty minute build costs 24 lines, where

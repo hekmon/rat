@@ -139,7 +139,12 @@ const promptOption = "@rat_prompt"
 //     enable by default, and an inputrc can disable: enforced whatever startup files say, with no
 //     file of rat's to maintain;
 //   - records the prompt on promptOption: the status, - for the first prompt of a bash (which
-//     follows its startup files, not a command), and the time, in seconds.
+//     follows its startup files, not a command), and the time, in seconds. Not while a line waits
+//     on the terminal, which read -t 0 tells without reading it: typed while a command ran or bash
+//     started, bash runs it right after this prompt, which does not end the command sent last. A
+//     whole line: until readline takes the terminal, after PROMPT_COMMAND, the terminal is in
+//     canonical mode, where a text without Enter is not readable. It does not run either, waiting
+//     on the command line.
 //
 // Startup files assigning PROMPT_COMMAND defeat it: see CheckTerminals, which reads the status it
 // leaves in __rat_status. Nothing it runs writes on the screen. The time comes from printf, without
@@ -148,11 +153,13 @@ const promptOption = "@rat_prompt"
 // StartServer finds in rat's PATH: looked up in the PATH of the terminal, which the agent and its
 // startup files change, it could be missing, or another tmux, and fail silently. It runs in the
 // background from a subshell: in the foreground, it would show as the command of the terminal while
-// it runs. It is only run by a bash in a terminal, whose TMUX and TMUX_PANE tmux sets: an agent
-// unsetting TMUX would reach another server, and the bash of CheckTerminals records nothing.
+// it runs. The record thus lands a millisecond or more after the check of a line waiting: the
+// prompt then reads as following an input arriving in between, which the check missed. It is only
+// run by a bash in a terminal, whose TMUX and TMUX_PANE tmux sets: an agent unsetting TMUX would
+// reach another server, and the bash of CheckTerminals records nothing.
 func promptCommand(tmuxPath string) string {
 	return `__rat_status=$?; [ -n "${__rat_prompted-}" ] || __rat_status=-; __rat_prompted=1; ` +
-		bracketedPasteCommand + `; [ -z "${TMUX-}" ] || [ -z "${TMUX_PANE-}" ] || ` +
+		bracketedPasteCommand + `; [ -z "${TMUX-}" ] || [ -z "${TMUX_PANE-}" ] || read -t 0 || ` +
 		`{ printf -v __rat_time '%(%s)T' -1 2>/dev/null || __rat_time=$(date +%s); ` +
 		`(` + shellQuote(tmuxPath) + ` set-option -p -t "$TMUX_PANE" ` + promptOption +
 		` "$__rat_status $__rat_time" </dev/null >/dev/null 2>&1 &); }`

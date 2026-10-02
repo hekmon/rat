@@ -511,6 +511,16 @@ description reads it (`Window.Prompt`).
   command, and their last status (1 on macOS with an empty `~/.bash_profile`) is not the agent's.
   So does the first prompt of a bash started in the terminal: the variable telling a first
   prompt is not exported.
+- **Not while a line waits on the terminal**: a text sent with Enter while a command runs, or
+  while bash starts, waits in the terminal (see Pasted as a human pastes), and bash runs it right
+  after its next prompt, which does not end the text. Recorded, that prompt would tell the text
+  finished as soon as the command before it did, with its status: a script queued behind a
+  command, which shows as `bash` in the foreground, would look finished for its whole run. `read
+  -t 0` tells, without reading anything, whether a line waits: the hook records nothing then, and
+  the prompt after the text, after its last line, is recorded instead. Only a whole line: until
+  readline takes the terminal, after `PROMPT_COMMAND`, the terminal is in canonical mode, where a
+  text without Enter is not readable yet. Such a text does not run either: it waits on the
+  command line, and the prompt is recorded.
 - **tmux is reached by the client of the terminal**, the tmux running the server, by its absolute
   path: `StartServer` finds it in rat's PATH, as the server was found (`/usr/bin/tmux` on Debian,
   `/opt/homebrew/bin/tmux` with Homebrew). Rejected: `tmux` looked up at each prompt in the PATH
@@ -521,17 +531,21 @@ description reads it (`Window.Prompt`).
   records nothing.
 - **In the background, from a subshell**: in the foreground, the tmux client would show as the
   command of the terminal while it runs (`tmux` instead of `bash`, a few milliseconds per
-  prompt). A subshell rather than a job: bash would announce a job, and its end.
+  prompt). A subshell rather than a job: bash would announce a job, and its end. The record thus
+  lands a millisecond or more after the check of a line waiting (see the limits below).
 - **Nothing on the screen**: every output is silenced, and the time comes from `printf '%(%s)T'`,
   without starting a process, or `date` for a bash older than 4.2 started in the terminal (typing
   `bash` on macOS runs the 3.2 of the system, first in the PATH of a login shell). The cost is one
   tmux client per prompt: about 1 ms on Linux, 4 ms on macOS.
 
 Measured with tmux 3.3a, 3.5a and 3.7c, and bash 4.4 to 5.3: a command records its status, C-c
-at the prompt or on a command 130, an empty Enter keeps the previous status, each line typed while
-a command runs gets a prompt of its own, a bash started in the terminal records its prompts, and
-its exit status once it exits. A multi-line text pasted then run gets a single prompt with bash
-5.1 and later, and one per line with 4.4 and 5.0, which show a prompt between them.
+at the prompt or on a command 130, an empty Enter keeps the previous status, a bash started in the
+terminal records its prompts, and its exit status once it exits. A multi-line text pasted then run
+gets a single prompt with bash 5.1 and later, and one per line with 4.4 and 5.0, which show a
+prompt between them. Lines waiting on the terminal, measured with tmux 3.4 and bash 5.2: of the
+prompts bash shows for the lines typed while a command runs, only the one after the last line is
+recorded, and for a text sent while bash starts, the one after the text rather than its first
+prompt; a text typed without Enter lets the prompt be recorded.
 
 ### Inputs clear it
 
@@ -545,10 +559,13 @@ Enter), keys typed at the prompt, bash starting. Clearing an option that is not 
 
 Limits, where the prompt recorded is not the one of the command sent:
 
-- A text sent while a command runs is read when it ends (see Pasted as a human pastes): the
-  prompt of that command is recorded after the input, then bash runs the text. An input sent
-  within milliseconds of a command ending meets the same race. In both cases the foreground
-  command tells: the text runs then, unless it is a bash builtin.
+- An input sent within milliseconds of a prompt: the hook checks for a line waiting, then records
+  the prompt from the background (see The hook), a millisecond or more later. An input reaching
+  the terminal in between is not seen waiting, and clears the prompt before the record lands: the
+  prompt then reads as following it. Measured from the machine itself (tmux 3.4, bash 5.2), with
+  an input sent right after `clear`, 1.5 ms after it: every time; sent 1 ms later, never. The
+  foreground command tells, unless bash runs the input: a builtin, a script, a subshell, which
+  show as `bash`.
 - bash 4.4 and 5.0 show a prompt between the lines of a multi-line text run at once: the prompt
   after its first line is recorded while the next ones run.
 - Input typed by a human attached to the terminal does not go through rat: it clears nothing.
