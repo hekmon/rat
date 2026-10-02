@@ -155,7 +155,14 @@ func TestCaptureFullScreenAsDisplayed(t *testing.T) {
 		t.Fatal(err)
 	}
 	typeCommand(t, c, "s", "hidden", `printf '\033[?1049h\033[?25l\033[3;4Hhidden'; sleep 30`)
-	eventually(t, "full-screen program drawn", screenContains(c, "s", "hidden", "hidden"))
+	// drawn on the alternate screen: the command line, which shows the text too, is not on it
+	eventually(t, "full-screen program drawn", func() (bool, string) {
+		snapshot, err := c.Capture(ctx, "s", "hidden", 0)
+		if err != nil {
+			return false, err.Error()
+		}
+		return snapshot.FullScreen && strings.Contains(snapshot.Content, "hidden"), fmt.Sprintf("%+v", snapshot)
+	})
 	if snapshot, err = c.Capture(ctx, "s", "hidden", 0); err != nil || !snapshot.FullScreen || snapshot.Cursor != (Position{}) {
 		t.Errorf("expected a full-screen program with no cursor, got %+v, %v", snapshot, err)
 	}
