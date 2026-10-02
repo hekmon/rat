@@ -116,7 +116,9 @@ tenant.
     (`ExecStop`), which keeps both, with a shell loop in the unit. Neither leaves more behind.
   - **A dedicated Unix user bounds what was set up on purpose**: what an agent makes persistent
     outside the service (crontab, user services, ssh keys, files) is beyond it. A Unix user for
-    rat alone lets the admin find and stop all of it at once, and lock the account.
+    rat alone lets the admin find and stop all of it at once, and lock the account. What was
+    copied off the machine is beyond any level, the server key included, which ratd reads as that
+    user: only a new bundle revokes it.
 - **A tmux server dying on its own is restarted** (a crash, the OOM killer, `tmux kill-server`
   typed in a terminal), by ratd, the controller only reporting the exit. Its terminals and their
   commands are lost, as when ratd stops. Repeated deaths make ratd exit, for its supervisor to
@@ -141,6 +143,13 @@ How the tmux controller keeps them, and the tmux pitfalls behind each of them, a
   file reads before they are sent. Agents keep using the secrets on the machine (they have a
   shell to do things), but their values do not travel back to the model, its logs or
   transcripts. Best effort only: it matches the literal output, not an encoded or split value.
+- **A server key out of the agents' reach**: ratd started as root, reading the key, then
+  dropping to its user before starting tmux, so that a stolen key can not outlive a stop. The
+  cost: a privileged start, the environment systemd sets for the user (`HOME`, `USER`…) for ratd
+  to rebuild, which terminals inherit, and launchd on macOS. Rejected: systemd credentials
+  (`LoadCredential=`), whose directory the user of the service reads, agents included; tmux and
+  ratd under two users, which opens the tmux server to another user; refusing the key to
+  `read_file`, which a `cat` in a terminal bypasses.
 
 ## Working on rat
 

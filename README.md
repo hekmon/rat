@@ -235,8 +235,8 @@ journalctl -u ratd-prod -f
 - **The bundle belongs to root, but for its key.** ratd only reads it, and the agents run as its
   user: a bundle that user could write, an agent could replace with one of its own, whose clients
   ratd would let in at its next start (measured on Debian 12). The key stays the user's, ratd
-  having to read it and refusing it readable by others: an agent can only spoil it, and ratd then
-  refuses to start.
+  having to read it and refusing it readable by others: an agent can spoil it, and ratd then
+  refuses to start, or copy it, which stopping the service does not revoke (see Security).
 - **The kill switch.** `systemctl stop ratd-prod` stops ratd, its endpoint first, the terminals
   and the commands they run, and whatever else is left in the service: commands detached from
   their terminals included (measured with systemd 252: a `nohup` command started by an agent is
@@ -338,7 +338,8 @@ to a server; the bundle stands for `authorized_keys`, but closed:
 - **On every address, loopback included**: other users of the machine reach loopback too.
 - **Revoking is generating a new bundle**, and deploying it: a bundle is closed, no certificate
   can be added to it nor removed from it. Certificates are valid 10 years, and every side warns
-  once less than one remains.
+  once less than one remains. This holds for the server key too, which the agents can read (see
+  Deploying safely).
 
 Unlike HTTPS on the web, the client does not check the name of the host it reaches: certificates
 carry no address, as both sides know each other beforehand, and presenting the certificate of the
@@ -386,6 +387,13 @@ leaves the rest to how you deploy it:
 - **Client keys are credentials.** A client key grants a shell as that user: give each harness its
   own (logs then tell who did what), never copy one elsewhere, and generate a new bundle to revoke
   one (bundles are closed: no certificate can be added nor removed).
+- **The server key is readable by the agents.** ratd reads it as its user, the one the terminals
+  run as: an agent can copy it off the machine. It lets no one into ratd, but whoever holds it can
+  pose as ratd to its clients, wherever they reach for it: on their way to the machine, or on its
+  port once ratd is stopped. Their agents then read screens made up to instruct them, and what
+  they send is collected. Stopping the service does not revoke the key: after an incident, or
+  any doubt about what ran as that user, generate a new bundle and deploy it, to ratd and every
+  client.
 - **Choose who can reach the port.** `--listen :7281`, the default, answers on every address of
   the machine, the internet included when the machine is on it, and mutual TLS is made for
   that: whoever holds no client certificate is refused during the handshake. What stays exposed
