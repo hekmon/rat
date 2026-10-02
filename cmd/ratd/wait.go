@@ -150,12 +150,15 @@ func (d *daemon) finishedText(window string, w tmux.Window, now time.Time) strin
 // runningText tells that the command sent last to window w is still running after waited,
 // relatively to now: what runs in the foreground, and when nothing was displayed for quietHint,
 // that it is normal, or that it may wait for input, which the screen shows. Calm on purpose: an
-// agent told its command looks stuck interrupts it.
+// agent told its command looks stuck interrupts it. bash in the foreground, with no prompt since
+// the input, is a bash script or builtin running as well as a text left on the command line (see
+// tmux.Window.Command): both are told, the screen telling which.
 func runningText(window string, w tmux.Window, waited time.Duration, now time.Time) string {
 	text := fmt.Sprintf("%s: still running after %s, %s in the foreground.", window, sinceText(waited), w.Command)
 	if w.Command == "bash" {
-		text = fmt.Sprintf("%s: nothing finished after %s: bash has shown no prompt since your last input. A text "+
-			"may wait on the command line (sent without Enter), or a bash builtin run (read).", window, sinceText(waited))
+		text = fmt.Sprintf("%s: nothing finished after %s: bash has shown no prompt since your last input. A bash "+
+			"script or builtin (read) may still be running, or a text may wait on the command line (sent without "+
+			"Enter): read_window shows which.", window, sinceText(waited))
 	}
 	if quiet := now.Sub(w.Activity); quiet >= quietHint {
 		text += fmt.Sprintf(" No output for %s, which is normal for some commands: read_window shows whether it "+

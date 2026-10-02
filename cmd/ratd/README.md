@@ -185,9 +185,9 @@ once.
   (ssh shows as ssh even when idle, and what runs within it shows no status). Where the terminals
   do not record statuses right (see Startup), neither the windows nor the description tell them:
   the description tells instead that bash in the foreground means the terminal waits for input,
-  with its caveats (bash builtins and loops show as bash). When it creates the session (see
-  Plumbing), a header says so: the agent learns its terminals did not exist, rather than finding
-  a lone `main`.
+  with its caveats (bash scripts, builtins and loops show as bash, see Prompts in
+  `tmux/README.md`). When it creates the session (see Plumbing), a header says so: the agent
+  learns its terminals did not exist, rather than finding a lone `main`.
 - **`create_window`** `{name}`: makes sure the session exists, then the window. Asking for
   `main` in a missing session is a success: creating the session made it. An existing window is
   not an error but a message saying it was not created, with what it runs and where: the agent
@@ -250,8 +250,9 @@ once.
   reading the screen each time would cost 24 screens. Two hints, worded calmly, as an agent
   told its command looks stuck interrupts it: when nothing was displayed for ten seconds, that it
   is normal for some commands, and that `read_window` shows whether it waits for input; when bash
-  is in the foreground with no prompt since the last input, that a text may wait on the command
-  line (sent without Enter), or a builtin run. Not seen as finished, which the description tells:
+  is in the foreground with no prompt since the last input, that a bash script or builtin may
+  still be running, or a text wait on the command line (sent without Enter), `read_window` telling
+  which: a script shows as bash. Not seen as finished, which the description tells:
   a program waiting for input, and what runs within ssh or an interpreter, which show no prompt of
   rat's bash. Seen as finished at once, which it tells too: a command run in the background, bash
   showing its prompt as soon as it started it. The exit status is told where the terminals record
@@ -489,12 +490,14 @@ Built at startup, sent to each client when it initializes, or discovers the serv
 
 How to check a command depends on what holds in the terminals (see Startup): where they do not
 record statuses right, the instructions tell of no status; where they record no prompt, that rat
-can not tell when a command finishes there, wait_window telling why. The host name tells an agent that has a local shell too where commands run. The tenant and the
-session are left out, agents having no use for them; the server info title carries the tenant
-and the host (`rat prod on host`), for clients to display. When the check of the terminals finds
-bracketed paste defeated, or can not run (see below), a sentence is added: multi-line text may run
-line by line even at a prompt, send one line at a time. The description of `send_text` tells it
-too, in place of what text meets at a prompt.
+can not tell when a command finishes there, wait_window telling why. Both tell that bash in the
+foreground of list_windows means the terminal waits for input, unless it runs a bash script or
+builtin. The host name tells an agent that has a local shell too where commands run. The tenant
+and the session are left out, agents having no use for them; the server info title carries the
+tenant and the host (`rat prod on host`), for clients to display. When the check of the
+terminals finds bracketed paste defeated, or can not run (see below), a sentence is added:
+multi-line text may run line by line even at a prompt, send one line at a time. The description
+of `send_text` tells it too, in place of what text meets at a prompt.
 
 Tool names are fixed, with no tenant prefix: MCP has no namespaces, and harnesses prefix tool
 names with the server name of their own configuration (`rat-prod`, `rat-staging`). A prefix in

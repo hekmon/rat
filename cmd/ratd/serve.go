@@ -67,11 +67,12 @@ func checkingText(terminals tmux.TerminalsCheck) string {
 			`bash is back at its prompt; read_window shows the screen.`, tools.MaxWaitSeconds)
 	case terminals.Prompts:
 		return fmt.Sprintf(`wait_window waits until a command finished, %d seconds at most per call; list_windows `+
-			`shows the foreground command of each window (bash means the terminal waits for input); read_window shows `+
-			`the screen.`, tools.MaxWaitSeconds)
+			`shows the foreground command of each window (bash means the terminal waits for input, unless it runs a `+
+			`bash script or builtin); read_window shows the screen.`, tools.MaxWaitSeconds)
 	default:
 		return `rat can not tell when a command finishes on this machine (wait_window tells why): list_windows ` +
-			`shows the foreground command (bash means the terminal waits for input), read_window shows the screen.`
+			`shows the foreground command (bash means the terminal waits for input, unless it runs a bash script or ` +
+			`builtin), read_window shows the screen.`
 	}
 }
 

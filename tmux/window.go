@@ -22,9 +22,11 @@ var (
 type Window struct {
 	Name string
 	// Command is the process in the foreground of the terminal: the shell (bash) when it waits
-	// for input, the running program otherwise. It does not see bash builtins and loops,
-	// background jobs, nor what runs within ssh or a nested shell (which show as bash, bash and
-	// ssh). It tells nothing about the exit status of the last command: Prompt does.
+	// for input, the running program otherwise. bash also shows for what bash runs: builtins and
+	// loops, but also bash scripts, bash -c, and subshells, which tmux names after their
+	// interpreter. It does not see background jobs, nor what runs within ssh or a nested shell
+	// (which show as ssh and bash). It tells nothing about the exit status of the last command:
+	// Prompt does.
 	Command string
 	// Path is the working directory of the foreground process.
 	Path string

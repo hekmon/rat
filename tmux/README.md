@@ -494,11 +494,17 @@ keys being dropped.
 ## Prompts
 
 tmux knows which process is in the foreground of a terminal, not when a command finished nor how:
-`bash` in the foreground also means a builtin or a loop running, or bash not having started the
-command just sent yet. bash knows: it shows its prompt again once the command finished, and runs
-`PROMPT_COMMAND` right before. rat's `PROMPT_COMMAND` (see Terminal environment) records each
-prompt on the pane option `@rat_prompt`: the exit status of the command, and the time. The window
-description reads it (`Window.Prompt`).
+`bash` in the foreground also means a builtin or a loop running, a bash script, `bash -c` or a
+subshell running, or bash not having started the command just sent yet. bash knows: it shows its
+prompt again once the command finished, and runs `PROMPT_COMMAND` right before. rat's
+`PROMPT_COMMAND` (see Terminal environment) records each prompt on the pane option `@rat_prompt`:
+the exit status of the command, and the time. The window description reads it (`Window.Prompt`).
+
+tmux names the process leading the foreground after its first argument, the interpreter of a
+script. Measured on Linux with tmux 3.4: a script run by `#!/usr/bin/env bash` or `#!/bin/bash`,
+`bash x.sh`, `bash -c`, and a subshell or a group in a pipeline running several commands show as
+`bash`, a Python script as `python3`. bash may run the last command of a subshell in its place,
+which then shows as that command. `TestForegroundBash` guards the ones showing as `bash`.
 
 ### The hook
 

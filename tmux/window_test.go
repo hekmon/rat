@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -172,6 +173,44 @@ func TestListWindows(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventually(t, "sleep in the foreground", foregroundIs(c, "s", FirstWindow, "sleep"))
+}
+
+// TestForegroundBash guards that bash shows in the foreground for what bash runs, not only at its
+// prompt: tmux names the process leading the foreground after its first argument, bash for a bash
+// script, bash -c, and a subshell or a group in a pipeline, while they run a command. The texts of
+// ratd tell agents so: bash in the foreground may be a script running.
+func TestForegroundBash(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	script := filepath.Join(home, "script")
+	// echo st''arted prints what its command line, on the screen, does not show
+	if err := os.WriteFile(script, []byte("#!/usr/bin/env bash\necho st''arted0\nsleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := startTestServer(t, "foregroundbash")
+	ctx := context.Background()
+	if err := c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "first prompt", promptIs(c, "s", FirstWindow, NoStatus))
+	for i, command := range []string{
+		script,
+		"bash -c 'echo st''arted1; sleep 30; true'",
+		"(echo st''arted2; sleep 30; true)",
+		"{ echo st''arted3; sleep 30; } | cat",
+	} {
+		if err := c.SendText(ctx, "s", FirstWindow, command, true); err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, command+" started", screenContains(c, "s", FirstWindow, fmt.Sprintf("started%d", i)))
+		if w, err := c.Window(ctx, "s", FirstWindow); err != nil || w.Command != "bash" || w.Prompt != (Prompt{}) {
+			t.Errorf("%s: expected bash in the foreground, running, got %+v, %v", command, w, err)
+		}
+		if err := c.SendKeys(ctx, "s", FirstWindow, "C-c"); err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, command+" interrupted", promptIs(c, "s", FirstWindow, 130))
+	}
 }
 
 // TestWindows guards the windows lifecycle and its errors: unique names, exact targets, windows

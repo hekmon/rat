@@ -16,8 +16,9 @@ import (
 // TestWaitWindow guards wait_window: it returns as soon as the command sent last finished, telling
 // how it exited, or after the seconds asked, telling what still runs, with a calm hint when nothing
 // was displayed for a while; a command sent while another runs is the one waited for, even run by
-// bash, which shows as bash in the foreground; bash at its prompt with nothing run since the last
-// input is not taken for a command finished; the seconds asked are bounded. A command run in the
+// bash, which shows as bash in the foreground; bash in the foreground with no prompt since the last
+// input, a bash script running or a text left on the command line, is not taken for a command
+// finished, and the hint tells both; the seconds asked are bounded. A command run in the
 // background is seen as finished at once, as the instructions and the description tell agents.
 func TestWaitWindow(t *testing.T) {
 	hint := quietHint
@@ -46,9 +47,17 @@ func TestWaitWindow(t *testing.T) {
 	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": "sleep 30 &", "enter": true}, false)
 	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 5}, false,
 		"main: the command finished ", " ago, exit status 0.")
+	// bash in the foreground, with no prompt since the input: a script running, or a text left on
+	// the command line
+	bashRunning := "main: nothing finished after 1s: bash has shown no prompt since your last input. A bash script " +
+		"or builtin (read) may still be running, or a text may wait on the command line (sent without Enter): " +
+		"read_window shows which."
+	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": "bash -c 'sleep 30; true'", "enter": true}, false)
+	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 1}, false, bashRunning)
+	expectTool(t, session, "send_keys", map[string]any{"window": "main", "keys": []string{"C-c"}}, false)
+	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 5}, false, "exit status 130.")
 	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": "echo pending", "enter": false}, false)
-	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 1}, false,
-		"main: nothing finished after 1s: bash has shown no prompt since your last input.")
+	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 1}, false, bashRunning)
 	expectTool(t, session, "wait_window", map[string]any{"window": "nope", "max_seconds": 1}, true, "No window nope")
 	for _, seconds := range []int{0, tools.MaxWaitSeconds + 1} {
 		if text, isError := callTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": seconds}); !isError {

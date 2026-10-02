@@ -54,7 +54,8 @@ func (d *daemon) listWindowsDescription() string {
 	}
 	return "List your terminals: each window with its foreground command, working directory and last " +
 		"activity. The cheap way to check whether a command finished: bash in the foreground means the " +
-		"terminal waits for input (bash builtins and loops show as bash too, and ssh shows as ssh even when idle)."
+		"terminal waits for input (bash scripts, builtins and loops show as bash too, and ssh shows as ssh even " +
+		"when idle)."
 }
 
 // listWindows lists the windows of session, one per line. A missing session is created, the
