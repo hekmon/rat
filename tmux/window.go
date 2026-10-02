@@ -43,8 +43,8 @@ type Window struct {
 	// started in it, record their prompts (see StartServer): not a program displaying a prompt of
 	// its own (ssh, an interpreter). Nor a prompt displayed while a line waits on the terminal: text
 	// sent with Enter while a command runs, or while bash starts, runs right after it, and the prompt
-	// recorded is the one after the text. An input sent within milliseconds of a prompt may still
-	// read as followed by it: bash records it from the background (see promptCommand).
+	// recorded is the one after the text. With bash 4.4 and 5.0, the lines of a text run at once
+	// each get a prompt, recorded while the next ones run.
 	Prompt Prompt
 }
 
@@ -99,8 +99,8 @@ func parseWindow(line string) (w Window, err error) {
 }
 
 // parsePrompt returns the prompt recorded as value (see promptCommand), or the zero Prompt for
-// anything else: a command typed in a terminal can write the option, and a value rat did not write
-// must not fail the description of the window.
+// anything else: the mark of a prompt still being recorded, or a value rat did not write, which a
+// command typed in a terminal can, and which must not fail the description of the window.
 func parsePrompt(value string) Prompt {
 	statusField, timeField, _ := strings.Cut(value, " ")
 	seconds, err := strconv.ParseInt(timeField, 10, 64)

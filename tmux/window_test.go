@@ -35,8 +35,9 @@ func foregroundIs(c *Controller, session, window, command string) func() (bool, 
 }
 
 // TestParseWindow guards the parsing of the window format, whose prompt and command are quoted by
-// tmux and whose path comes last unquoted, and the parsing of prompts: a value rat did not write,
-// which a command typed in a terminal can, reads as no prompt rather than failing.
+// tmux and whose path comes last unquoted, and the parsing of prompts: the mark of a prompt being
+// recorded reads as no prompt, and so does a value rat did not write, which a command typed in a
+// terminal can, rather than failing.
 func TestParseWindow(t *testing.T) {
 	w, err := parseWindow(`w 1700000000 1 42 0\ 1790000000 my\ prog\|x /tmp/a dir|b`)
 	if err != nil {
@@ -62,6 +63,8 @@ func TestParseWindow(t *testing.T) {
 		`256\ 1790000000`:  {},
 		`-1\ 1790000000`:   {},
 		`1\ 1790000000\ 2`: {},
+		// a prompt being recorded
+		promptMark + `\ 123.4`: {},
 	} {
 		w, err := parseWindow("w 1700000000 0 0 " + value + " bash /tmp")
 		if err != nil || w.Prompt != expected {

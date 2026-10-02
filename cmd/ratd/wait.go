@@ -105,8 +105,8 @@ func (d *daemon) waitWindow(ctx context.Context, session string, in tools.WaitWi
 		if err != nil {
 			return withAttrs(failure(ctx, err, in.Window), attrs)
 		}
-		// bash in the foreground as well: an input sent within milliseconds of a prompt may still
-		// read as followed by it, while the command it started runs (see tmux.Window.Prompt)
+		// bash in the foreground as well: bash 4.4 and 5.0 record a prompt after each line of a text
+		// run at once, while the next ones run (see tmux.Window.Prompt)
 		if !w.Prompt.Time.IsZero() && w.Command == "bash" {
 			return result{text: d.finishedText(in.Window, w, time.Now()), attrs: append(attrs, "finished", true)}
 		}

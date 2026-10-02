@@ -521,6 +521,20 @@ description reads it (`Window.Prompt`).
   readline takes the terminal, after `PROMPT_COMMAND`, the terminal is in canonical mode, where a
   text without Enter is not readable yet. Such a text does not run either: it waits on the
   command line, and the prompt is recorded.
+- **Marked first, recorded if still marked**: the record runs in the background (see below), and
+  lands a millisecond or more after the check of a line waiting. An input reaching the terminal
+  in between is not seen waiting, and clears the option before the record lands: recorded, the
+  prompt would read as following it. Measured from the machine itself (tmux 3.4, bash 5.2), with
+  an input sent right after `clear`, 1.5 ms after it: every time; sent 1 ms later, never. So the
+  hook first marks the prompt as being recorded, with a mark of its own (`recording`, the PID of
+  the bash and a count), and waits for tmux to hold it. It then checks for a line waiting, and
+  records the prompt only if the mark is still there (`if-shell -F`, evaluated by tmux): an input
+  from then on clears the mark (see Inputs clear it), dropping the record. A mark of its own
+  rather than a fixed one: a record landing after the next prompt is marked would replace that
+  mark, telling the status of the command before. A mark reads as no prompt. With it, the same
+  input never got the prompt (25 tries each, sent 0, 1 and 3 ms after `clear`). It rests on tmux
+  writing an input it handled before the mark to the terminal by the time it answers the mark:
+  bash still has to get that answer before checking.
 - **tmux is reached by the client of the terminal**, the tmux running the server, by its absolute
   path: `StartServer` finds it in rat's PATH, as the server was found (`/usr/bin/tmux` on Debian,
   `/opt/homebrew/bin/tmux` with Homebrew). Rejected: `tmux` looked up at each prompt in the PATH
@@ -529,14 +543,16 @@ description reads it (`Window.Prompt`).
   `TMUX` and `TMUX_PANE`, which tmux sets in every terminal, and is not run without them: an agent
   unsetting `TMUX` would reach another server, and a bash run elsewhere (the startup check)
   records nothing.
-- **In the background, from a subshell**: in the foreground, the tmux client would show as the
-  command of the terminal while it runs (`tmux` instead of `bash`, a few milliseconds per
-  prompt). A subshell rather than a job: bash would announce a job, and its end. The record thus
-  lands a millisecond or more after the check of a line waiting (see the limits below).
+- **The record in the background, from a subshell**: in the foreground, the tmux client would show
+  as the command of the terminal while it runs (`tmux` instead of `bash`, a few milliseconds per
+  prompt). A subshell rather than a job: bash would announce a job, and its end. The mark is waited
+  for, from a command substitution, which runs in the process group of bash: `bash` still shows as
+  the command (only `bash` was seen polling the window while it showed 100 prompts).
 - **Nothing on the screen**: every output is silenced, and the time comes from `printf '%(%s)T'`,
   without starting a process, or `date` for a bash older than 4.2 started in the terminal (typing
-  `bash` on macOS runs the 3.2 of the system, first in the PATH of a login shell). The cost is one
-  tmux client per prompt: about 1 ms on Linux, 4 ms on macOS.
+  `bash` on macOS runs the 3.2 of the system, first in the PATH of a login shell). The cost is two
+  tmux clients per prompt, about 1 ms each on Linux, 4 ms on macOS: bash waits for the first one,
+  the mark, before showing its prompt (1.6 ms measured on WSL 2).
 
 Measured with tmux 3.3a, 3.5a and 3.7c, and bash 4.4 to 5.3: a command records its status, C-c
 at the prompt or on a command 130, an empty Enter keeps the previous status, a bash started in the
@@ -554,27 +570,21 @@ recorded afterwards follows the input. The option then tells, by itself, whether
 prompt since the last input, the command sent having finished, with no state in rat, not even a
 marker of the input. Without it, the prompt of the previous command would read as the end of the
 one just sent. While it is cleared: a command running, a text left on the command line (no
-Enter), keys typed at the prompt, bash starting. Clearing an option that is not set succeeds
-(measured with tmux 3.3a to 3.7c): it can not fail the input.
+Enter), keys typed at the prompt, bash starting. Clearing the option also clears the mark of a
+prompt being recorded, which drops that record (see The hook). Clearing an option that is not set
+succeeds (measured with tmux 3.3a to 3.7c): it can not fail the input.
 
 Limits, where the prompt recorded is not the one of the command sent:
 
-- An input sent within milliseconds of a prompt: the hook checks for a line waiting, then records
-  the prompt from the background (see The hook), a millisecond or more later. An input reaching
-  the terminal in between is not seen waiting, and clears the prompt before the record lands: the
-  prompt then reads as following it. Measured from the machine itself (tmux 3.4, bash 5.2), with
-  an input sent right after `clear`, 1.5 ms after it: every time; sent 1 ms later, never. The
-  foreground command tells, unless bash runs the input: a builtin, a script, a subshell, which
-  show as `bash`.
 - bash 4.4 and 5.0 show a prompt between the lines of a multi-line text run at once: the prompt
   after its first line is recorded while the next ones run.
 - Input typed by a human attached to the terminal does not go through rat: it clears nothing.
 
 ### Reading it
 
-The option is read with the window description, quoted (`#{q:@rat_prompt}`). A command typed in
-a terminal can write it, `TMUX` being kept: a value rat did not write reads as no prompt, never
-as an error failing the description.
+The option is read with the window description, quoted (`#{q:@rat_prompt}`). The mark of a prompt
+being recorded reads as no prompt. A command typed in a terminal can write it, `TMUX` being kept:
+a value rat did not write reads as no prompt as well, never as an error failing the description.
 
 Rejected:
 

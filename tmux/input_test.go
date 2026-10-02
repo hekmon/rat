@@ -531,6 +531,56 @@ func TestPendingInputPrompt(t *testing.T) {
 	eventually(t, "text on the command line", promptEndsWith(c, "s", FirstWindow, "echo typed"))
 }
 
+// TestPromptRecordedLate guards that bash records a prompt only if no input reached the window,
+// nor a newer prompt was shown, since it marked that prompt: the record lands later, from the
+// background, after checking no line waits on the terminal. An input arriving in between, which
+// the check missed, would read as followed by the prompt, and a record landing after the next
+// prompt would tell the status of the command before it. A tmux wrapper delays the records of the
+// hook, not its marks, for an input to arrive in between, and the next prompt to be marked before
+// the record of the one before lands.
+func TestPromptRecordedLate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	tmuxPath, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal("tmux is required to run the tests:", err)
+	}
+	sleepPath, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the hook runs the tmux found in PATH when the server starts, from a pane: the commands of the
+	// controller are not delayed, even for tests run in a tmux pane
+	t.Setenv("TMUX_PANE", "")
+	wrapper := "#!/bin/sh\nfor last; do :; done\ncase \"$last\" in\n" + promptMark + "*) ;;\n" +
+		"*) [ -z \"${TMUX_PANE-}\" ] || " + shellQuote(sleepPath) + " 1 ;;\nesac\nexec " + shellQuote(tmuxPath) +
+		" \"$@\"\n"
+	dir := t.TempDir()
+	if err = os.WriteFile(filepath.Join(dir, "tmux"), []byte(wrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	c := startTestServer(t, "promptlate")
+	ctx := context.Background()
+	if err = c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "first prompt", promptIs(c, "s", FirstWindow, NoStatus))
+	if err = c.SendText(ctx, "s", FirstWindow, "PS1='ready> '", true); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "prompt after PS1", promptIs(c, "s", FirstWindow, 0))
+	if err = c.SendText(ctx, "s", FirstWindow, "true", true); err != nil {
+		t.Fatal(err)
+	}
+	// shown once the hook checked no line waits: its record lands a second later
+	eventually(t, "prompt shown", screenContains(c, "s", FirstWindow, "ready> true\nready>"))
+	time.Sleep(300 * time.Millisecond)
+	if err = c.SendText(ctx, "s", FirstWindow, "(exit 3)", true); err != nil {
+		t.Fatal(err)
+	}
+	nextPromptIs(t, c, "s", FirstWindow, 3)
+}
+
 // nextPromptIs fails the test unless the next prompt window records, the last input having cleared
 // the previous one, follows a command that exited with status.
 func nextPromptIs(t *testing.T, c *Controller, session, window string, status int) {

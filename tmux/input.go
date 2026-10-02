@@ -148,8 +148,10 @@ func leaveModes(target string) []string {
 
 // clearPrompt returns the tmux command clearing the prompt the window target recorded (see
 // Window.Prompt), to chain in an input invocation right before the input: the prompt recorded
-// until then precedes the input, and one recorded afterwards follows it. Clearing an option that
-// is not set succeeds: it can not fail the input.
+// until then precedes the input, and one recorded afterwards follows it. It clears the mark of a
+// prompt being recorded as well, which drops that record (see promptCommand): bash checked no line
+// waits before the input arrived. Clearing an option that is not set succeeds: it can not fail the
+// input.
 func clearPrompt(target string) []string {
 	return []string{"set-option", "-pu", "-t", target, promptOption}
 }

@@ -132,37 +132,52 @@ const bracketedPasteCommand = `bind "set enable-bracketed-paste on"`
 // promptCommand), which Window reads: a user option, tmux has no use for it.
 const promptOption = "@rat_prompt"
 
+// promptMark starts the value promptCommand marks a prompt being recorded with, on promptOption: it
+// reads as no prompt.
+const promptMark = "recording"
+
 // promptCommand returns the PROMPT_COMMAND of terminals, run by bash before each prompt, after its
 // startup files, and reaching the server with the tmux at tmuxPath. In order, it:
 //   - reads the exit status of the last command: anything run before would change it;
 //   - turns bracketed paste on, which pasted text relies on, and which bash 4.4 and 5.0 do not
 //     enable by default, and an inputrc can disable: enforced whatever startup files say, with no
 //     file of rat's to maintain;
-//   - records the prompt on promptOption: the status, - for the first prompt of a bash (which
-//     follows its startup files, not a command), and the time, in seconds. Not while a line waits
-//     on the terminal, which read -t 0 tells without reading it: typed while a command ran or bash
-//     started, bash runs it right after this prompt, which does not end the command sent last. A
-//     whole line: until readline takes the terminal, after PROMPT_COMMAND, the terminal is in
-//     canonical mode, where a text without Enter is not readable. It does not run either, waiting
-//     on the command line.
+//   - marks the prompt as being recorded, on promptOption, with a mark of its own (promptMark, the
+//     PID of the bash and a count), and waits for tmux to hold it: an input reaching the window
+//     from then on clears it (see clearPrompt), and the mark of a newer prompt replaces it;
+//   - stops there if a line waits on the terminal, which read -t 0 tells without reading it: typed
+//     while a command ran or bash started, bash runs it right after this prompt, which does not end
+//     the command sent last. A whole line: until readline takes the terminal, after
+//     PROMPT_COMMAND, the terminal is in canonical mode, where a text without Enter is not
+//     readable. It does not run either, waiting on the command line;
+//   - records the prompt on promptOption if its mark is still there: the status, - for the first
+//     prompt of a bash (which follows its startup files, not a command), and the time, in seconds.
+//     The record lands a millisecond or more after the check (see below): an input the check
+//     missed, or a newer prompt, may have replaced the mark by then. The record is dropped then,
+//     rather than read as following that input, or telling the status of the command before the
+//     newer prompt.
 //
 // Startup files assigning PROMPT_COMMAND defeat it: see CheckTerminals, which reads the status it
 // leaves in __rat_status. Nothing it runs writes on the screen. The time comes from printf, without
 // starting a process, or from date for a bash older than 4.2 started in a terminal (on macOS,
 // typing bash runs the 3.2 of the system). tmux is the one running the server, at tmuxPath, which
 // StartServer finds in rat's PATH: looked up in the PATH of the terminal, which the agent and its
-// startup files change, it could be missing, or another tmux, and fail silently. It runs in the
-// background from a subshell: in the foreground, it would show as the command of the terminal while
-// it runs. The record thus lands a millisecond or more after the check of a line waiting: the
-// prompt then reads as following an input arriving in between, which the check missed. It is only
-// run by a bash in a terminal, whose TMUX and TMUX_PANE tmux sets: an agent unsetting TMUX would
-// reach another server, and the bash of CheckTerminals records nothing.
+// startup files change, it could be missing, or another tmux, and fail silently. The record runs in
+// the background from a subshell: in the foreground, it would show as the command of the terminal
+// while it runs. The mark is waited for from a command substitution, which runs in the process
+// group of bash: bash still shows as the command. It is only run by a bash in a terminal, whose
+// TMUX and TMUX_PANE tmux sets: an agent unsetting TMUX would reach another server, and the bash of
+// CheckTerminals records nothing.
 func promptCommand(tmuxPath string) string {
+	tmux := shellQuote(tmuxPath)
 	return `__rat_status=$?; [ -n "${__rat_prompted-}" ] || __rat_status=-; __rat_prompted=1; ` +
-		bracketedPasteCommand + `; [ -z "${TMUX-}" ] || [ -z "${TMUX_PANE-}" ] || read -t 0 || ` +
-		`{ printf -v __rat_time '%(%s)T' -1 2>/dev/null || __rat_time=$(date +%s); ` +
-		`(` + shellQuote(tmuxPath) + ` set-option -p -t "$TMUX_PANE" ` + promptOption +
-		` "$__rat_status $__rat_time" </dev/null >/dev/null 2>&1 &); }`
+		bracketedPasteCommand + `; [ -z "${TMUX-}" ] || [ -z "${TMUX_PANE-}" ] || ` +
+		`{ __rat_marks=$((${__rat_marks-0}+1)); __rat_mark="` + promptMark + ` $$.$__rat_marks"; ` +
+		`: "$(` + tmux + ` set-option -p -t "$TMUX_PANE" ` + promptOption + ` "$__rat_mark" </dev/null 2>&1)"; ` +
+		`read -t 0 || { printf -v __rat_time '%(%s)T' -1 2>/dev/null || __rat_time=$(date +%s); ` +
+		`(` + tmux + ` if-shell -F -t "$TMUX_PANE" "#{==:#{` + promptOption + `},$__rat_mark}" ` +
+		`"set-option -p -t $TMUX_PANE ` + promptOption + ` '$__rat_status $__rat_time'" ` +
+		`</dev/null >/dev/null 2>&1 &); }; }`
 }
 
 // shellQuote returns s quoted for bash, between single quotes.
