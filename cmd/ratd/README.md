@@ -354,7 +354,9 @@ errors with its messages.
   former size). A new file gets 0644 minus ratd's umask. Missing directories are created, as
   `mkdir -p` does (0755 minus ratd's umask), sparing a round trip through the terminal, and the
   result names them: a typo in a path creates directories the agent did not mean. The content is
-  text (a JSON string), written as is: binary content goes through the terminal (`base64 -d`).
+  text (a JSON string), written as is. The description tells no way around for binary content: an
+  agent that really needs one encodes it as text by itself, and pointing to a way (`base64 -d` in
+  the terminal) would invite it into its context, a third larger and meaningless to the model.
 - **`read_file`** `{path, start_line, max_lines, line_numbers}`: whole lines of a text file, from
   `start_line` (1 by default, negative counts from the end: -100 for the last 100 lines), at most
   `max_lines` (all by default). The header tells the lines returned out of how many, the size and
