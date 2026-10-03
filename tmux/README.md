@@ -208,9 +208,11 @@ but makes watching several windows a chore.
 ### Terminals run bash, at home
 
 Terminals run bash, checked at `StartServer` rather than failing on each new window: it is
-always available, and the shell agents know best (zsh differs just enough to mislead them).
-bash starts as a login shell: it reads `~/.bash_profile` or `~/.profile`, not `~/.bashrc` unless
-the profile sources it.
+always available, and a single shell keeps terminals the same on every machine. tmux would
+otherwise run the login shell of the account: it changes from one machine to another, a dedicated
+user has none (`nologin`, as the root README sets it up), and each shell would need a prompt hook
+of its own (see Prompts). bash starts as a login shell: it reads `~/.bash_profile` or
+`~/.profile`, not `~/.bashrc` unless the profile sources it.
 
 bash 4.4 or later is required, and `StartServer` refuses an older one: pasted text relies on
 bracketed paste (see Input), which bash has since 4.4. macOS ships bash 3.2 (the last version

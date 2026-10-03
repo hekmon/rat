@@ -5,7 +5,7 @@ drive as a human does, and which a human operator can cut at once.
 
 - **What it does:** [What it is](#what-it-is) · [Not a tmux MCP server](#not-a-tmux-mcp-server) ·
   [Knowing when a command is done](#knowing-when-a-command-is-done) ·
-  [What agents no longer have to know](#what-agents-no-longer-have-to-know) · [Tools](#tools)
+  [What RAT takes on](#what-rat-takes-on) · [Tools](#tools)
 - **Trying it:** [Components](#components) ·
   [Users, tenants and sessions](#users-tenants-and-sessions) · [Requirements](#requirements) ·
   [Getting started](#getting-started)
@@ -48,7 +48,9 @@ exist first; that a target is written `session:window.pane`; that `send-keys` re
 `C-c` in its text as key names unless given `-l`; that multi-line text sent this way runs line
 by line, as it is typed; and that `capture-pane` returns the visible screen only, wrapped lines
 split, unless given `-S` and `-J`. Each of these is a command, a flag or a pitfall to learn, and
-each mistake costs a call and some context.
+each mistake costs a call and some context. Knowing them all is not enough: much of what RAT
+works around is not in the manual of tmux, but was met on real servers, some of it varying from
+one version to the next (see [`tmux/README.md`](tmux/README.md)).
 
 RAT takes these on, and agents get a terminal in its simplest form: a keyboard and a screen.
 The result is nine tools with few parameters, explained in a few lines of instructions. Less
@@ -107,10 +109,10 @@ finished for bash at once. So agents are told to run each long command in the fo
 window of its own: a single `list_windows` then follows them all, with no script to check jobs or
 their logs.
 
-## What agents no longer have to know
+## What RAT takes on
 
-Beyond knowing when commands finish, RAT takes on the details an agent would otherwise learn from
-tmux one mistake at a time:
+Beyond knowing when commands finish, RAT takes on the details an agent would otherwise handle
+itself, in every session, or miss:
 
 - **Found by name, created on first use.** Windows are named by the agent, and their session is
   created when first needed. An agent whose terminals were lost (ratd or its tmux server
