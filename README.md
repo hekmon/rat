@@ -150,9 +150,9 @@ itself, in every session, or miss:
   (`create_window`); input sent while the terminals were restarting tells that nothing was sent,
   and to wait for the prompt before sending again. Successes say as much: `Pasted in build, Enter
   not pressed.` tells exactly what the terminal received.
-- **The same terminal everywhere.** bash, starting at home, a neutral UTF-8 locale (English
-  messages, stable formats), no tmux configuration, and no pager: `git log` prints its output
-  rather than opening `less` for the agent to quit.
+- **The same terminal everywhere.** bash (whatever the login shell of the account), starting at
+  home, a neutral UTF-8 locale (English messages, stable formats), no tmux configuration, and no
+  pager: `git log` prints its output rather than opening `less` for the agent to quit.
 - **Checked at start.** ratd checks that the bash startup files of its user keep what RAT relies
   on (the prompt hook, exit statuses, bracketed paste), and adapts its tool descriptions to what
   holds: where a `.bashrc` replaces `PROMPT_COMMAND`, `wait_window` says why it can not wait,
