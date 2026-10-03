@@ -257,12 +257,12 @@ Get-Content rat_*_SHA256SUMS | ForEach-Object {
 Generate the bundle of a tenant, with a client per harness:
 
 ```sh
-rat-tool bundle generate --tenant prod --client alice --output bundle-prod
+rat-tool bundle generate --tenant prod --client alice --client bob --output bundle-prod
 ```
 
-Copy `bundle-prod/server` to the server, and `bundle-prod/clients/alice` to the machine of the
-harness, each directory whole, and to that side only: a client key is what lets its holder in,
-and nothing else does.
+Copy `bundle-prod/server` to the server, and `bundle-prod/clients/alice` and
+`bundle-prod/clients/bob` to the machines of their harnesses, each directory whole, and to that
+side only: a client key is what lets its holder in, and nothing else does.
 
 Agents can do whatever the user running ratd can: give it a Unix user of its own, neither root
 nor yours, and run it with the server directory (as a service: see Deployment):
@@ -271,7 +271,7 @@ nor yours, and run it with the server directory (as a service: see Deployment):
 ratd --bundle /etc/rat/prod/server
 ```
 
-Declare rat in the harness, as a stdio MCP server, with the client directory:
+Declare rat in each harness, as a stdio MCP server, with its client directory, here for alice:
 
 ```json
 {
