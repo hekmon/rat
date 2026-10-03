@@ -9,8 +9,8 @@ You give an agent a machine to work on. ratd runs there, and the agent reaches i
 harness: it gets terminals on that machine, which it opens, types in and reads, as you would in
 tmux over ssh, and it copies files to and from it. The terminals keep running between its calls:
 it starts a build, works on something else meanwhile, and comes back to read the result. And when
-you want it to stop, you stop the service: every terminal, and everything the agent started, goes
-with it.
+you want it to stop, you stop the service: every terminal goes with it, and with systemd,
+everything the agent started.
 
 - **Persistent terminals.** Named windows running bash, which survive the restarts and context
   compactions of an agent: it finds its terminals back, with what runs in them.
@@ -141,8 +141,7 @@ tmux one mistake at a time:
 - **Checked at start.** ratd checks that the bash startup files of its user keep what RAT relies
   on (the prompt hook, exit statuses, bracketed paste), and adapts its tool descriptions to what
   holds: where a `.bashrc` replaces `PROMPT_COMMAND`, `wait_window` says why it can not wait,
-  rather than waiting for a prompt that never comes. A window whose startup files changed since
-  is told as such, with the fix (see Your shell configuration).
+  rather than waiting for a prompt that never comes (see Your shell configuration).
 - **A human watching does not get in the way.** Attaching to the tmux server does not resize the
   windows, and a copy mode left on (to scroll back) is left before the agent's next input.
 
@@ -212,6 +211,14 @@ terminal can do whatever its Unix user can, reaching the terminals and files of 
 and sessions of that user. Several tenants may share a Unix user; agents that must not be able to
 reach each other need a Unix user each, or better, a container or a machine each.
 
+## Requirements
+
+- **tmux 3.3 or later.** 3.3a (Debian 12) is the oldest version RAT is tested with: older ones
+  behave differently in ways RAT relies on, and are not supported.
+- **bash 4.4 or later**, which terminals run. macOS ships bash 3.2: install a recent one
+  (`brew install bash`) and make sure it comes first in the PATH of ratd.
+- **Go 1.27 or later**, only to build from source.
+
 ## Getting started
 
 Download the three binaries from the [releases](https://github.com/hekmon/rat/releases), and
@@ -246,7 +253,10 @@ rat-tool bundle generate --tenant prod --client alice --output bundle-prod
 
 Copy `bundle-prod/server` to the server, and `bundle-prod/clients/alice` to the machine of the
 harness, each directory whole, and to that side only: a client key is what lets its holder in,
-and nothing else does. Run ratd with the server directory (as a service: see Deployment):
+and nothing else does.
+
+Agents can do whatever the user running ratd can: give it a Unix user of its own, neither root
+nor yours, and run it with the server directory (as a service: see Deployment):
 
 ```sh
 ratd --bundle /etc/rat/prod/server
@@ -359,8 +369,8 @@ journalctl -u ratd-prod -f
   the file before writing again: `MemoryMax=` also bounds what retries could pile up. Rejected:
   limits in ratd (windows per session, calls at once), which a single command typed in a
   terminal gets around.
-- **One unit per tenant**, each with its bundle and port. The tenants of a user keep their agents
-  apart from mistakes, not from each other (see Users, tenants and sessions).
+- **One unit per tenant**, each with its bundle and port. Tenants whose agents must not reach each
+  other need a Unix user each (see Users, tenants and sessions).
 - **Logs** go to the journal: every tool call (the client, the tool, the outcome, never the
   content of what agents type or read), the start and stop, the bundle expiry warnings. Each
   level is a priority of the journal: `journalctl -u ratd-prod -p warning` shows what needs an
@@ -491,8 +501,7 @@ leaves the rest to how you deploy it:
   service missing its `User=` runs silently as root otherwise.
 - **A Unix user for RAT, and for nothing else.** What agents do is bounded by what this user can
   do: give it none of your own files, no password, and no login but ratd (no login shell, and
-  sshd refusing it: see Deployment). Its tenants keep their agents apart from mistakes only (see
-  Users, tenants and sessions).
+  sshd refusing it: see Deployment).
 - **No sudo, or sudo for named commands only.** When agents must run privileged commands, grant
   the user these commands only, never every command (`ALL`), in a file of `/etc/sudoers.d` edited
   with `visudo -f`, which refuses a file with an error:
@@ -564,29 +573,20 @@ leaves the rest to how you deploy it:
 ## Your shell configuration
 
 Terminals run bash as a login shell, which reads the bash startup files of the user running RAT
-(`~/.bash_profile`, `~/.profile`…). RAT enforces what it relies on, but a startup file can still
-defeat it: one assigning `PROMPT_COMMAND` (rather than adding to it) removes what makes a pasted
-text wait for Enter, and unless bash does it by itself (5.1 and later, without an inputrc turning
-it off), each line of a pasted text then runs as soon as it is pasted. It also removes what tells
-RAT when a command finished, and how. A command run before RAT's does less: one changing the exit
-status hides the status (starship does, `history -a` added in front does), and any, even one
-keeping it (direnv), hides the status of each command of a pipeline: `command | tee log` then
-tells the status of tee only. RAT checks what the bash prompt ends up with when it starts, warns,
-and only tells agents what holds, but does not refuse to run. A startup file changed while RAT
-runs is only checked at its next start: meanwhile, the windows created since tell agents they
-record no prompt, and why.
+(`~/.bash_profile`, `~/.profile`…). With a user for RAT alone (see Deployment), these startup
+files are RAT's: leave them as the account was created. What makes a shell pleasant to a human has
+no use for agents, and gets in their way: a prompt framework such as starship hides how commands
+exited, and an alias such as `rm='rm -i'` makes a command ask a question the agent did not expect.
+Running RAT as your own user brings your configuration to the terminals of the agents.
 
-With a user for RAT alone (see Deployment), these startup files are RAT's: leave them as the
-account was created. What makes a shell pleasant to a human has no use for agents, and gets in
-their way: a prompt framework such as starship hides how commands exited, changing the exit status
-before running RAT's `PROMPT_COMMAND`, and an alias such as `rm='rm -i'` makes a command ask a
-question the agent did not expect. Running RAT as your own user brings your configuration to the
-terminals of the agents.
-
-## Requirements
-
-- **Go 1.27 or later**, only to build from source.
-- **tmux 3.3 or later.** 3.3a (Debian 12) is the oldest version RAT is tested with: older ones
-  behave differently in ways RAT relies on, and are not supported.
-- **bash 4.4 or later**, which terminals run. macOS ships bash 3.2: install a recent one
-  (`brew install bash`) and make sure it comes first in the PATH of ratd.
+RAT enforces what it relies on, but a startup file can still defeat it: one assigning
+`PROMPT_COMMAND` (rather than adding to it) removes what makes a pasted text wait for Enter, and
+unless bash does it by itself (5.1 and later, without an inputrc turning it off), each line of a
+pasted text then runs as soon as it is pasted. It also removes what tells RAT when a command
+finished, and how. A command run before RAT's does less: one changing the exit status hides the
+status (starship does, `history -a` added in front does), and any, even one keeping it (direnv),
+hides the status of each command of a pipeline: `command | tee log` then tells the status of tee
+only. RAT checks what the bash prompt ends up with when it starts, warns, and only tells agents
+what holds, but does not refuse to run. A startup file changed while RAT runs is only checked at
+its next start: meanwhile, the windows created since tell agents they record no prompt, why, and
+how to fix it.
