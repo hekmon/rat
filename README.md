@@ -3,6 +3,15 @@
 Shell access for AI agents, over MCP: persistent terminals on a remote machine, which agents
 drive as a human does, and which a human operator can cut at once.
 
+- **What it does:** [What it is](#what-it-is) · [Not a tmux MCP server](#not-a-tmux-mcp-server) ·
+  [Knowing when a command is done](#knowing-when-a-command-is-done) ·
+  [What agents no longer have to know](#what-agents-no-longer-have-to-know) · [Tools](#tools)
+- **Trying it:** [Components](#components) ·
+  [Users, tenants and sessions](#users-tenants-and-sessions) · [Requirements](#requirements) ·
+  [Getting started](#getting-started)
+- **Deploying it:** [Deployment](#deployment) · [Security](#security) ·
+  [Your shell configuration](#your-shell-configuration)
+
 ## What it is
 
 You give an agent a machine to work on. ratd runs there, and the agent reaches it through its
