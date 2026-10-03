@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -51,9 +52,22 @@ func umask() fs.FileMode {
 // TestWriteFile guards writing files: created with the exact content, nothing added, and a mode
 // going through the umask; replaced in place, keeping its mode, with its former size told; missing
 // directories created and named; a symbolic link followed, writing its target; and the log line
-// telling the path and the size, never the content.
+// telling the path and the size, never the content. Its description points to a subagent reading
+// and writing a file from the filesystem of the agent, whatever its size, for the content never to
+// enter the context of the agent.
 func TestWriteFile(t *testing.T) {
 	session, logs, home := connectFiles(t)
+	list, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range list.Tools {
+		if tool.Name == "write_file" && !strings.Contains(tool.Description, "To copy a file from your filesystem, have "+
+			"a subagent read it and write it, if you can start one: the content then never enters your context.") {
+			t.Errorf("expected write_file to point to a subagent reading and writing the file, telling why, got %q",
+				tool.Description)
+		}
+	}
 	path := filepath.Join(home, "notes.txt")
 	expectTool(t, session, "write_file", map[string]any{"path": "~/notes.txt", "content": "secret\nno end"}, false,
 		"Created "+path+" (13 B).")

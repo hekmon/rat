@@ -25,7 +25,8 @@ func (d *daemon) addFileTools(server *mcp.Server, logger *slog.Logger) {
 		InputSchema: d.inputSchemas[tools.WriteFile],
 		Description: "Write a whole text file on the machine of the terminals, creating or replacing it, with exactly " +
 			"the content given: nothing is added, end it with a new line if the file needs one. The path is absolute " +
-			"or starts with ~/. Missing directories are created.",
+			"or starts with ~/. Missing directories are created. To copy a file from your filesystem, have a " +
+			"subagent read it and write it, if you can start one: the content then never enters your context.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(true), IdempotentHint: true, OpenWorldHint: ptr(false)},
 	}, tool(logger, tools.WriteFile, func(tools.WriteFileInput) string { return "" },
 		func(ctx context.Context, in tools.WriteFileInput) result { return d.writeFile(ctx, in) }))
