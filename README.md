@@ -295,7 +295,10 @@ host name, can target `https://host:7281/mcp` directly, without rat.
 
 ## Deployment
 
-ratd is meant to run as a service, under a Unix user of its own (see Security).
+ratd is meant to run as a service, under a Unix user of its own (see Security). Linux with systemd
+is the recommended target, the only one where the kill switch is complete: stopping the service
+ends every process in its control group, commands detached from their terminals included. ratd
+runs on macOS too, but launchd leaves detached commands running.
 
 ### Linux, with systemd
 
