@@ -35,6 +35,11 @@ stop the service: every terminal goes with it, and with systemd, everything the 
   without one, no request even reaches it, and there is no password to guess nor to steal. One
   command stops the service, its terminals and what runs in them.
 
+Mutual TLS, a service, a Unix user of its own: none of it depends on how many people use RAT. A
+machine opened to the network takes the same care for one person as for a team, and more with an
+agent at the keyboard: whoever finds the port tries it, and the agent may run a mistaken command,
+or an instruction it read in a web page or a file.
+
 ## Not a tmux MCP server
 
 RAT uses tmux as its terminal emulator: tmux renders what programs display, and RAT reads the
