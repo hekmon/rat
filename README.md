@@ -1,7 +1,7 @@
 # RAT: Remote Agent Terminal
 
-Shell access for AI agents, over MCP: persistent terminals on a remote machine, which agents
-drive as a human does, and which a human operator can cut at once.
+Shell access for AI agents, over MCP, as you get yours with ssh and tmux: persistent terminals on a
+remote machine, which agents drive as a human does, and which a human operator can cut at once.
 
 - **What it does:** [What it is](#what-it-is) · [Not a tmux MCP server](#not-a-tmux-mcp-server) ·
   [Knowing when a command is done](#knowing-when-a-command-is-done) ·
@@ -15,11 +15,10 @@ drive as a human does, and which a human operator can cut at once.
 ## What it is
 
 You give an agent a machine to work on. ratd runs there, and the agent reaches it through its
-harness: it gets terminals on that machine, which it opens, types in and reads, as you would in
-tmux over ssh, and it copies files to and from it. The terminals keep running between its calls:
-it starts a build, works on something else meanwhile, and comes back to read the result. And when
-you want it to stop, you stop the service: every terminal goes with it, and with systemd,
-everything the agent started.
+harness: it gets terminals on that machine, which it opens, types in and reads, and it copies
+files to and from it. The terminals keep running between its calls: it starts a build, works on
+something else meanwhile, and comes back to read the result. And when you want it to stop, you
+stop the service: every terminal goes with it, and with systemd, everything the agent started.
 
 - **Persistent terminals.** Named windows running bash, which survive the restarts and context
   compactions of an agent: it finds its terminals back, with what runs in them.
