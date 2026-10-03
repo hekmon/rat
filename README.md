@@ -30,10 +30,10 @@ stop the service: every terminal goes with it, and with systemd, everything the 
   full-screen programs, as a human would.
 - **Files, without a terminal.** Agents write and read whole files directly: exact content,
   nothing on a screen, and nothing unchecked nor oversized reaching their context.
-- **Built to be remote, and to be reached by no one else.** One service per tenant, reached over
-  HTTPS with mutual TLS only, on every address, loopback included: without a certificate of its
-  bundle, no request even reaches it, and there is no password to guess nor to steal. One command
-  stops the service, its terminals and what runs in them.
+- **Built to be remote, and to be reached by no one else.** A service reached over HTTPS with
+  mutual TLS only, on every address, loopback included. Clients get in with a key, as with ssh:
+  without one, no request even reaches it, and there is no password to guess nor to steal. One
+  command stops the service, its terminals and what runs in them.
 
 ## Not a tmux MCP server
 
