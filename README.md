@@ -543,12 +543,13 @@ leaves the rest to how you deploy it:
   address it came from. Then revoking the client alone would not be enough: generate a new
   bundle, deploy it to ratd and every client, and look for what the user may have kept.
 - **The server key is readable by the agents.** ratd reads it as its user, the one the terminals
-  run as: an agent can copy it off the machine. It lets no one into ratd, but whoever holds it can
-  pose as ratd to its clients, wherever they reach for it: on their way to the machine, or on its
-  port once ratd is stopped. Their agents then read screens made up to instruct them, and what
-  they send is collected. Stopping the service does not revoke the key: after an incident, or
-  any doubt about what ran as that user, generate a new bundle and deploy it, to ratd and every
-  client.
+  run as: an agent can copy it off the machine. It lets no one into ratd: its certificate is only
+  valid for a server, and ratd only accepts certificates valid for a client (see Mutual TLS). So
+  its holder can not be a man in the middle, relaying the calls of clients to ratd: only pose as
+  ratd to them, wherever they reach for it, on their way to the machine or on its port once ratd
+  is stopped. Their agents then read screens made up to instruct them, and what they send is
+  collected. Stopping the service does not revoke the key: after an incident, or any doubt about
+  what ran as that user, generate a new bundle and deploy it, to ratd and every client.
 - **Choose who can reach the port.** `--listen :7281`, the default, answers on every address of
   the machine, the internet included when the machine is on it, and mutual TLS is made for
   that: whoever holds no client certificate is refused during the handshake. What stays exposed
