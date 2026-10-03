@@ -42,17 +42,109 @@ split, unless given `-S` and `-J`. Each of these is a command, a flag or a pitfa
 each mistake costs a call and some context.
 
 RAT takes these on, and agents get a terminal as they already know it: a keyboard and a screen.
-Windows are found by name, and their session is created on first use. Text is pasted as is,
-never read as keys, and keys are a tool of their own. `read_window` returns the screen with
-wrapped lines joined, the same size every time, with history on request. And a human watching
-does not get in the way: attaching does not resize the windows, and a copy mode left on is left
-before the agent's next input.
-
 The result is nine tools with few parameters, explained in a few lines of instructions. Less
 context goes to describing the tools, and the agent needs fewer tries to get a command right:
 there is no tmux syntax to get wrong, and nothing to check after each call. The tmux server
-belongs to RAT: it starts with no user configuration, so terminals are the same on every
-machine, and it stops with RAT.
+belongs to RAT: it starts and stops with RAT.
+
+## Knowing when a command is done
+
+Typing a command in a remote terminal is easy. Knowing when it finished, and how, is the hard
+part. With tmux passed through, an agent sleeps for a guessed time, reads the screen, guesses from
+its last lines whether the prompt is back, and appends `; echo $?` to its commands to learn how
+they exited, spending a call and some context on each guess. RAT asks bash, which knows: each
+terminal records every prompt bash shows, with the exit status of the command before it, and
+sending input clears that record, so that a prompt tells about the command sent last, never about
+an older one.
+
+**`list_windows` tells every terminal at a glance**, one line each: what runs in its foreground,
+where, when it last displayed something, and once bash is back at its prompt, how the last
+command exited:
+
+```
+main: bash in /home/agent, active 2m ago, last command exited with status 0 (2m ago), 35 rows of history
+build: make in /home/agent/src/app, active 1s ago, 1840 rows of history
+tests: bash in /home/agent/src/app, active 40s ago, last command exited with status 0, command 1 of its pipeline of 2 with 1 (statuses: 1 0) (40s ago), 412 rows of history
+edit: vim in /home/agent/src/app, active 5m ago, full-screen program
+```
+
+One call tells which commands still run, which succeeded and which failed, with no screen to
+read. Times are relative, as models do not know the current time, and paths absolute, ready for
+`read_file`. A pipeline hides no failure: `go test ./... | tee /tmp/test.log` exits with the status
+of `tee`, 0, and RAT tells that `go test` failed.
+
+**`wait_window` returns as soon as the command finished**: as soon as bash shows its prompt
+again, a quarter of a second at most after it does, rather than after a guessed sleep. It tells
+how the command exited, or what still runs once its time is up:
+
+```
+build: the command finished 0s ago, exit status 2.
+```
+
+```
+build: still running, 3m since your last input, make in the foreground. No output for 45s, which is normal for some commands: read_window shows whether it waits for input.
+```
+
+It waits 50 seconds at most per call, below the timeouts of harnesses: an agent waits longer by
+calling it again, or does something else meanwhile. Calls made in parallel on the same window
+all return together as soon as its command finishes, or each at the end of its own
+`max_seconds`. The time running is counted since the agent's last input, by the clock of the
+machine, rather than added up by an agent that miscounts its waits. A quiet command is told
+calmly, as normal for some commands: an agent told that its command looks stuck interrupts it.
+
+Where bash can not tell, RAT does not guess, and says so: a command run within ssh or an
+interpreter shows no prompt of that bash, and one run in the background (`&`, `nohup`) is
+finished for bash at once. So agents are told to run each long command in the foreground of a
+window of its own: a single `list_windows` then follows them all, with no script to check jobs or
+their logs.
+
+## What agents no longer have to know
+
+Beyond knowing when commands finish, RAT takes on the details an agent would otherwise learn from
+tmux one mistake at a time:
+
+- **Found by name, created on first use.** Windows are named by the agent, and their session is
+  created when first needed. An agent whose terminals were lost (ratd or its tmux server
+  restarted) is told so, and finds a fresh `main`. Creating a window that exists tells what runs
+  in it, rather than letting the agent believe it got a fresh terminal.
+- **Pasted, as a human pastes.** At a prompt, a multi-line script waits on the command line, as a
+  whole, until Enter: it never runs line by line as typed. Pressing Enter is a parameter the agent
+  must set each time, so a text meant to answer a prompt is never run by mistake.
+- **Refused rather than altered.** A text holding a control character is refused, naming it and
+  the tool to use instead (`send_keys`, `write_file`), and nothing is sent. An unknown key name
+  is refused, rather than typed as text.
+- **A screen that reads well.** `read_window` returns the screen with wrapped lines joined, at the
+  same size every time (200 columns, 24 rows), with rows of history on request. A history too
+  long for the read budget is cut from the top, keeping the screen whole, and tells how to read a
+  long output in full.
+- **Full-screen programs too.** tmux renders what they draw, so agents drive them as a human
+  does: an editor (`vim`, `nano`), a monitor (`htop`), an interactive installer or configuration
+  menu (`menuconfig`), a debugger. `send_keys` presses `Escape`, arrows, `C-x` or `F10`, and
+  `read_window` returns the screen as drawn, telling that a full-screen program holds it, and
+  where its cursor is: the agent knows where its next keys land. `list_windows` tells which
+  windows run one.
+- **Files as `cp` copies them.** `write_file` writes the exact content, creating missing
+  directories, and a replaced file keeps its mode and owner. `read_file` reads a range of lines,
+  from the end with a negative start, and keeps out what would flood the context: a binary file,
+  a device or a FIFO is refused, a file too large is told with its size and line count, and a
+  range cut to the read budget tells where to continue.
+- **Every answer tells what happened, and what to do next.** Errors included: an agent never
+  gets a bare error code nor a tmux message to decipher, but a sentence saying what was done or
+  not, why, and how to go on, naming the tool or the parameter to use. An unknown key lists the
+  key names; a denied permission names the user ratd runs as; a missing window tells to create it
+  (`create_window`); input sent while the terminals were restarting tells that nothing was sent,
+  and to wait for the prompt before sending again. Successes say as much: `Pasted in build, Enter
+  not pressed.` tells exactly what the terminal received.
+- **The same terminal everywhere.** bash, starting at home, a neutral UTF-8 locale (English
+  messages, stable formats), no tmux configuration, and no pager: `git log` prints its output
+  rather than opening `less` for the agent to quit.
+- **Checked at start.** ratd checks that the bash startup files of its user keep what RAT relies
+  on (the prompt hook, exit statuses, bracketed paste), and adapts its tool descriptions to what
+  holds: where a `.bashrc` replaces `PROMPT_COMMAND`, `wait_window` says why it can not wait,
+  rather than waiting for a prompt that never comes. A window whose startup files changed since
+  is told as such, with the fix (see Your shell configuration).
+- **A human watching does not get in the way.** Attaching to the tmux server does not resize the
+  windows, and a copy mode left on (to scroll back) is left before the agent's next input.
 
 ## Tools
 
@@ -69,7 +161,7 @@ terminals are on another machine, and sending a command does not wait for it.
 | `send_text` | `window`, `text`, `enter` | Pastes text as a human pastes, then presses Enter if `enter` is true (required: the agent decides each time whether the text runs). |
 | `send_keys` | `window`, `keys` | Presses keys by name, in order: `C-c`, `Escape`, `Up`, `Tab`… |
 | `read_window` | `window`, `scrollback_rows` (optional, 0) | Returns what the window displays: its screen (200 columns, 24 rows), with rows of history above it on demand. |
-| `wait_window` | `window`, `max_seconds` (optional, 20, 50 at most) | Waits until the command sent last finished, then tells how it exited, or what still runs and since when once `max_seconds` passed. |
+| `wait_window` | `window`, `max_seconds` (optional, 20, 50 at most) | Waits until the command sent last finished, returning as soon as bash is back at its prompt, then tells how it exited, or what still runs and since when once `max_seconds` passed. |
 
 **Files**, copied to and from the machine of ratd, as its user:
 
@@ -80,9 +172,9 @@ terminals are on another machine, and sending a command does not wait for it.
 
 Paths are absolute or start with `~/`. What `read_window` and `read_file` return is bounded by
 the read budget of ratd (64 KiB by default, `--read-budget`): a longer output is read a range at
-a time. `list_windows`, `read_window`, `wait_window` and `read_file` only read; the others act on the terminals
-or the files, and only `send_text` and `send_keys` reach beyond RAT, through what runs in the
-terminals.
+a time. `list_windows`, `read_window`, `wait_window` and `read_file` only read; the others act on
+the terminals or the files, and only `send_text` and `send_keys` reach beyond RAT, through what
+runs in the terminals.
 
 ## Components
 
