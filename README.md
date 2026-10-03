@@ -50,7 +50,7 @@ by line, as it is typed; and that `capture-pane` returns the visible screen only
 split, unless given `-S` and `-J`. Each of these is a command, a flag or a pitfall to learn, and
 each mistake costs a call and some context.
 
-RAT takes these on, and agents get a terminal as they already know it: a keyboard and a screen.
+RAT takes these on, and agents get a terminal in its simplest form: a keyboard and a screen.
 The result is nine tools with few parameters, explained in a few lines of instructions. Less
 context goes to describing the tools, and the agent needs fewer tries to get a command right:
 there is no tmux syntax to get wrong, and nothing to check after each call. The tmux server
