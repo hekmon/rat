@@ -501,9 +501,9 @@ to a server; the bundle stands for `authorized_keys`, but closed:
 Unlike HTTPS on the web, the client does not check the name of the host it reaches: certificates
 carry no address, as both sides know each other beforehand, and presenting the certificate of the
 bundle proves being its ratd, wherever it is reached (a tunnel, another address). Most harnesses
-can not accept this, nor present a certificate: RAT does it for them. And unlike SSH, no session
-is tied to a connection: the terminals keep running whether agents are connected or not, until
-the service stops.
+can not accept this, nor present a certificate: the rat stdio bridge does it for them. And unlike
+SSH, no session is tied to a connection: the terminals keep running whether agents are connected
+or not, until the service stops.
 
 ### Deploying safely
 
