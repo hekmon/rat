@@ -104,11 +104,17 @@ A CRL is accepted when it is:
   would look current;
 - **within 8 MiB**, DER or PEM.
 
-Plain http is enough, the CRL being signed; https is checked against the CAs of the system, and
-the proxy comes from the environment. ratd fetches it while starting, before its terminals
-exist, and refuses to start without a valid one, or with its own certificate revoked: starting
-would let in the certificates the CRL revokes, and refusing loses no terminal. A client fetches
-it at its first handshake: rat contacts nothing before its first request.
+Plain http is enough for its content, the CRL being signed: nobody on the network can forge one.
+Not for its freshness: a side holding no CRL yet, ratd starting or rat at its first request,
+takes any CRL of the CA still valid, and someone on its network can hand it an older one,
+un-revoking the certificates revoked since, until its next update. A running side refuses a CRL
+older than the one it holds; https, checked against the CAs of the system, closes the rest, and
+CRLs valid for a short time bound it. The proxy comes from the environment.
+
+ratd fetches it while starting, before its terminals exist, and refuses to start without a valid
+one, or with its own certificate revoked: starting would let in the certificates the CRL
+revokes, and refusing loses no terminal. A client fetches it at its first handshake: rat
+contacts nothing before its first request.
 
 Then each fetches it again as it is used, one fetch at a time, never on a timer: an idle side
 fetches nothing.

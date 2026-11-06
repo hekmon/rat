@@ -352,6 +352,11 @@ a fetch failing, and at once when the CRL they hold is stale.
 - **Reachable from every side.** The CRL is fetched by ratd, and by rat on every machine running a
   harness, through the proxy of their environment if any (`HTTPS_PROXY`, `HTTP_PROXY`): a laptop
   off the VPN refuses every request once the CRL it holds goes stale.
+- **Over http, a CRL can be replayed.** It is signed, so nobody can forge one, but a side holding
+  none yet (ratd starting, rat at its first request) takes any CRL of your sub CA still valid:
+  someone on its network can hand it an older one, un-revoking what was revoked since, until
+  that CRL's next update. A running side refuses a CRL older than the one it holds. A
+  distribution point over https, or CRLs valid for a short time, bound it.
 - **Failing closed.** A side refuses everything while it can have no valid CRL: an outage of your
   PKI longer than the validity of its CRL cuts every agent. A fetch failing is a warning in the
   logs, and in the status of ratd, with when the CRL held goes stale: CRLs valid for days, and
