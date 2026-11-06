@@ -237,8 +237,10 @@ reach each other need a Unix user each, or better, a container or a machine each
 ## Getting started
 
 Download the three binaries from the [releases](https://github.com/hekmon/rat/releases), and
-install them in the PATH: ratd on the server, rat where the harness runs, rat-tool anywhere (see
-Requirements).
+install them: ratd on the server, rat where the harness runs, rat-tool anywhere (see
+Requirements). The examples install them in `/usr/local/bin`, and give their full path wherever a
+program starts them, as the systemd unit below does: which binary runs does not depend on the
+PATH of that program, which a harness launched from a desktop does not inherit from your shell.
 
 Each release comes with a file of SHA-256 sums: download it next to the archives, in a directory
 holding no other release, and check them before installing (`--ignore-missing` skips the archives
@@ -283,12 +285,15 @@ Declare rat in each harness, as a stdio MCP server, with its client directory, h
 {
   "mcpServers": {
     "rat-prod": {
-      "command": "rat",
+      "command": "/usr/local/bin/rat",
       "args": ["--server", "host:7281", "--bundle", "/home/you/.config/rat/prod/alice"]
     }
   }
 }
 ```
+
+A harness configured in TOML or YAML takes the same command and arguments, in its own format. On
+Windows, give the full paths of `rat.exe` and of the client directory, backslashes doubled in JSON.
 
 Check it works, with the same flags as rat, before the harness does:
 
