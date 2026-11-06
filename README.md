@@ -326,6 +326,12 @@ PKI, revoking certificates with its CRL and renewing them without a restart. The
 nor token to guess or steal, and a client reaches its own session only. What gets in can do
 whatever the Unix user running ratd can:
 
+- **No way in for an agent to open.** An agent can not let anyone in through rat: there is no CA
+  key on the machine, the server certificate is no client certificate, and a running ratd takes
+  no new CA. What it can open as its Unix user, a listener or a tunnel, is for a firewall and that
+  user to bound. This holds for a deployment following the
+  [manual](MANUAL.md#no-way-in-for-an-agent-to-open): ratd run as root, or the bundle generated on
+  the server, lose it.
 - **Not a sandbox.** Run ratd under a Unix user of its own, neither root nor yours: agents do what
   that user can, nothing more. Tenants and sessions keep agents apart from mistakes, not from a
   malicious agent.

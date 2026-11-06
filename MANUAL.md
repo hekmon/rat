@@ -5,9 +5,9 @@ terminals rely on. What RAT is, and how to try it, are in the [README](README.md
 
 - [Deployment](#deployment): [Linux, with systemd](#linux-with-systemd) ·
   [macOS, with launchd](#macos-with-launchd)
-- [Security](#security): [Mutual TLS](#mutual-tls) ·
-  [A bundle of rat-tool](#a-bundle-of-rat-tool) · [A sub CA of your PKI](#a-sub-ca-of-your-pki) ·
-  [Deploying safely](#deploying-safely)
+- [Security](#security): [No way in for an agent to open](#no-way-in-for-an-agent-to-open) ·
+  [Mutual TLS](#mutual-tls) · [A bundle of rat-tool](#a-bundle-of-rat-tool) ·
+  [A sub CA of your PKI](#a-sub-ca-of-your-pki) · [Deploying safely](#deploying-safely)
 - [Your shell configuration](#your-shell-configuration)
 
 ## Deployment
@@ -181,6 +181,46 @@ tail -f /Library/Logs/rat/ratd-prod.log
 ratd hands out a shell: who gets in is decided by mutual TLS, and what they can do once in by the
 Unix user it runs as. Stopping ratd leaves no terminal and no way in; run as a service with
 systemd, it also stops what agents detached from their terminals (on macOS, see Deployment).
+
+### No way in for an agent to open
+
+An agent has a shell on the machine: it must not be able to hand a way in to anyone, another
+agent included, through rat. With a deployment following this manual, it can not:
+
+| An agent trying to | fails, as |
+|---|---|
+| issue itself a client certificate | no CA key is on the machine: the one of a bundle was never written, the one of a sub CA stays in your PKI |
+| use the server key and certificate as a client | ratd requires client authentication, which the server certificate does not carry (see Mutual TLS) |
+| put a CA of its own in place | the bundle is root's, ratd warning at startup when its user can write it, and a running ratd takes no new CA before a restart (see Renewal) |
+| un-revoke a certificate | a CRL is signed by the CA, and one older than the CRL held is refused (see Revocation) |
+| add an ssh key to the account | sshd refuses the user (`DenyUsers`, see Linux, with systemd) |
+| reach another session through ratd | the client certificate names the session, which no request chooses |
+
+These hold on conditions, each told in this manual, which a deployment breaking one of them
+loses:
+
+- **ratd runs as a user of its own, never root** (see Avoid root): root reads and writes
+  everything, the bundle and the configuration of sshd included.
+- **No sudo beyond named commands** (see No sudo, or sudo for named commands only): `sudo` for
+  every command is root.
+- **The bundle is generated off the server**, its server directory alone copied there: generating
+  it on the server writes the keys of every client there, each a way in for an agent reading it.
+  Nor is the key of a sub CA ever on the server.
+- **The bundle belongs to root, but for its key** (see Linux, with systemd).
+- **sshd refuses the user** (`DenyUsers`).
+
+What rat can not prevent is an agent opening a way in as its Unix user, without rat:
+
+- **A listener or a tunnel** (`ncat -l`, `ssh -R` to a machine outside): a firewall, inbound and
+  outbound, bounds it (see Choose who can reach the port).
+- **Its own ratd**, from a bundle it generates, on another port: the firewall again.
+- **The terminals of the other sessions and tenants of its Unix user**, through their tmux
+  sockets (see [Users, tenants and sessions](README.md#users-tenants-and-sessions)): a Unix user,
+  or a machine, per tenant whose agents must not reach each other.
+- **What outlives the service** (crontab, user services): a Unix user of its own lets you find it
+  and lock it (see What outlives the service).
+
+Stopping the service stops all of it but the last, with systemd (see The kill switch).
 
 ### Mutual TLS
 
