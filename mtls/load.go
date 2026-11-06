@@ -97,19 +97,24 @@ func (s *Side) ExpiresSoon(now time.Time) bool {
 }
 
 // ExpiryWarning tells, for humans, what expires first, what stops with it, and what to do about
-// it, once the side expires soon ([Side.ExpiresSoon]).
-func (s *Side) ExpiryWarning() string {
+// it, once the side expires soon at now ([Side.ExpiresSoon]), or has expired: a side running
+// keeps being reminded past its expiry.
+func (s *Side) ExpiryWarning(now time.Time) string {
+	expires, refuse := "expires soon", "will refuse"
+	if !now.Before(s.NotAfter()) {
+		expires, refuse = "has expired", "refuses"
+	}
 	switch {
 	// A CA signing itself is the root of a bundle, whose certificates all expire together: a sub
 	// CA of another PKI is not one.
 	case bytes.Equal(s.CA.RawIssuer, s.CA.RawSubject):
-		return "the bundle expires soon: an expired bundle stops every client at once, generate a new one and deploy it to every side"
+		return "the bundle " + expires + ": an expired bundle stops every client at once, generate a new one and deploy it to every side"
 	case s.expiresFirst() == s.CA:
-		return "the sub CA expires soon, and every certificate it signed with it: renew it in your PKI, and deploy it to every side"
+		return "the sub CA " + expires + ", and every certificate it signed with it: renew it in your PKI, and deploy it to every side"
 	case s.Role == Server:
-		return "the server certificate expires soon: every client will refuse ratd, issue it again in your PKI"
+		return "the server certificate " + expires + ": every client " + refuse + " ratd, issue it again in your PKI"
 	default:
-		return "the client certificate expires soon: ratd will refuse this client, issue it again in your PKI"
+		return "the client certificate " + expires + ": ratd " + refuse + " this client, issue it again in your PKI"
 	}
 }
 

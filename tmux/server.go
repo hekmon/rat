@@ -345,6 +345,12 @@ readiness:
 		select {
 		case <-ticker.C:
 		case <-done:
+			// tmux exits with status 0 on SIGTERM, which a service manager stopping the service
+			// while it starts sends: told as such, Wait having no error to tell
+			exit := p.waitErr
+			if exit == nil {
+				exit = errors.New("exit status 0")
+			}
 			// A server already answering on the socket makes tmux -D connect to it as a client,
 			// fail and exit ("not a terminal", which tells nothing): ask the socket instead. Ours
 			// has exited, so a server answering is another one.
@@ -352,9 +358,9 @@ readiness:
 			defer inUseCtxCancel()
 			if pid, err := c.socketServerPID(inUseCtx); err == nil {
 				return fmt.Errorf("server exited during startup: %w: socket %s, tmux server pid %s: %w",
-					ErrServerSocketInUse, c.socketName(), pid, p.waitErr)
+					ErrServerSocketInUse, c.socketName(), pid, exit)
 			}
-			return fmt.Errorf("server exited during startup: %w", p.waitErr)
+			return fmt.Errorf("server exited during startup: %w", exit)
 		case <-readyCtx.Done():
 			if probeErr == nil {
 				return fmt.Errorf("server not ready: %w", readyCtx.Err())

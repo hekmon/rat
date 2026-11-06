@@ -53,7 +53,7 @@ func TestStatusRender(t *testing.T) {
 	s.expires(now.Add(100*24*time.Hour + time.Hour))
 	s.died(now.Add(-6*time.Minute), 5*time.Minute)
 	s.died(now.Add(-4*time.Minute), 5*time.Minute)
-	expected := "serving tenant prod on :7281 · running as root, bracketed paste overridden, bundle expires in 100 days, " +
+	expected := "serving tenant prod on :7281 · running as root, bracketed paste overridden, bundle expires in 100d, " +
 		"tmux server died once in 5m · " + sessions
 	if line := s.render(now); line != expected {
 		t.Errorf("expected\n%q\ngot\n%q", expected, line)
@@ -64,6 +64,10 @@ func TestStatusRender(t *testing.T) {
 	}
 	if line := s.render(now.Add(10 * time.Minute)); strings.Contains(line, "died") {
 		t.Errorf("expected the deaths aged out, got %q", line)
+	}
+	// the last day in hours, rather than 0 days
+	if line := s.render(now.Add(100 * 24 * time.Hour)); !strings.Contains(line, "bundle expires in 1h") {
+		t.Errorf("expected the last hour told, got %q", line)
 	}
 	if line := s.render(now.Add(101 * 24 * time.Hour)); !strings.Contains(line, "bundle expired") {
 		t.Errorf("expected the bundle expired, got %q", line)

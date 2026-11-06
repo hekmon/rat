@@ -246,6 +246,28 @@ func TestServerStartFailureStderr(t *testing.T) {
 	}
 }
 
+// TestServerStartExitStatusZero guards that a server exiting with status 0 during its startup, as
+// tmux does on SIGTERM (a service manager stopping the service while it starts), is told with
+// that status, rather than with no error to wrap, and not as another server on the socket. A tmux
+// wrapper exits at once in place of the server.
+func TestServerStartExitStatusZero(t *testing.T) {
+	tmuxPath, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal("tmux is required to run the tests:", err)
+	}
+	wrapper := "#!/bin/sh\nfor arg; do [ \"$arg\" != -D ] || exit 0; done\nexec " + shellQuote(tmuxPath) + " \"$@\"\n"
+	dir := t.TempDir()
+	if err = os.WriteFile(filepath.Join(dir, "tmux"), []byte(wrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	c := newTestController(t, "startexitzero")
+	err = c.StartServer(context.Background())
+	if err == nil || !strings.HasSuffix(err.Error(), "server exited during startup: exit status 0") {
+		t.Errorf("expected the exit status told, got %v", err)
+	}
+}
+
 func TestLimitedBuffer(t *testing.T) {
 	lb := &limitedBuffer{limit: 5}
 	for _, p := range []string{"abc", "defgh", "ij"} {

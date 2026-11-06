@@ -164,7 +164,7 @@ itself, in every session, or miss:
   pager: `git log` prints its output rather than opening `less` for the agent to quit.
 - **Checked at start.** ratd checks that the bash startup files of its user keep what RAT relies
   on (the prompt hook, exit statuses, bracketed paste), and adapts its tool descriptions to what
-  holds: where a `.bashrc` replaces `PROMPT_COMMAND`, `wait_window` says why it can not wait,
+  holds: where a startup file replaces `PROMPT_COMMAND`, `wait_window` says why it can not wait,
   rather than waiting for a prompt that never comes (see [Your shell
   configuration](MANUAL.md#your-shell-configuration)).
 - **A human watching does not get in the way.** Attaching to the tmux server does not resize the
@@ -242,7 +242,7 @@ reach each other need a Unix user each, or better, a container or a machine each
   behave differently in ways RAT relies on, and are not supported.
 - **bash 4.4 or later**, which terminals run. macOS ships bash 3.2: install a recent one
   (`brew install bash`) and make sure it comes first in the PATH of ratd.
-- **Go 1.27 or later**, only to build from source.
+- **Go 1.27.1 or later**, only to build from source.
 
 ## Getting started
 

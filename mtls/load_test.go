@@ -189,7 +189,8 @@ func TestLoadNames(t *testing.T) {
 // TestExpiresSoon guards when the holders of a side warn of its expiry: in the last tenth of the
 // validity of whichever of its certificate and CA expires first, a year for a bundle, and not
 // from the first day of a certificate valid for a year, as another PKI issues them. The warning
-// names what expires first, and what to do.
+// names what expires first, and what to do, and tells a side expired as such: a side running
+// keeps being reminded past its expiry.
 func TestExpiresSoon(t *testing.T) {
 	now := time.Now()
 	day, year := 24*time.Hour, 365*24*time.Hour
@@ -219,13 +220,17 @@ func TestExpiresSoon(t *testing.T) {
 			true, "the server certificate expires soon"},
 		{"sub CA expiring first", side(Client, cert("sub", "root", 2*year-30*day, 2*year), cert("alice", "sub", day, year)),
 			true, "the sub CA expires soon"},
+		{"bundle, expired", side(Server, cert("ca", "ca", 10*year+day, 10*year), cert("t", "ca", 10*year+day, 10*year)),
+			true, "the bundle has expired"},
+		{"server of a year, expired", side(Server, cert("sub", "root", year, 5*year), cert("t", "sub", year+day, year)),
+			true, "the server certificate has expired: every client refuses ratd"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if soon := tc.side.ExpiresSoon(now); soon != tc.soon {
 				t.Errorf("expected expiring soon %v, got %v", tc.soon, soon)
 			}
-			if tc.soon && !strings.HasPrefix(tc.side.ExpiryWarning(), tc.warning) {
-				t.Errorf("expected a warning starting with %q, got %q", tc.warning, tc.side.ExpiryWarning())
+			if warning := tc.side.ExpiryWarning(now); tc.soon && !strings.HasPrefix(warning, tc.warning) {
+				t.Errorf("expected a warning starting with %q, got %q", tc.warning, warning)
 			}
 		})
 	}

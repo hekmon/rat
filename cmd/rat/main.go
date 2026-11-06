@@ -102,8 +102,8 @@ var expiryCheckInterval = 24 * time.Hour
 // request fails. The certificate in use: a renewal ends the warnings.
 func warnExpiry(ctx context.Context, logger *slog.Logger, source mtls.Source) {
 	warn := func() {
-		if side := source.Side(); side.ExpiresSoon(time.Now()) {
-			logger.Warn(side.ExpiryWarning(), "expiry", side.NotAfter(), "days_left", int(time.Until(side.NotAfter()).Hours()/24))
+		if side, now := source.Side(), time.Now(); side.ExpiresSoon(now) {
+			logger.Warn(side.ExpiryWarning(now), "expiry", side.NotAfter(), "days_left", int(side.NotAfter().Sub(now).Hours()/24))
 		}
 	}
 	warn()

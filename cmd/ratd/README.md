@@ -656,7 +656,7 @@ lines are calls, burying what was logged earlier. It tells first what degrades r
 serves, then whether stopping ratd now cuts anyone:
 
 ```
-serving tenant prod on [::]:7281 · bracketed paste overridden, bundle expires in 212 days · last seen: alice now, bob 25m ago, carol 3h ago · 1 wait in flight
+serving tenant prod on [::]:7281 · bracketed paste overridden, bundle expires in 212d · last seen: alice now, bob 25m ago, carol 3h ago · 1 wait in flight
 ```
 
 - **Degradations**: known issues of a ratd serving all the same, logged once when found, and shown

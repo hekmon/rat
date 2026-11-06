@@ -231,7 +231,7 @@ func (s *status) render(now time.Time) string {
 	}
 	if !s.expiry.IsZero() {
 		if left := s.expiry.Sub(now); left > 0 {
-			issues = append(issues, fmt.Sprintf("bundle expires in %d days", int(left.Hours()/24)))
+			issues = append(issues, "bundle expires in "+leftText(left))
 		} else {
 			issues = append(issues, "bundle expired")
 		}

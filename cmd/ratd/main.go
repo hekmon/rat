@@ -259,8 +259,8 @@ func warnExpiry(ctx context.Context, logger *slog.Logger, source mtls.Source, st
 	defer ticker.Stop()
 	for {
 		// the side in use, renewed or not: a renewal refused still gets reminded
-		if side := source.Side(); side.ExpiresSoon(time.Now()) {
-			logger.Warn(side.ExpiryWarning(), "expiry", side.NotAfter(), "days_left", int(time.Until(side.NotAfter()).Hours()/24))
+		if side, now := source.Side(), time.Now(); side.ExpiresSoon(now) {
+			logger.Warn(side.ExpiryWarning(now), "expiry", side.NotAfter(), "days_left", int(side.NotAfter().Sub(now).Hours()/24))
 			status.expires(side.NotAfter())
 		}
 		select {

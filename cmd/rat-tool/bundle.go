@@ -173,8 +173,8 @@ func inspectSide(out io.Writer, dir string) *mtls.Side {
 		fmt.Fprintln(out, "  revocation: none, the certificate names no CRL distribution point")
 	}
 	fmt.Fprintf(out, "  valid until %s\n", validity(side.NotAfter()))
-	if side.ExpiresSoon(time.Now()) {
-		fmt.Fprintln(out, "  WARNING: "+side.ExpiryWarning())
+	if now := time.Now(); side.ExpiresSoon(now) {
+		fmt.Fprintln(out, "  WARNING: "+side.ExpiryWarning(now))
 	}
 	return side
 }
