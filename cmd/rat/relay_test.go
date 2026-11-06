@@ -315,12 +315,13 @@ func TestRelayFailures(t *testing.T) {
 	requestTimeout = 300 * time.Millisecond
 	t.Cleanup(func() { requestTimeout = timeout })
 
+	// the address of a port left free: released once every server of the test listens, none of them
+	// can be given it
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	closed := listener.Addr().String()
-	_ = listener.Close()
 
 	otherSide, err := mtls.Load(mtls.ClientDir(newBundle(t), "alice"))
 	if err != nil {
@@ -339,7 +340,7 @@ func TestRelayFailures(t *testing.T) {
 		<-req.Context().Done()
 	})
 	refusal := `{"jsonrpc":"2.0","id":1,"error":{"code":-32020,"message":"header mismatch"}}`
-	for _, tc := range []struct {
+	cases := []struct {
 		name, addr, expected string
 	}{
 		{"unreachable", closed, "ratd unreachable at " + closed + ": connection refused"},
@@ -352,7 +353,9 @@ func TestRelayFailures(t *testing.T) {
 			"answered HTTP 502: bad gateway"},
 		{"event stream", fakeRatd(t, bundle, fixed(http.StatusOK, "text/event-stream", "data: x\n\n"), nil),
 			"sent an invalid response: an event stream rather than JSON"},
-	} {
+	}
+	_ = listener.Close()
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			p := startRat(t, bundle, tc.addr, slog.LevelInfo)
 			code, message, id := errorOf(t, p.exchange(t, ping))

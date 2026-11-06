@@ -153,12 +153,13 @@ func TestCheckFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	refusingAddr, _, _ := fakeRatd(t, bundle, otherSide.CA)
+	// the address of a port left free: released once every server of the test listens, none of them
+	// can be given it
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	closed := listener.Addr().String()
-	_ = listener.Close()
 	var crlBody []byte
 	crlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(crlBody)
@@ -171,7 +172,7 @@ func TestCheckFailures(t *testing.T) {
 	if err = os.Chmod(filepath.Join(mtls.ClientDir(readable, "alice"), "client.key"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range []struct {
+	cases := []struct {
 		name, addr, dir, step, expected string
 	}{
 		{"server directory", addr, mtls.ServerDir(bundle), "Files", "  FAIL  role: the directory of the server, not of a client"},
@@ -185,7 +186,9 @@ func TestCheckFailures(t *testing.T) {
 		{"server revoked", revokedAddr, mtls.ClientDir(pki, "alice"), "TLS",
 			"  FAIL  this client checked the CRL of its CA: certificate revoked: the CRL of the CA, fetched from " +
 				crlServer.URL + "/t.crl, revokes the certificate of t"},
-	} {
+	}
+	_ = listener.Close()
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := run(t, "check", "-s", tc.addr, "-b", tc.dir)
 			if err == nil || err.Error() != "check failed: "+tc.step || !strings.Contains(out, tc.expected) {
