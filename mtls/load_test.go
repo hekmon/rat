@@ -152,24 +152,33 @@ func TestLoadChecks(t *testing.T) {
 }
 
 // TestLoadNames guards the last check: a certificate or a CA carrying a name that is not a plain
-// name is refused. Generate never writes one: the side is written by hand.
+// name is refused, and so is a server certificate naming another tenant than its CA, as ratd
+// serves the tenant of its CA while its clients are told the one of its certificate. Generate
+// never writes either: the side is written by hand.
 func TestLoadNames(t *testing.T) {
 	now := time.Now()
-	for _, tc := range []struct{ tenant, client string }{{"t", "a:b"}, {"a b", "c"}} {
+	for _, tc := range []struct {
+		tenant, name string
+		role         Role
+	}{
+		{"t", "a:b", Client},
+		{"a b", "c", Client},
+		{"t", "u", Server},
+	} {
 		ca, err := newCA(tc.tenant, now.Add(-time.Hour), now.Add(time.Hour))
 		if err != nil {
 			t.Fatal(err)
 		}
-		client, err := issue(ca, tc.client, Client, now.Add(-time.Hour), now.Add(time.Hour))
+		side, err := issue(ca, tc.name, tc.role, now.Add(-time.Hour), now.Add(time.Hour))
 		if err != nil {
 			t.Fatal(err)
 		}
 		dir := filepath.Join(t.TempDir(), "side")
-		if err = writeSide(dir, ca.cert, client, Client); err != nil {
+		if err = writeSide(dir, ca.cert, side, tc.role); err != nil {
 			t.Fatal(err)
 		}
 		if _, err = load(dir, now); !errors.Is(err, names.ErrInvalid) || checkOf(err) != len(Checks())-1 {
-			t.Errorf("tenant %q, client %q: expected names.ErrInvalid, the last check, got %v", tc.tenant, tc.client, err)
+			t.Errorf("tenant %q, %s %q: expected names.ErrInvalid, the last check, got %v", tc.tenant, tc.role, tc.name, err)
 		}
 	}
 }

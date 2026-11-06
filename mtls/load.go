@@ -56,7 +56,7 @@ func Checks() []Check {
 		{"certificate signed by the CA, which signs no CA", ErrNotSignedByCA},
 		{"certificate of its role only", ErrRole},
 		{"certificates valid now", ErrValidity},
-		{"plain names", names.ErrInvalid},
+		{"plain names, the server naming the tenant of its CA", names.ErrInvalid},
 	}
 }
 
@@ -99,7 +99,8 @@ func (s *Side) NotAfter() time.Time {
 //     would let in the certificates of every CA under it;
 //  5. role (ErrRole): the certificate authenticates the side its file names, and only it;
 //  6. validity (ErrValidity): the certificate and the CA are valid now;
-//  7. names (names.ErrInvalid): the certificate and the CA carry plain names.
+//  7. names (names.ErrInvalid): the certificate and the CA carry plain names, the same for the
+//     server, which names the tenant its CA names.
 func Load(dir string) (*Side, error) {
 	return load(dir, time.Now())
 }
@@ -211,6 +212,12 @@ func checkSide(role Role, ca, cert *x509.Certificate, key crypto.Signer, labels 
 	}
 	if err := names.Check(ca.Subject.CommonName); err != nil {
 		return nil, fmt.Errorf("%s: %w", labels.ca, err)
+	}
+	// ratd serves the tenant of its CA, and its clients are told the tenant of its certificate: a
+	// bundle always names the same, another PKI may not.
+	if role == Server && cert.Subject.CommonName != ca.Subject.CommonName {
+		return nil, fmt.Errorf("%w: %s names tenant %q, %s names %q", names.ErrInvalid, labels.cert,
+			cert.Subject.CommonName, labels.ca, ca.Subject.CommonName)
 	}
 	return &Side{
 		Role:   role,

@@ -84,10 +84,11 @@ readily, and a sub CA per tenant keeps the tenants apart as bundles do.
 
 ## Names in the certificates
 
-The server certificate names the tenant, and ratd serves the tenant it names: the bundle is the
-tenant, and no setting can pair a tenant with the bundle of another. A client certificate names
-its client, which is its tmux session in the tenant: ratd keeps each client to its session, and
-logs its name with each call. Agents meant to share terminals share a client certificate.
+The server certificate names the tenant, as its CA does, and ratd serves the tenant they name
+(loading the server side requires them to agree): the bundle is the tenant, and no setting can
+pair a tenant with the bundle of another. A client certificate names its client, which is its
+tmux session in the tenant: ratd keeps each client to its session, and logs its name with each
+call. Agents meant to share terminals share a client certificate.
 
 Names are carried in the subject common name, and are plain names, validated as tmux names are
 (package `tmux/names`: letters, digits, `_` and `-`), when generating and when loading. They are
@@ -246,7 +247,9 @@ reports one line per check, the ones before a failure having passed:
    not run a server with its certificate, nor the other way round. Stricter than the
    verification of Go in TLS handshakes, which accepts a certificate carrying both roles.
 6. **Validity**: the certificate and the CA are valid now.
-7. **Names**: the certificate and the CA carry plain names.
+7. **Names**: the certificate and the CA carry plain names, and the server certificate names the
+   tenant its CA names: ratd serves the tenant of its CA, while its clients are told the one of
+   its certificate. A bundle always names the same, a sub CA of another PKI may not.
 
 Credentials may live elsewhere than in a directory: a secret store, an embedded asset, for a Go
 program connecting to ratd directly. `Parse` takes the contents of the three files and runs the
