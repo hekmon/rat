@@ -129,8 +129,9 @@ func (p *serverProcess) exitedOnItsOwn() error {
 }
 
 // bracketedPasteCommand turns bracketed paste on in bash, run before each prompt through
-// PROMPT_COMMAND (see promptCommand).
-const bracketedPasteCommand = `bind "set enable-bracketed-paste on"`
+// PROMPT_COMMAND (see promptCommand). Silenced: once line editing is off (set +o emacs), bind warns
+// at each call that it is not enabled, on the screen, and has no line editor to set.
+const bracketedPasteCommand = `bind "set enable-bracketed-paste on" 2>/dev/null`
 
 // promptOption is the pane option where the bash of a terminal records its last prompt (see
 // promptCommand), which Window reads: a user option, tmux has no use for it.

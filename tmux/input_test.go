@@ -97,6 +97,28 @@ func TestSendTextControlCharacter(t *testing.T) {
 	}
 }
 
+// TestPromptHookWithoutEditing guards that the prompt hook writes nothing on the screen once line
+// editing is off (set +o emacs), where bind warns at each call, and still records the prompts:
+// bracketed paste is turned on through bind, which has no line editor to turn it on in.
+func TestPromptHookWithoutEditing(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	c := startTestServer(t, "noediting")
+	if err := c.NewSession(context.Background(), "s"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "first prompt", promptIs(c, "s", FirstWindow, NoStatus))
+	typeCommand(t, c, "s", FirstWindow, "set +o emacs +o vi")
+	typeCommand(t, c, "s", FirstWindow, "(exit 3)")
+	eventually(t, "prompt after the command", promptIs(c, "s", FirstWindow, 3))
+	snapshot, err := c.Capture(context.Background(), "s", FirstWindow, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(snapshot.Content, "bind:") {
+		t.Errorf("the prompt hook wrote on the screen:\n%s", snapshot.Content)
+	}
+}
+
 // TestCheckText guards which characters a text may hold: any but control characters, tab, new
 // line and carriage return excepted, and that a refused one is named, with its line.
 func TestCheckText(t *testing.T) {

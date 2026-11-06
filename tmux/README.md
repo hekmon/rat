@@ -679,7 +679,9 @@ which then shows as that command. `TestForegroundBash` guards the ones showing a
   prompt). A subshell rather than a job: bash would announce a job, and its end. The mark is waited
   for, from a command substitution, which runs in the process group of bash: `bash` still shows as
   the command (only `bash` was seen polling the window while it showed 100 prompts).
-- **Nothing on the screen**: every output is silenced, and the time comes from `printf '%(%s)T'`,
+- **Nothing on the screen**: every output is silenced, `bind` included, which warns at each prompt
+  once line editing is off (`set +o emacs`: `bind: warning: line editing not enabled`, measured
+  with bash 5.2; `TestPromptHookWithoutEditing` guards it), and the time comes from `printf '%(%s)T'`,
   without starting a process, or `date` for a bash older than 4.2 started in the terminal (typing
   `bash` on macOS runs the 3.2 of the system, first in the PATH of a login shell). The cost is two
   tmux clients per prompt, about 1 ms each on Linux, 4 ms on macOS: bash waits for the first one,
