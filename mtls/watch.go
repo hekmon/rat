@@ -45,6 +45,11 @@ var (
 // otherwise, each a few stat calls.
 const watchInterval = time.Second
 
+// watchRetry is how often a Watcher loads again files refused for a certificate not valid yet,
+// though they did not change: a PKI issuing a certificate valid from the moment it signs it, or
+// a clock behind, would otherwise leave the certificate replaced in use until its expiry.
+const watchRetry = time.Minute
+
 // WatchEvents are told what happens to the files of a Watcher, for its holder to log and show.
 // They are called outside any lock of the Watcher.
 type WatchEvents struct {
@@ -66,7 +71,8 @@ type WatchEvents struct {
 // The files are looked at when the side is asked for (Side), at most once per watchInterval: no
 // goroutine, nothing on a timer. A new CA, another role or name, or files failing a check of Load
 // are refused, told once per change of the files, and the side in use kept: a renewal copied
-// halfway never breaks a running side.
+// halfway never breaks a running side. A certificate refused only for being not valid yet is tried
+// again every watchRetry, the files unchanged, and taken once valid.
 type Watcher struct {
 	dir string
 	// mu guards the fields below.
@@ -76,8 +82,13 @@ type Watcher struct {
 	// stamp identifies the files last looked at, loaded or refused; checked is when.
 	stamp   []fileStamp
 	checked time.Time
-	// refused tells the files last looked at were refused, for a restore to be told
-	refused bool
+	// refused tells the files last looked at were refused, for a restore to be told, refusedErr why
+	// and refusedAt when, for a certificate not valid yet to be tried again (see watchRetry)
+	refused    bool
+	refusedErr error
+	refusedAt  time.Time
+	// now is the clock, which tests move
+	now func() time.Time
 	// events are told what happens to the files, crlEvents what happens to the CRL of each side.
 	events    []WatchEvents
 	crlEvents []CRLEvents
@@ -85,15 +96,21 @@ type Watcher struct {
 
 // Watch loads the side of dir (see Load), and returns its Watcher.
 func Watch(dir string) (*Watcher, error) {
+	// Stamped before loaded: files changing in between are loaded again at the next look, where
+	// a stamp taken after would describe files never loaded.
+	role, err := sideRole(dir)
+	if err != nil {
+		return nil, err
+	}
+	stamp, err := stampFiles(dir, role)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrFiles, err)
+	}
 	side, err := Load(dir)
 	if err != nil {
 		return nil, err
 	}
-	stamp, err := stampFiles(dir, side.Role)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrFiles, err)
-	}
-	return &Watcher{dir: dir, side: side, stamp: stamp, checked: time.Now()}, nil
+	return &Watcher{dir: dir, side: side, stamp: stamp, checked: time.Now(), now: time.Now}, nil
 }
 
 // OnWatch adds events told what happens to the files of the Watcher.
@@ -116,7 +133,7 @@ func (w *Watcher) OnCRL(events CRLEvents) {
 // Watcher).
 func (w *Watcher) Side() *Side {
 	w.mu.Lock()
-	side, tell := w.look(time.Now())
+	side, tell := w.look(w.now())
 	events := slices.Clone(w.events)
 	w.mu.Unlock()
 	if tell != nil {
@@ -136,17 +153,25 @@ func (w *Watcher) look(now time.Time) (*Side, func(WatchEvents)) {
 	w.checked = now
 	// a file missing stamps the directory as nil: refused once, until the files change again
 	stamp, _ := stampFiles(w.dir, w.side.Role)
-	if slices.Equal(stamp, w.stamp) {
+	changed := !slices.Equal(stamp, w.stamp)
+	// a certificate not valid yet becomes valid without the files changing (see watchRetry)
+	retry := w.refused && errors.Is(w.refusedErr, ErrValidity) &&
+		(now.Before(w.refusedAt) || !now.Before(w.refusedAt.Add(watchRetry)))
+	if !changed && !retry {
 		return w.side, nil
 	}
 	// told once per change of the files, refused or not
 	w.stamp = stamp
-	next, err := Load(w.dir)
+	next, err := load(w.dir, now)
 	if err == nil {
 		err = w.renewal(next)
 	}
 	if err != nil {
-		w.refused = true
+		w.refused, w.refusedErr, w.refusedAt = true, err, now
+		if !changed && errors.Is(err, ErrValidity) {
+			// tried again, still not valid: told already
+			return w.side, nil
+		}
 		return w.side, func(e WatchEvents) {
 			if e.Refused != nil {
 				e.Refused(err)

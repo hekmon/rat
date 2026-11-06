@@ -331,8 +331,12 @@ not.
   clients need the new CA too. Another role or name is refused: a running rat would move its
   agent to the terminals of another session.
 - **Files refused keep the side in use**, told once per change, a warning: a renewal copied
-  halfway never breaks a running side, and the expiry warning keeps telling of the certificate
-  in use. Files holding the side in use again, after a refusal, are told restored.
+  halfway never breaks a running side, and the expiry warning keeps telling of the certificate in
+  use. Files holding the side in use again, after a refusal, are told restored. A certificate
+  refused only for being not valid yet, from a PKI not backdating its certificates or a clock
+  behind, is tried again every minute, the files unchanged, told nothing more until taken once
+  valid: waiting for the files to change would leave the certificate replaced in use until its
+  expiry.
 - **From the next handshake on**: ratd picks the certificate of each handshake from the side in
   use, connections open keeping theirs until they close. A client closes its idle connections on a
   renewal of its certificate (`connect.HTTPClient`), as on a newer CRL: in constant use, it would

@@ -251,3 +251,70 @@ func (c credential) side(t *testing.T, w *Watcher) *Side {
 	}
 	return side
 }
+
+// TestWatcherNotYetValid guards that a renewal refused only for a certificate not valid yet is
+// tried again every watchRetry, the files unchanged, and taken once valid: a PKI issuing a
+// certificate valid from the moment it signs it, or a clock behind, would otherwise leave the
+// certificate replaced in use until its expiry. The retries still refused are told nothing more.
+func TestWatcherNotYetValid(t *testing.T) {
+	ca := crlCA(t, "t")
+	dir := filepath.Join(t.TempDir(), "alice")
+	start := time.Now()
+	rewrite(t, dir, ca.cert, renewal(t, ca, Client, "alice", nil), Client, start.Add(-time.Hour))
+	w, err := Watch(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := start
+	w.now = func() time.Time { return clock }
+	var refused []error
+	reloaded := 0
+	w.OnWatch(WatchEvents{
+		Reloaded: func(*Side, bool) { reloaded++ },
+		Refused:  func(err error) { refused = append(refused, err) },
+	})
+	first := w.Side().Certificate.Leaf
+
+	// valid in three minutes
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
+		SerialNumber: big.NewInt(42), Subject: pkix.Name{CommonName: "alice"},
+		NotBefore: start.Add(3 * time.Minute), NotAfter: start.Add(time.Hour),
+		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}, ca.cert, &key.PublicKey, ca.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	later, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewrite(t, dir, ca.cert, credential{cert: later, key: key}, Client, start.Add(-time.Minute))
+	for _, step := range []struct {
+		name     string
+		at       time.Duration
+		refused  int
+		reloaded int
+		inUse    *x509.Certificate
+	}{
+		{"not valid yet", 2 * time.Second, 1, 0, first},
+		{"within the retry delay", 30 * time.Second, 1, 0, first},
+		{"tried again, still not valid", 63 * time.Second, 1, 0, first},
+		{"tried again, still not valid, told nothing", 124 * time.Second, 1, 0, first},
+		{"valid now", 185 * time.Second, 1, 1, later},
+	} {
+		clock = start.Add(step.at)
+		if side := w.Side(); !side.Certificate.Leaf.Equal(step.inUse) || len(refused) != step.refused || reloaded != step.reloaded {
+			t.Errorf("%s: expected serial %s in use, %d refusals and %d reloads told, got serial %s, %v and %d",
+				step.name, step.inUse.SerialNumber, step.refused, step.reloaded, side.Certificate.Leaf.SerialNumber,
+				refused, reloaded)
+		}
+	}
+	if !errors.Is(refused[0], ErrValidity) {
+		t.Errorf("expected the refusal to wrap ErrValidity, got %v", refused[0])
+	}
+}
