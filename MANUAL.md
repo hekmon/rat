@@ -362,11 +362,16 @@ a fetch failing, and at once when the CRL they hold is stale.
   PKI longer than the validity of its CRL cuts every agent. A fetch failing is a warning in the
   logs, and in the status of ratd, with when the CRL held goes stale: CRLs valid for days, and
   published daily, leave time to act.
-- **Revoking a client** cuts it at its next request: ratd checks every request, the answer
-  telling the client why. Its terminals keep running: stop them, or the service, as needed.
-- **Revoking the server certificate** makes every client refuse that ratd: a server key copied off
-  the machine is revoked with its certificate. Issue the server a new certificate, under the same
-  sub CA: the clients keep theirs.
+- **Revoking takes up to 15 minutes**, once your PKI publishes the CRL: a side checks every request
+  against the CRL it holds, and fetches a newer one 15 minutes after the last fetch, from the next
+  request on, which the CRL held still answers. Nothing makes ratd fetch it sooner but a restart,
+  which stops every terminal: to cut a client at once, stop the service, and start it once your
+  PKI published the CRL, which ratd fetches while starting.
+- **Revoking a client** cuts it at its first request once ratd holds the CRL: the answer tells the
+  client why. Its terminals keep running: stop them, or the service, as needed.
+- **Revoking the server certificate** makes every client refuse that ratd, once each holds the
+  CRL: a server key copied off the machine is revoked with its certificate. Issue the server a new
+  certificate, under the same sub CA: the clients keep theirs.
 
 #### Renewal
 
@@ -425,8 +430,9 @@ leaves the rest to how you deploy it:
 - **Client keys are credentials.** A client key grants a shell as that user: give each harness its
   own (logs then tell who did what), never copy one elsewhere, and generate a new bundle to revoke
   one (bundles are closed: no certificate can be added nor removed), or revoke its certificate in
-  your PKI (see A sub CA of your PKI). A leaked client key is an incident: whoever used it had
-  that shell, and could copy the server key (see below) or leave something behind. The logs tell
+  your PKI, which takes up to 15 minutes (see Revocation). A leaked client key is an incident: stop
+  the service to cut it at once, as revoking does not. Whoever used it had that shell, and could
+  copy the server key (see below) or leave something behind. The logs tell
   whether it was used, each call naming its client and the address it came from. Then revoking the
   client alone would not be enough: generate a new bundle and deploy it to ratd and every client
   (with a sub CA, revoke the server certificate as well, and issue a new one), and look for what
