@@ -28,9 +28,10 @@ to its side only.
 Offline, for each directory: the checks ratd and rat run at startup, one line per check until
 one fails (`mtls.Checks`: files of a side, key readable by its owner only, key matching the
 certificate, certificate signed by the CA, which signs no CA, of its role only, certificates
-valid now, plain names, the server naming the tenant of its CA), then which side it is (from its
-certificate), its name (the tenant, or the client, which is its session), the CA fingerprint and
-the remaining validity, with a warning under a year.
+valid now, plain names, the server naming the tenant of its CA, a CRL distribution point over
+http if any), then which side it is (from its certificate), its name (the tenant, or the client,
+which is its session), the CA fingerprint, where the CRL of its CA is fetched from or that its
+certificate names none, the remaining validity, with a warning in its last tenth.
 
 Given several directories, it tells whether they belong to the same bundle (the same CA): mixing
 the files of two bundles is the likeliest mistake, and a handshake only reports it as an opaque
@@ -55,7 +56,9 @@ first failure with a message proper to that step:
    read. A plain HTTP request follows the handshake, for that read to come at once rather than
    after waiting on a timer (any status will do). A refusal by ratd is explained from its alert
    (see package `mtls`): a certificate of another bundle of the tenant, of another tenant, of
-   another role, expired. A server refused by this client is told as package `mtls` tells it.
+   another role, expired. A refusal by ratd checking the CRL of its CA comes as an answer (403,
+   503), whose body is told. A server refused by this client is told as package `mtls` tells it,
+   the CRL of its CA included.
 4. **MCP**: the client of the Go SDK connects (initialize, or discover from protocol 2026-07-28
    on), through `connect.Transport`, then shows the server information, the protocol version,
    and the instructions, which carry the bracketed paste warning when ratd has one: a human sees

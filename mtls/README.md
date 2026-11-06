@@ -27,8 +27,8 @@ The CA private key only lives in memory while a bundle is generated, and is neve
 
 - only the certificates generated together are valid;
 - no certificate can be issued later, not even by someone controlling the server;
-- revoking is generating a new bundle: there is no CRL nor OCSP (Go does not check revocation of
-  client certificates by itself anyway);
+- revoking is generating a new bundle: nobody can sign a CRL (a sub CA of another PKI can, see
+  Revocation);
 - the CA can sign no intermediate CA (`MaxPathLen` 0): a chain is always the CA, then the leaf
   (loading a side checks it, see below).
 
@@ -50,7 +50,9 @@ Rejected:
   every client. A key leaked but never used is the only case it serves, which a new bundle covers
   too. Its cost: a file of the server that its user must not write, a reload in ratd, a check on
   every request (connections kept alive outlive a check at the handshake), and what to do with
-  the terminals of the client revoked.
+  the terminals of the client revoked. The CRL of a sub CA of another PKI (see Revocation) is
+  revocation: rat checks the server certificate too, which that PKI issues again under the same
+  CA, a server key copied being revoked with its certificate.
 - **A short validity**: a bundle expiring stops every client at once, a short validity makes it
   frequent, and a key leaked stays valid until then, long enough to be used.
 
@@ -81,6 +83,66 @@ organization), rat's certificates carrying a marker of their own (a URI naming t
 session), checked by each side. It would hold, at the price of a field of rat's own in every
 certificate, bundles included, and of a template for it in the PKI, while a PKI creates a sub CA
 readily, and a sub CA per tenant keeps the tenants apart as bundles do.
+
+### Revocation
+
+A sub CA of another PKI revokes certificates with a CRL. Each side fetches the CRL of its CA from
+the distribution point of its own certificate, the first over http or https: every certificate
+of the CA names the same CRL, and taking it from the certificate of a peer would let a client
+choose an address for ratd to fetch. A certificate naming none revokes nothing: a bundle, or a
+PKI issuing short-lived certificates instead. One naming only LDAP distribution points (which AD
+CS lists first) is refused: the CA revokes, and rat could not tell what.
+
+A CRL is accepted when it is:
+
+- **of the CA of `ca.crt`**: issued by it and signed by it (Go checks the signature, not the
+  issuer named);
+- **complete**: no critical extension Go does not read. Go reads a partial CRL (issuing
+  distribution point), a delta CRL and an indirect CRL as complete, which would leave revoked
+  certificates out;
+- **current**: with a next update, which has not passed. Without one, a CRL replayed years later
+  would look current;
+- **within 8 MiB**, DER or PEM.
+
+Plain http is enough, the CRL being signed; https is checked against the CAs of the system, and
+the proxy comes from the environment. ratd fetches it while starting, before its terminals
+exist, and refuses to start without a valid one, or with its own certificate revoked: starting
+would let in the certificates the CRL revokes, and refusing loses no terminal. A client fetches
+it at its first handshake: rat contacts nothing before its first request. Each fetches it again
+once the CRL held is stale, one fetch at a time, and accepts no certificate while it can have no
+valid one.
+
+Each side checks the certificate of its peer, and its own, which a side revoked tells rather
+than its peers refusing it:
+
+- **ratd, on every request** (`Side.CheckRevoked`): a connection kept alive outlives a
+  handshake. It answers 403 a client revoked, and 503 every client while it has no valid CRL,
+  the body telling why: refused during the handshake, a client would only learn "bad
+  certificate", the alert Go sends whatever the reason. The terminals of a client revoked keep
+  running: revoking closes the way in, stopping the service is the kill switch.
+- **A client, during the handshake** (`ClientConfig`): it refuses a server revoked, so that a
+  server key copied off the machine is revoked with its certificate, the PKI issuing the server
+  a new one under the same CA, while clients keep theirs.
+
+A side whose certificate names no CRL refuses a peer whose certificate names one: the CA
+revokes, and the side could not check it, its certificate issued from another template than the
+peer's (a server template lacking the distribution point would otherwise leave ratd checking no
+client, silently). The distribution point of the peer is read as a sign only, never fetched.
+Each side tells whether it checks revocation: ratd and rat when starting, `rat-tool bundle
+inspect` offline.
+
+Rejected:
+
+- **Fetching the CRL the peer names**, for a side whose certificate names none: a client would
+  choose an address for ratd to fetch.
+- **A CRL file next to `ca.crt`**, delivered by the admin: ratd is one machine, but rat runs on
+  every machine of a harness, each needing the file pushed every few days, by tooling every
+  organization would have to build.
+- **OCSP**: a request per certificate checked, to a responder on the path of every connection,
+  where one CRL covers every certificate of the CA.
+- **The CRL of the root**, which revokes the sub CA itself: a side holds no certificate above the
+  sub CA. Revoking the sub CA is replacing `ca.crt`.
+- **LDAP**: a client of its own, for an AD CS that can publish over http as well.
 
 ## Names in the certificates
 
@@ -157,6 +219,9 @@ refused client learns it on its first read, from the alert of the server, which 
 | of another tenant | certificate required |
 | of the wrong role | bad certificate |
 | expired | expired certificate |
+
+A client revoked is not refused during the handshake: ratd answers its first request 403 (see
+Revocation).
 
 A client of another tenant presents no certificate at all: the server asks for one signed by the
 CA of its bundle, naming it, and Go's client only presents a certificate whose issuer bears that
@@ -258,6 +323,9 @@ reports one line per check, the ones before a failure having passed:
 7. **Names**: the certificate and the CA carry plain names, and the server certificate names the
    tenant its CA names: ratd serves the tenant of its CA, while its clients are told the one of
    its certificate. A bundle always names the same, a sub CA of another PKI may not.
+8. **CRL**: the CRL distribution points of the certificate, if any, include one over http or
+   https (see Revocation). The CRL itself is fetched when first needed, not when loading:
+   `rat-tool bundle inspect` stays offline, and rat contacts nothing before its first request.
 
 Credentials may live elsewhere than in a directory: a secret store, an embedded asset, for a Go
 program connecting to ratd directly. `Parse` takes the contents of the three files and runs the

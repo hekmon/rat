@@ -1,6 +1,7 @@
 package mtls
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -11,6 +12,10 @@ import (
 // presents the server certificate, and requires a client certificate of the bundle (signed by
 // its CA, valid, clientAuth), which Go checks by itself. TLS 1.3 only. It sets nothing of the
 // protocol above TLS (ALPN), which is ratd's to choose.
+//
+// It does not check revocation: ratd checks it on every request (Side.CheckRevoked), which a
+// connection kept alive outlives a handshake for. Refused during the handshake, a client would
+// only learn "bad certificate", the alert Go sends whatever the reason.
 // The error wraps ErrRole for the side of a client: a client can not run a server.
 func ServerConfig(side *Side) (*tls.Config, error) {
 	if side.Role != Server {
@@ -26,9 +31,10 @@ func ServerConfig(side *Side) (*tls.Config, error) {
 
 // ClientConfig returns the TLS configuration of a client of ratd, from the side of the client in
 // the bundle: it presents the client certificate, and accepts a server certificate of the bundle
-// (signed by its CA, valid, serverAuth) without checking the host name it reaches, which the
-// server certificate does not carry. TLS 1.3 only. A server refused fails the handshake with an
-// error wrapping ErrNotSignedByCA, ErrValidity or ErrRole.
+// (signed by its CA, valid, serverAuth, not revoked) without checking the host name it reaches,
+// which the server certificate does not carry. TLS 1.3 only. A server refused fails the handshake
+// with an error wrapping ErrNotSignedByCA, ErrValidity, ErrRole, ErrRevoked or ErrCRL (see
+// Side.CheckRevoked: the CRL is fetched at the first handshake needing it).
 // The error wraps ErrRole for the side of the server: the server can not stand for a client.
 func ClientConfig(side *Side) (*tls.Config, error) {
 	if side.Role != Client {
@@ -55,7 +61,11 @@ func ClientConfig(side *Side) (*tls.Config, error) {
 				Roots:     roots,
 				KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 			})
-			return verificationError(err)
+			if err != nil {
+				return verificationError(err)
+			}
+			// Bounded by the timeout of a fetch: VerifyConnection is given no context.
+			return side.CheckRevoked(context.Background(), state.PeerCertificates[0])
 		},
 	}, nil
 }

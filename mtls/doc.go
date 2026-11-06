@@ -17,6 +17,13 @@
 // they come. Loading checks what a certificate can tell of it: it signs no CA, and names the
 // tenant.
 //
+// # Revocation
+//
+// A sub CA of another PKI revokes certificates with a CRL, which each side fetches from the
+// distribution point of its own certificate when first needed ([Side.CRL]), and checks
+// ([FetchCRL]): of the CA, complete, current. A certificate naming none revokes nothing, as in a
+// bundle.
+//
 // # Roles and names
 //
 // Certificates carry their role (extended key usage): serverAuth for ratd, clientAuth for
@@ -27,13 +34,14 @@
 //
 // # Checks
 //
-// ratd checks client certificates: signed by the CA of the bundle, valid, clientAuth. Clients
-// check the server certificate the same way with serverAuth, but not the host name they reach:
-// it carries no address. Each side also checks its own directory when loading it ([Load]: files,
-// key permissions, key matching the certificate, CA, role, validity, names), to fail at startup
-// rather than at the first connection; rat-tool runs the same checks for humans. [Parse] runs them
-// on credentials that are not in a directory (a secret store, an embedded asset), but for what
-// only files have.
+// ratd checks client certificates: signed by the CA of the bundle, valid, clientAuth, and not
+// revoked, on every request ([Side.CheckRevoked]). Clients check the server certificate the same
+// way with serverAuth, but not the host name they reach: it carries no address. Each side also
+// checks its own directory when loading it ([Load]: files, key permissions, key matching the
+// certificate, CA, role, validity, names, CRL distribution point), to fail at startup rather than
+// at the first connection; rat-tool runs the same checks for humans. [Parse] runs them on
+// credentials that are not in a directory (a secret store, an embedded asset), but for what only
+// files have.
 //
 // # TLS configurations
 //

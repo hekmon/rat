@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/hekmon/rat/internal/testpki"
 	"github.com/hekmon/rat/mtls"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -83,6 +84,29 @@ func fakeRatd(t *testing.T, bundle string, clientCA *x509.Certificate) (string, 
 	return httpServer.Listener.Addr().String(), calls, errors
 }
 
+// refusingRatd serves over mutual TLS with the server directory of bundle, until the test ends,
+// answering every request with status and message, as ratd refuses a client the CRL of its CA
+// revokes, and returns its address.
+func refusingRatd(t *testing.T, bundle string, status int, message string) string {
+	t.Helper()
+	side, err := mtls.Load(mtls.ServerDir(bundle))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := mtls.ServerConfig(side)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.NextProtos = []string{"http/1.1"}
+	httpServer := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, message, status)
+	}))
+	httpServer.TLS = config
+	httpServer.StartTLS()
+	t.Cleanup(httpServer.Close)
+	return httpServer.Listener.Addr().String()
+}
+
 // TestCheck guards a check passing: each step, what ratd tells clients (information, protocol,
 // instructions, tools), no tool called, and nothing refused in the logs of ratd: the network step
 // reaches ratd on the connection the TLS step uses, rather than on one closed before a handshake.
@@ -117,7 +141,8 @@ func TestCheck(t *testing.T) {
 
 // TestCheckFailures guards the check stopping at the step failing, telling why, with an error
 // naming the step for scripts: a server directory, a key readable by others, ratd unreachable, a
-// server of another bundle, ratd refusing the client.
+// server of another bundle, ratd refusing the client during the handshake or with an answer (the
+// CRL of its CA revoking it), this client refusing the server its CRL revokes.
 func TestCheckFailures(t *testing.T) {
 	bundle := newBundle(t)
 	alice := mtls.ClientDir(bundle, "alice")
@@ -134,6 +159,14 @@ func TestCheckFailures(t *testing.T) {
 	}
 	closed := listener.Addr().String()
 	_ = listener.Close()
+	var crlBody []byte
+	crlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(crlBody)
+	}))
+	defer crlServer.Close()
+	pki, crl := testpki.SubCABundle(t, "t", crlServer.URL+"/t.crl")
+	crlBody = crl(false, "server")
+	revokedAddr, _, _ := fakeRatd(t, pki, nil)
 	readable := newBundle(t)
 	if err = os.Chmod(filepath.Join(mtls.ClientDir(readable, "alice"), "client.key"), 0o644); err != nil {
 		t.Fatal(err)
@@ -147,6 +180,11 @@ func TestCheckFailures(t *testing.T) {
 		{"server of another bundle", otherAddr, alice, "TLS", "  FAIL  this client refused the server: "},
 		{"client refused", refusingAddr, alice, "TLS", "  FAIL  ratd refused this client: its certificate is from " +
 			"another bundle of the tenant (remote error: tls: unknown certificate authority)"},
+		{"client revoked", refusingRatd(t, bundle, http.StatusForbidden, "certificate revoked: the CRL of the CA revokes alice"),
+			alice, "TLS", "  FAIL  ratd refused this client: HTTP 403: certificate revoked: the CRL of the CA revokes alice"},
+		{"server revoked", revokedAddr, mtls.ClientDir(pki, "alice"), "TLS",
+			"  FAIL  this client checked the CRL of its CA: certificate revoked: the CRL of the CA, fetched from " +
+				crlServer.URL + "/t.crl, revokes the certificate of t"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := run(t, "check", "-s", tc.addr, "-b", tc.dir)

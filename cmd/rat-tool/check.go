@@ -142,6 +142,13 @@ func (c *checker) tls(ctx context.Context) bool {
 	if err == nil {
 		var resp *http.Response
 		if resp, err = http.ReadResponse(bufio.NewReader(tlsConn), nil); err == nil {
+			// ratd checks revocation on every request: it refuses a client revoked, or every client
+			// while it has no valid CRL, with an answer telling why, not with an alert
+			if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusServiceUnavailable {
+				line, _ := bufio.NewReader(resp.Body).ReadString('\n')
+				_ = resp.Body.Close()
+				return c.fail("ratd refused this client: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(line))
+			}
 			_ = resp.Body.Close()
 		}
 	}
@@ -172,6 +179,10 @@ func handshakeFailure(err error) string {
 			return fmt.Sprintf("ratd refused this client: %s (%v)", why, opErr)
 		}
 		return fmt.Sprintf("ratd refused this client (%v)", opErr)
+	}
+	// the CRL of the CA revoking the server or this client, or not to be had: the error tells which
+	if errors.Is(err, mtls.ErrRevoked) || errors.Is(err, mtls.ErrCRL) {
+		return fmt.Sprintf("this client checked the CRL of its CA: %v", err)
 	}
 	var unknownAuthority x509.UnknownAuthorityError
 	var invalid x509.CertificateInvalidError

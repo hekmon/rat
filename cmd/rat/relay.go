@@ -418,7 +418,8 @@ func isResponseTo(body []byte, rawID json.RawMessage) bool {
 }
 
 // failureText tells the harness why a request did not reach ratd, or got no answer: ratd
-// unreachable, refusing the handshake or refused by rat, or not answering within timeout.
+// unreachable, refusing the handshake or refused by rat (its certificate, or a CRL revoking ratd,
+// rat itself, or not to be had), or not answering within timeout.
 func (r *relay) failureText(ctx context.Context, err error, timeout time.Duration) string {
 	server := r.target.Server
 	var opErr *net.OpError
@@ -428,6 +429,9 @@ func (r *relay) failureText(ctx context.Context, err error, timeout time.Duratio
 		return fmt.Sprintf("ratd at %s did not answer within %s", server, timeout)
 	case errors.As(err, &opErr) && opErr.Op == "remote error":
 		return fmt.Sprintf("ratd at %s refused the TLS handshake: %s. Check the bundle with rat-tool check.", server, opErr)
+	case (errors.Is(err, mtls.ErrRevoked) || errors.Is(err, mtls.ErrCRL)) && errors.As(err, &urlErr):
+		// the error names the certificate revoked, ratd's or rat's own, and the CRL
+		return fmt.Sprintf("rat refused to reach ratd at %s: %s", server, urlErr.Unwrap())
 	case refusedByRat(err) && errors.As(err, &urlErr):
 		return fmt.Sprintf("rat refused the certificate of ratd at %s: %s. Check the bundle with rat-tool check.", server,
 			urlErr.Unwrap())

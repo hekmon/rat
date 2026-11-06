@@ -24,8 +24,8 @@ At startup, rat loads and checks its client directory (key matching the certific
 validity, name, see package `mtls`): a failure is written on stderr before it exits, and the
 harness shows a server that failed to start. It warns on stderr in the last tenth of the
 validity, a year for a bundle (see Expiry in `mtls/README.md`). It does not contact ratd before
-the first message: a ratd briefly down does not fail the startup of the harness, the first
-request tells.
+the first message, nor fetch the CRL of its CA (see Revocation in `mtls/README.md`): a ratd or a
+PKI briefly down does not fail the startup of the harness, the first request tells.
 
 ## Relay
 
@@ -104,7 +104,11 @@ The cost: rat implements the client headers of the transport, and must follow th
     authority. Check the bundle with rat-tool check.`, or `rat refused the certificate of ratd
     at HOST:PORT: …` when the server is not of the bundle;
   - `ratd at HOST:PORT did not answer within 30s`;
-  - `ratd at HOST:PORT answered HTTP 502: …` (the first line of the body);
+  - `rat refused to reach ratd at HOST:PORT: certificate revoked: the CRL of the CA, fetched
+    from …, revokes the certificate of …` (of ratd, or of rat itself), or `…: no valid CRL of the
+    CA: …`;
+  - `ratd at HOST:PORT answered HTTP 502: …` (the first line of the body), as ratd tells a client
+    revoked (403) or that it has no valid CRL (503);
   - `ratd at HOST:PORT sent an invalid response: …`.
 
   A notification has no identifier to answer: its failure is only logged.
@@ -119,6 +123,7 @@ ratd gives a tool call, so that a connection hanging is cut rather than waited f
 ## Logs
 
 `log/slog`, text handler, on stderr, which harnesses keep: startup (version, server, tenant,
-session, bundle expiry), relay failures (the method and identifier, the error), expiry warnings, the stop
-and its reason. At debug level, one line per message (method, identifier, HTTP status,
-duration), and each call canceled. Never the content of a message.
+session, bundle expiry, the address of the CRL or none), relay failures (the method and
+identifier, the error), expiry warnings, the stop and its reason. At debug level, one line per
+message (method, identifier, HTTP status, duration), and each call canceled. Never the content
+of a message.

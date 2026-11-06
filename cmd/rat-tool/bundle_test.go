@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hekmon/rat/internal/testpki"
 	"github.com/hekmon/rat/internal/version"
 
 	"github.com/urfave/cli/v3"
@@ -57,6 +58,24 @@ func TestBundle(t *testing.T) {
 	}
 	if !strings.Contains(out, "ratd, serving tenant prod") || !strings.Contains(out, "client alice of tenant prod") {
 		t.Errorf("inspect does not tell what each directory is for:\n%s", out)
+	}
+	if strings.Count(out, "revocation: none, the certificate names no CRL distribution point") != 3 {
+		t.Errorf("inspect does not tell a bundle revokes nothing:\n%s", out)
+	}
+}
+
+// TestBundleInspectCRL guards inspect telling, offline, where the CRL of a sub CA of another PKI
+// is fetched from, for each directory whose certificate names it, and that it names none for the
+// others: an admin sees a template lacking the distribution point.
+func TestBundleInspectCRL(t *testing.T) {
+	pki, _ := testpki.SubCABundle(t, "prod", "http://pki.example/prod.crl")
+	out, err := run(t, "bundle", "inspect", filepath.Join(pki, "server"), filepath.Join(pki, "clients", "carol"))
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "revocation: CRL fetched from http://pki.example/prod.crl") ||
+		!strings.Contains(out, "revocation: none") {
+		t.Errorf("expected the server to tell its CRL, carol none:\n%s", out)
 	}
 }
 

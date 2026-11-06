@@ -103,10 +103,12 @@ func command(logs io.Writer) *cli.Command {
 }
 
 // run starts ratd with the server directory of a bundle, its reads bounded by readBudget bytes,
-// then listens with listen, and serves until ctx is done. The steps of the startup run in order, a failure making ratd exit while the
-// admin is still there: loading the bundle, warning of a deployment handing agents more than
-// ratd's user (root, a bundle that user can replace), starting the tmux server of its tenant,
-// checking its terminals, listening. A second ratd for the same tenant thus fails before listening.
+// then listens with listen, and serves until ctx is done. The steps of the startup run in order,
+// a failure making ratd exit while the admin is still there: loading the bundle, fetching the CRL
+// its certificate names (refusing to start without a valid one, or revoked), warning of a
+// deployment handing agents more than ratd's user (root, a bundle that user can replace),
+// starting the tmux server of its tenant, checking its terminals, listening. A second ratd for
+// the same tenant thus fails before listening.
 // Stopping closes the door first (no call gets in anymore), then stops the terminals.
 // It also returns an error when the tmux server died too often: ratd then shows as failed.
 func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int, listen func() (net.Listener, error)) error {
@@ -116,6 +118,19 @@ func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int
 	}
 	if side.Role != mtls.Server {
 		return fmt.Errorf("bundle: %w: %s is the directory of a client, not of the server", mtls.ErrRole, bundle)
+	}
+	// Starting without the CRL the certificate names would let in the certificates it revokes,
+	// and before tmux starts, a failure stops nothing.
+	crl, err := side.CRL(ctx)
+	if err != nil {
+		return fmt.Errorf("bundle: %w", err)
+	}
+	if crl != nil {
+		logger.Info("CRL fetched", "address", crl.Address, "revoked", crl.Len(), "this_update", crl.ThisUpdate,
+			"next_update", crl.NextUpdate)
+	} else {
+		// expected of a bundle, telling of a sub CA whose server template lacks a distribution point
+		logger.Info("revocation not checked: the server certificate names no CRL distribution point")
 	}
 	// before anything inherits NOTIFY_SOCKET, the tmux server first, its terminals with it
 	notifier := takeNotifySocket()

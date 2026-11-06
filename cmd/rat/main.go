@@ -75,8 +75,12 @@ func run(ctx context.Context, logger *slog.Logger, target flags.Target, stdin io
 	if err != nil {
 		return err
 	}
+	crl := side.CRLURL()
+	if crl == "" {
+		crl = "none"
+	}
 	logger.Info("relaying", "version", version.String(), "server", target.Server, "tenant", side.Tenant, "session", side.Name,
-		"bundle_expiry", side.NotAfter())
+		"bundle_expiry", side.NotAfter(), "crl", crl)
 	r := newRelay(logger, client, target, schemas, stdout)
 	reason := r.run(ctx, stdin)
 	logger.Info("stopped", "reason", reason)

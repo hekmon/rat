@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -202,7 +203,7 @@ func (d *daemon) serve(ctx context.Context, listener net.Listener) error {
 		Logger:                       d.sdkLogger,
 	}))
 	server := &http.Server{
-		Handler:           mux,
+		Handler:           d.refuseRevoked(mux),
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,
 		// net/http would otherwise print its errors, refused handshakes mostly, through the log
@@ -239,6 +240,28 @@ func (d *daemon) serve(ctx context.Context, listener net.Listener) error {
 		_ = server.Close()
 	}
 	return nil
+}
+
+// refuseRevoked serves with next the requests of clients whose certificate the CRL of the CA does
+// not revoke (mtls.Side.CheckRevoked), answering 403 the others, and 503 every request while ratd
+// can have no valid CRL, the body telling why. On every request, rather than during the
+// handshake: a connection kept alive outlives a handshake, and Go refuses one with "bad
+// certificate" whatever the reason. Without a CRL named by its certificate, ratd serves them all.
+func (d *daemon) refuseRevoked(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.TLS != nil && len(req.TLS.PeerCertificates) > 0 {
+			if err := d.side.CheckRevoked(req.Context(), req.TLS.PeerCertificates[0]); err != nil {
+				status := http.StatusForbidden
+				if !errors.Is(err, mtls.ErrRevoked) {
+					status = http.StatusServiceUnavailable
+				}
+				d.logger.Warn("request refused", "session", mtls.PeerName(*req.TLS), "remote", req.RemoteAddr, "error", err)
+				http.Error(w, err.Error(), status)
+				return
+			}
+		}
+		next.ServeHTTP(w, req)
+	})
 }
 
 // getServer returns the MCP server of the request, for the session its client certificate names,

@@ -119,10 +119,10 @@ tmux server (see the limit of the isolation model in `AGENTS.md`).
 
 Mutual TLS, always, loopback included: ratd hands out a user shell, and a loopback address is
 reachable by every user of the machine. There is no plain HTTP mode. Clients present a
-certificate from the bundle of the tenant (package `mtls`: a closed bundle, generated with
-`rat-tool`), and ratd presents the server certificate of that bundle. The client name, which is
-its session, is logged with each call along with the address it connects from, telling which client
-did what, and from where (see Logs).
+certificate from the bundle of the tenant (package `mtls`: a closed bundle generated with
+`rat-tool`, or issued by a sub CA of another PKI), and ratd presents the server certificate of
+that bundle. The client name, which is its session, is logged with each call along with the
+address it connects from, telling which client did what, and from where (see Logs).
 
 Rejected: a bearer token. It is a secret stored next to the terminals, in a file or an
 environment that agents, running as the same user, can read; with mTLS, nothing on the server
@@ -592,8 +592,13 @@ ratd would repeat it, and make names vary with the tenant.
 
 In this order, a failure at steps 1, 2 or 4 making ratd exit while the admin is still there:
 
-1. **Load and check the bundle**: the server certificate names the tenant. Then warn of a
-   deployment handing agents more than the user ratd runs as:
+1. **Load and check the bundle**: the server certificate names the tenant. When it names a CRL
+   distribution point (a sub CA of another PKI), fetch the CRL, and refuse to start without a
+   valid one, or with the certificate revoked: starting would let in the certificates the CRL
+   revokes, and no terminal exists yet to lose (see Revocation in `mtls/README.md`). Otherwise,
+   log that revocation is not checked: expected of a bundle, telling of a sub CA whose server
+   template lacks the distribution point. Then warn of a deployment handing agents more than the
+   user ratd runs as:
    - **Root**: every agent, and whoever holds a client key, is root. The likely mistake is a
      service missing its `User=`, which nothing else shows.
    - **A bundle that user can replace**, the key aside, which ratd owns: an agent could put one of
@@ -755,8 +760,9 @@ cause) and the duration, plus what tells the action without its content: the siz
 whether Enter was pressed, the number of keys, the rows of history asked and read (and the size of
 a screen refused), the path and size of a file. Never the content: neither text, nor keys (they
 can spell a password one key at a time), nor files. And the lifecycle: startup (version, tenant,
-address, read budget, bundle expiry), the check of the terminals, tmux exits and restarts, the
-crash budget, shutdown.
+address, read budget, bundle expiry, the CRL fetched), the check of the terminals, tmux exits and
+restarts, the crash budget, shutdown. A request refused by the CRL of the CA (a client revoked,
+or no valid CRL) is a warning, with the session, the address and why.
 
 The address tells apart the agents sharing a client certificate, and shows a certificate used from
 an unexpected machine. It is the peer of the connection: behind a proxy, the proxy's, whose own

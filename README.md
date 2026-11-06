@@ -559,6 +559,21 @@ openssl pkcs12 -in alice.pfx -nocerts -nodes | openssl pkcs8 -topk8 -nocrypt -ou
 chmod 600 client.key
 ```
 
+A sub CA revokes certificates with its CRL, which ratd and rat fetch from the CRL distribution
+point of their own certificate, over http or https (AD CS lists an LDAP one first: add one over
+http). A certificate naming none revokes nothing: name it in every template of the sub CA, as a
+side whose certificate names none refuses a peer whose certificate names one, the CA revoking
+what it can not check. `rat-tool bundle inspect` tells, offline, where each directory fetches
+its CRL from, or that it names none. ratd fetches it while starting, and refuses to start
+without a valid one; rat fetches it at its first request. Both fetch it again once the CRL they
+hold is stale, and refuse everything while they can have no valid one:
+
+- **Revoking a client** cuts it at its next request: ratd checks every request, the answer
+  telling the client why. Its terminals keep running: stop them, or the service, as needed.
+- **Revoking the server certificate** makes every client refuse that ratd: a server key copied off
+  the machine is revoked with its certificate. Issue the server a new certificate, under the same
+  sub CA: the clients keep theirs.
+
 ### Deploying safely
 
 RAT is not a sandbox: terminals run as the user running ratd, and an agent can do whatever that
@@ -597,11 +612,13 @@ leaves the rest to how you deploy it:
   restricted on the other side (`authorized_keys` options, a restricted command).
 - **Client keys are credentials.** A client key grants a shell as that user: give each harness its
   own (logs then tell who did what), never copy one elsewhere, and generate a new bundle to revoke
-  one (bundles are closed: no certificate can be added nor removed). A leaked client key is an
-  incident: whoever used it had that shell, and could copy the server key (see below) or leave
-  something behind. The logs tell whether it was used, each call naming its client and the
-  address it came from. Then revoking the client alone would not be enough: generate a new
-  bundle, deploy it to ratd and every client, and look for what the user may have kept.
+  one (bundles are closed: no certificate can be added nor removed), or revoke its certificate in
+  your PKI (see A sub CA of your PKI). A leaked client key is an incident: whoever used it had
+  that shell, and could copy the server key (see below) or leave something behind. The logs tell
+  whether it was used, each call naming its client and the address it came from. Then revoking the
+  client alone would not be enough: generate a new bundle and deploy it to ratd and every client
+  (with a sub CA, revoke the server certificate as well, and issue a new one), and look for what
+  the user may have kept.
 - **The server key is readable by the agents.** ratd reads it as its user, the one the terminals
   run as: an agent can copy it off the machine. It lets no one into ratd: its certificate is only
   valid for a server, and ratd only accepts certificates valid for a client (see Mutual TLS). So
@@ -609,7 +626,8 @@ leaves the rest to how you deploy it:
   ratd to them, wherever they reach for it, on their way to the machine or on its port once ratd
   is stopped. Their agents then read screens made up to instruct them, and what they send is
   collected. Stopping the service does not revoke the key: after an incident, or any doubt about
-  what ran as that user, generate a new bundle and deploy it, to ratd and every client.
+  what ran as that user, generate a new bundle and deploy it, to ratd and every client, or, with
+  a sub CA of your PKI, revoke the server certificate and issue a new one.
 - **Choose who can reach the port.** `--listen :7281`, the default, answers on every address of
   the machine, the internet included when the machine is on it, and mutual TLS is made for
   that: whoever holds no client certificate is refused during the handshake. What stays exposed

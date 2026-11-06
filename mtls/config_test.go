@@ -6,7 +6,10 @@ import (
 	"crypto/x509/pkix"
 	"errors"
 	"io"
+	"math/big"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -245,6 +248,44 @@ func TestConfigsCAUnder(t *testing.T) {
 			c := connect(t, serverConfig, clientConfig)
 			if accepted := c.server == nil && c.serverSaw == "mallory"; accepted != tc.accepted {
 				t.Errorf("expected the server to accept the client: %v, got %+v", tc.accepted, c)
+			}
+		})
+	}
+}
+
+// TestConfigsRevoked guards that a client refuses a server its CRL revokes, during the handshake,
+// with an error wrapping ErrRevoked, and connects to one it does not. The server checks no
+// revocation during the handshake: ratd checks it on every request.
+func TestConfigsRevoked(t *testing.T) {
+	ca := crlCA(t, "t")
+	var body []byte
+	crlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer crlServer.Close()
+	server := crlSide(t, ca, Server, "t", crlServer.URL)
+	serverConfig, err := ServerConfig(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		revoked []*big.Int
+		err     error
+	}{
+		{"not revoked", nil, nil},
+		{"server revoked", []*big.Int{server.Certificate.Leaf.SerialNumber}, ErrRevoked},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body = crlOf(t, ca, 24*time.Hour, tc.revoked, nil, nil)
+			// a client of its own, fetching the CRL at its first handshake
+			clientConfig, err := ClientConfig(crlSide(t, ca, Client, "alice", crlServer.URL))
+			if err != nil {
+				t.Fatal(err)
+			}
+			c := connect(t, serverConfig, clientConfig)
+			if !errors.Is(c.client, tc.err) || (tc.err == nil) != (c.client == nil) {
+				t.Errorf("expected the client handshake to end with %v, got client %v, server %v", tc.err, c.client, c.server)
 			}
 		})
 	}

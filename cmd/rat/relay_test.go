@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/hekmon/rat/internal/flags"
+	"github.com/hekmon/rat/internal/testpki"
 	"github.com/hekmon/rat/mtls"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -360,6 +361,34 @@ func TestRelayFailures(t *testing.T) {
 			}
 			if !strings.Contains(p.logs.String(), `msg="relay failed" method=ping id=1`) {
 				t.Errorf("expected the failure logged:\n%s", p.logs)
+			}
+		})
+	}
+	// directories of a sub CA, whose CRL the client fetches at its first request: a rat of its own
+	// for each case, holding no CRL yet
+	var crlBody []byte
+	crlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(crlBody)
+	}))
+	defer crlServer.Close()
+	pki, crl := testpki.SubCABundle(t, "t", crlServer.URL+"/t.crl")
+	pkiRatd := fakeRatd(t, pki, newMCPServer().handler, nil)
+	for _, tc := range []struct {
+		name     string
+		crl      []byte
+		expected string
+	}{
+		{"ratd revoked", crl(false, "server"), "rat refused to reach ratd at " + pkiRatd +
+			": certificate revoked: the CRL of the CA, fetched from " + crlServer.URL + "/t.crl, revokes the certificate of t"},
+		{"rat revoked", crl(false, "alice"), "revokes the certificate of alice"},
+		{"no valid CRL", crl(true), "rat refused to reach ratd at " + pkiRatd + ": no valid CRL of the CA"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			crlBody = tc.crl
+			p := startRat(t, pki, pkiRatd, slog.LevelInfo)
+			code, message, _ := errorOf(t, p.exchange(t, ping))
+			if code != codeRelayFailed || !strings.Contains(message, tc.expected) {
+				t.Errorf("expected error %d containing %q, got %d: %q", codeRelayFailed, tc.expected, code, message)
 			}
 		})
 	}

@@ -57,6 +57,7 @@ func Checks() []Check {
 		{"certificate of its role only", ErrRole},
 		{"certificates valid now", ErrValidity},
 		{"plain names, the server naming the tenant of its CA", names.ErrInvalid},
+		{"CRL distribution point over http, if any", ErrCRL},
 	}
 }
 
@@ -75,6 +76,9 @@ type Side struct {
 	CA *x509.Certificate
 	// Certificate is the certificate of the side, with its private key and parsed leaf.
 	Certificate tls.Certificate
+	// revocation is the CRL of the CA, when the certificate names one (see Side.CRL): shared by
+	// the copies of the side.
+	revocation *revocation
 }
 
 // NotAfter returns when the side stops working: the expiry of its certificate or of the CA,
@@ -131,7 +135,9 @@ func (s *Side) expiresFirst() *x509.Certificate {
 //  5. role (ErrRole): the certificate authenticates the side its file names, and only it;
 //  6. validity (ErrValidity): the certificate and the CA are valid now;
 //  7. names (names.ErrInvalid): the certificate and the CA carry plain names, the same for the
-//     server, which names the tenant its CA names.
+//     server, which names the tenant its CA names;
+//  8. CRL (ErrCRL): the CRL distribution points of the certificate, if any, include one over
+//     http or https, the CRL being fetched later (see Side.CRL).
 func Load(dir string) (*Side, error) {
 	return load(dir, time.Now())
 }
@@ -250,14 +256,23 @@ func checkSide(role Role, ca, cert *x509.Certificate, key crypto.Signer, labels 
 		return nil, fmt.Errorf("%w: %s names tenant %q, %s names %q", names.ErrInvalid, labels.cert,
 			cert.Subject.CommonName, labels.ca, ca.Subject.CommonName)
 	}
-	return &Side{
+	// 8. CRL
+	address, err := crlAddress(cert)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", labels.cert, err)
+	}
+	side := &Side{
 		Role:   role,
 		Name:   cert.Subject.CommonName,
 		Tenant: ca.Subject.CommonName,
 		CA:     ca,
 		// The chain sent is the certificate alone: the peer holds the CA.
 		Certificate: tls.Certificate{Certificate: [][]byte{cert.Raw}, PrivateKey: key, Leaf: cert},
-	}, nil
+	}
+	if address != "" {
+		side.revocation = &revocation{address: address, ca: ca, own: cert}
+	}
+	return side, nil
 }
 
 // sideRole returns the role whose certificate file dir holds.

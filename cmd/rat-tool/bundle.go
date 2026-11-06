@@ -166,6 +166,12 @@ func inspectSide(out io.Writer, dir string) *mtls.Side {
 		fmt.Fprintf(out, "  client %s of tenant %s, working in session %s\n", side.Name, side.Tenant, side.Name)
 	}
 	fmt.Fprintf(out, "  CA fingerprint %s\n", mtls.Fingerprint(side.CA))
+	// offline: where the CRL is fetched from, not whether it can be (rat-tool check fetches it)
+	if address := side.CRLURL(); address != "" {
+		fmt.Fprintf(out, "  revocation: CRL fetched from %s\n", address)
+	} else {
+		fmt.Fprintln(out, "  revocation: none, the certificate names no CRL distribution point")
+	}
 	fmt.Fprintf(out, "  valid until %s\n", validity(side.NotAfter()))
 	if side.ExpiresSoon(time.Now()) {
 		fmt.Fprintln(out, "  WARNING: "+side.ExpiryWarning())
