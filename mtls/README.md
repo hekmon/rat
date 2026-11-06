@@ -232,8 +232,11 @@ configuration therefore turns them all off, then checks everything but the host 
 
 The server side needs none of this: servers do not check client certificates against a host
 name, and with `RequireAndVerifyClientCert` and the CA as `ClientCAs`, Go checks the chain, the
-validity and the clientAuth role by itself. Neither end checks that the peer certificate carries
-its role only, as loading a side does: no certificate of a closed bundle carries both.
+validity and the clientAuth role by itself. Each end also checks that the certificate of its
+peer carries its role only, as loading a side does of its own: Go accepts a certificate carrying
+both roles, or none, for either, which a template of another PKI may issue, letting a client
+stand for ratd (guarded by `TestConfigsRoles`). ratd refuses such a client with "bad
+certificate", as one of the wrong role.
 
 The client configuration is exported: a Go client connecting to ratd directly reuses it, rather
 than writing these checks again.
@@ -248,7 +251,7 @@ refused client learns it on its first read, from the alert of the server, which 
 |---|---|
 | of another bundle of the same tenant | unknown certificate authority |
 | of another tenant | certificate required |
-| of the wrong role | bad certificate |
+| of the wrong role, of both, or of none | bad certificate |
 | expired | expired certificate |
 
 A client revoked, or expired since its handshake, is not refused by an alert: ratd answers its
@@ -400,7 +403,8 @@ reports one line per check, the ones before a failure having passed:
    means may hold one.
 5. **Role**: the certificate authenticates the side its file names, and only it: a client must
    not run a server with its certificate, nor the other way round. Stricter than the
-   verification of Go in TLS handshakes, which accepts a certificate carrying both roles.
+   verification of Go in TLS handshakes, which accepts a certificate carrying both roles, or
+   none: each end of a handshake checks its peer so too.
 6. **Validity**: the certificate and the CA are valid now.
 7. **Names**: the certificate and the CA carry plain names, and the server certificate names the
    tenant its CA names: ratd serves the tenant of its CA, while its clients are told the one of

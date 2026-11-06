@@ -226,9 +226,8 @@ func checkSide(role Role, ca, cert *x509.Certificate, key crypto.Signer, labels 
 			ErrNotSignedByCA, labels.ca)
 	}
 	// 5. role: exactly the one of the side, so that a client can not run a server with its
-	// certificate, nor the other way round. Stricter than the verification of Go (TLS handshakes),
-	// which accepts a certificate carrying both roles.
-	if len(cert.ExtKeyUsage) != 1 || cert.ExtKeyUsage[0] != role.usage() {
+	// certificate, nor the other way round (see onlyRole).
+	if !onlyRole(cert, role) {
 		return nil, fmt.Errorf("%w: %s is not a %s certificate only", ErrRole, labels.cert, role)
 	}
 	// 6. validity

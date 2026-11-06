@@ -31,6 +31,15 @@ func ServerConfig(source Source) (*tls.Config, error) {
 		// the CA of a Watcher never changes: a new one takes a restart
 		ClientCAs:  pool(side.CA),
 		MinVersion: tls.VersionTLS13,
+		// Go accepts a client certificate carrying the server role too, or none (see onlyRole):
+		// refused here with "bad certificate", as a certificate of the wrong role is.
+		VerifyConnection: func(state tls.ConnectionState) error {
+			if len(state.PeerCertificates) > 0 && !onlyRole(state.PeerCertificates[0], Client) {
+				return fmt.Errorf("%w: the certificate of %s is not a client certificate only", ErrRole,
+					state.PeerCertificates[0].Subject.CommonName)
+			}
+			return nil
+		},
 	}
 	// The configuration of each handshake, with the certificate of the side in use. Not
 	// GetCertificate, which Go skips for Certificates when the client names no host (an address),
@@ -84,14 +93,17 @@ func ClientConfig(source Source) (*tls.Config, error) {
 			if len(state.PeerCertificates) == 0 {
 				return fmt.Errorf("%w: the server presented no certificate", ErrNotSignedByCA)
 			}
-			// The server sends its certificate alone: no intermediate, the CA signs no CA. The
-			// role is checked as Go does, the closed bundle holding no certificate with both roles.
+			// The server sends its certificate alone: no intermediate, the CA signs no CA.
 			_, err := state.PeerCertificates[0].Verify(x509.VerifyOptions{
 				Roots:     roots,
 				KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 			})
 			if err != nil {
 				return verificationError(err)
+			}
+			// Go accepts a server certificate carrying the client role too, or none (see onlyRole)
+			if !onlyRole(state.PeerCertificates[0], Server) {
+				return fmt.Errorf("%w: the certificate of the server is not a server certificate only", ErrRole)
 			}
 			// Bounded by the timeout of a fetch: VerifyConnection is given no context.
 			return source.Side().CheckRevoked(context.Background(), state.PeerCertificates[0])

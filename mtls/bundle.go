@@ -39,6 +39,15 @@ func (r Role) usage() x509.ExtKeyUsage {
 	return x509.ExtKeyUsageClientAuth
 }
 
+// onlyRole tells whether cert authenticates role, and only it: one extended key usage, the one of
+// the role. Stricter than the verification of Go, which accepts a certificate carrying both roles,
+// or none, for either: a template of another PKI issuing both would let a client stand for ratd,
+// or ratd for a client. Loading a side checks its certificate so, and each end of a handshake the
+// certificate of its peer.
+func onlyRole(cert *x509.Certificate, role Role) bool {
+	return len(cert.ExtKeyUsage) == 1 && cert.ExtKeyUsage[0] == role.usage()
+}
+
 // ServerDir returns the directory of the server side, in the bundle written to dir.
 func ServerDir(dir string) string {
 	return filepath.Join(dir, Server.String())

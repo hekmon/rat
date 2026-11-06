@@ -164,7 +164,7 @@ func (c *checker) tls(ctx context.Context) bool {
 var clientRefusals = map[string]string{
 	"tls: unknown certificate authority": "its certificate is from another bundle of the tenant",
 	"tls: certificate required":          "it is from another tenant",
-	"tls: bad certificate":               "its certificate is not a client certificate",
+	"tls: bad certificate":               "its certificate is not a client certificate only",
 	"tls: expired certificate":           "its certificate expired",
 }
 

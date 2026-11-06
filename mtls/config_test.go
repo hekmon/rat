@@ -290,3 +290,63 @@ func TestConfigsRevoked(t *testing.T) {
 		})
 	}
 }
+
+// sideWithUsages returns the side of role named name, issued by ca, its certificate carrying
+// usages as extended key usages, built by hand: Load refuses a certificate carrying another role
+// than its own, or none.
+func sideWithUsages(t *testing.T, ca credential, name string, role Role, usages []x509.ExtKeyUsage) *Side {
+	t.Helper()
+	c, err := create(&x509.Certificate{
+		Subject: pkix.Name{CommonName: name}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: usages,
+	}, &ca)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Side{Role: role, Name: name, Tenant: ca.cert.Subject.CommonName, CA: ca.cert,
+		Certificate: tls.Certificate{Certificate: [][]byte{c.cert.Raw}, PrivateKey: c.key, Leaf: c.cert}}
+}
+
+// TestConfigsRoles guards that each end of a handshake requires the certificate of its peer to
+// carry the role of the peer, and only it, as loading a side does of its own: Go accepts a
+// certificate carrying both roles, or none, for either, which a template of another PKI may
+// issue. ratd refuses such a client with "bad certificate", as a certificate of the wrong role;
+// a client refuses such a server with ErrRole.
+func TestConfigsRoles(t *testing.T) {
+	ca := testCA(t, "t")
+	server := testSide(t, ca, "t", Server, true)
+	alice := testSide(t, ca, "alice", Client, true)
+	both := []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth}
+	serverConfig := func(side *Side) *tls.Config {
+		t.Helper()
+		config, err := ServerConfig(side)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return config
+	}
+	clientConfig := func(side *Side) *tls.Config {
+		t.Helper()
+		config, err := ClientConfig(side)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return config
+	}
+	for _, tc := range []struct {
+		name   string
+		usages []x509.ExtKeyUsage
+	}{{"both roles", both}, {"no role", nil}} {
+		t.Run("client of "+tc.name, func(t *testing.T) {
+			c := connect(t, serverConfig(server), clientConfig(sideWithUsages(t, ca, "alice", Client, tc.usages)))
+			if !errors.Is(c.server, ErrRole) || c.clientRead == nil || !strings.Contains(c.clientRead.Error(), "bad certificate") {
+				t.Errorf("expected the server to refuse with ErrRole, the client reading bad certificate, got %+v", c)
+			}
+		})
+		t.Run("server of "+tc.name, func(t *testing.T) {
+			if c := connect(t, serverConfig(sideWithUsages(t, ca, "t", Server, tc.usages)), clientConfig(alice)); !errors.Is(c.client, ErrRole) {
+				t.Errorf("expected the client to refuse with ErrRole, got %+v", c)
+			}
+		})
+	}
+}
