@@ -545,3 +545,47 @@ func TestCRLConcurrentFirstFetch(t *testing.T) {
 		t.Errorf("expected the CRL fetched once, got %d fetches", n)
 	}
 }
+
+// TestCRLWaitersShareFailure guards that checks waiting on a fetch failing take its error rather
+// than fetching each in turn: during an outage of the PKI, the last of N checks would otherwise
+// wait for N fetches, up to crlTimeout each. A check coming after the failure fetches again.
+func TestCRLWaitersShareFailure(t *testing.T) {
+	ca := crlCA(t, "t")
+	var fetches atomic.Int32
+	started, release := make(chan struct{}), make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if fetches.Add(1) == 1 {
+			close(started)
+			<-release
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	ratd := crlSide(t, ca, Server, "t", server.URL+"/t.crl")
+	const checks = 5
+	errs := make(chan error, checks)
+	check := func() {
+		_, err := ratd.CRL(context.Background())
+		errs <- err
+	}
+	go check()
+	<-started
+	for range checks - 1 {
+		go check()
+	}
+	// the others waiting on the fetch in flight
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	for range checks {
+		if err := <-errs; !errors.Is(err, ErrCRL) {
+			t.Errorf("expected ErrCRL, got %v", err)
+		}
+	}
+	// one fetch, two if a check came late, after it ended: not one per check
+	if n := fetches.Load(); n > 2 {
+		t.Errorf("expected the checks waiting to share the failure, got %d fetches for %d checks", n, checks)
+	}
+	if _, err := ratd.CRL(context.Background()); !errors.Is(err, ErrCRL) || fetches.Load() < 2 {
+		t.Errorf("a check after the failure: expected a fetch of its own, got %v after %d fetches", err, fetches.Load())
+	}
+}

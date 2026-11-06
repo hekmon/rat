@@ -73,8 +73,8 @@ func crlAddress(cert *x509.Certificate) (string, error) {
 const crlRefresh = 15 * time.Minute
 
 // crlRetry is how long after a fetch failing in the background it is tried again, the CRL held
-// staying valid meanwhile. Without a valid CRL, every check fetches: a side waking from sleep
-// recovers as soon as its network does.
+// staying valid meanwhile. Without a valid CRL, every check fetches, those waiting on a fetch in
+// flight taking its result: a side waking from sleep recovers as soon as its network does.
 const crlRetry = time.Minute
 
 // crlNow returns the current time without its monotonic reading, for tests to move: delays
@@ -115,6 +115,9 @@ type revocation struct {
 	// after a success, crlRetry after a failure.
 	attempted time.Time
 	failed    bool
+	// attempts counts the fetches ended, lastErr is the error of the last, nil after a success
+	attempts int
+	lastErr  error
 	// refreshing tells a fetch in the background is running.
 	refreshing bool
 	// events are told what happens to the CRL.
@@ -262,13 +265,24 @@ func (r *revocation) refresh(ctx context.Context, waiting bool) (*CRL, error) {
 // held a valid one already; the events to tell, whether the CRL fetched is newer, and the error.
 // It tells nothing: the caller tells the events once the locks are released.
 func (r *revocation) fetchAndRecord(ctx context.Context, waiting bool) (held, fetched *CRL, events []CRLEvents, newer bool, err error) {
+	r.mu.Lock()
+	before := r.attempts
+	r.mu.Unlock()
 	r.fetch.Lock()
 	defer r.fetch.Unlock()
 	r.mu.Lock()
 	held = r.crl
+	attempts, lastErr := r.attempts, r.lastErr
 	r.mu.Unlock()
 	if waiting && held != nil && crlNow().Before(held.NextUpdate) {
 		return held, nil, nil, false, nil
+	}
+	// A fetch ended in failure while this call waited for it: its error, rather than a fetch of
+	// its own. During an outage of the PKI, the calls waiting would otherwise fetch one after the
+	// other, the last waiting for all of them, up to crlTimeout each. A call coming after it
+	// fetches again, as soon as the PKI may be back. Its failure was told already.
+	if waiting && attempts != before && lastErr != nil {
+		return nil, nil, nil, false, lastErr
 	}
 	fetched, err = FetchCRL(ctx, r.ca, r.address)
 	if err == nil && held != nil && fetched.ThisUpdate.Before(held.ThisUpdate) {
@@ -278,6 +292,7 @@ func (r *revocation) fetchAndRecord(ctx context.Context, waiting bool) (held, fe
 	now := crlNow()
 	r.mu.Lock()
 	r.attempted, r.failed, r.refreshing = now, err != nil, false
+	r.attempts, r.lastErr = r.attempts+1, err
 	newer = err == nil && (held == nil || fetched.ThisUpdate.After(held.ThisUpdate))
 	if err == nil {
 		r.crl = fetched

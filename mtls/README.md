@@ -118,6 +118,8 @@ fetches nothing.
   the PKI publishing it), or a minute after a fetch failing, the CRL held kept meanwhile.
 - **Without a valid CRL** (none yet, or the one held stale), every check fetches, and accepts no
   certificate while it can not: a side waking from sleep recovers as soon as its network does.
+  Checks waiting on a fetch in flight take its result, the CRL or the failure: during an outage
+  of the PKI, they would otherwise fetch one after the other, the last waiting for all of them.
 - **Delays are told by dates**, the CRL held being judged stale by its next update: the
   monotonic clock of Go, which durations use, stops on some systems while the machine sleeps,
   and a laptop asleep for days would count only the minutes it was awake. A clock set back makes
