@@ -282,7 +282,7 @@ func (d *daemon) getServer(req *http.Request) *mcp.Server {
 }
 
 // newServer returns the MCP server of session, one per request: stateless, and cheap enough
-// (about 0.1 ms with the schemas cached, measured with 8 tools, next to tool calls taking
+// (about 0.25 ms with the schemas cached, see BenchmarkNewServer, next to tool calls taking
 // milliseconds of tmux). The tools are the same whatever the terminals record (see checkTerminals):
 // where they record no prompt, wait_window tells why it can not wait. remote is the address of the
 // client, logged with each of its requests and calls.

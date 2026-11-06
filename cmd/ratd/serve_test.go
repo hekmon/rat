@@ -291,3 +291,32 @@ func TestWarnExpiry(t *testing.T) {
 		}
 	}
 }
+
+// BenchmarkNewServer measures building the MCP server of a request, as ratd does twice per
+// request, with the schemas cached: the cost cmd/ratd/README.md tells against keeping a server
+// per session. Run it with go test -bench NewServer -benchmem.
+func BenchmarkNewServer(b *testing.B) {
+	bundle := filepath.Join(b.TempDir(), "bundle")
+	if _, err := mtls.Generate(bundle, "t", []string{"alice"}); err != nil {
+		b.Fatal(err)
+	}
+	side, err := mtls.Load(mtls.ServerDir(bundle))
+	if err != nil {
+		b.Fatal(err)
+	}
+	// the terminals are not started: nothing is called
+	controller, err := tmux.New(side.Tenant)
+	if err != nil {
+		b.Fatal(err)
+	}
+	d, err := newDaemon(slog.New(slog.DiscardHandler), side, controller, terminalsHold, defaultReadBudget)
+	if err != nil {
+		b.Fatal(err)
+	}
+	// the first server fills the cache of schemas, which the others find
+	d.newServer("alice", "127.0.0.1:1")
+	b.ReportAllocs()
+	for b.Loop() {
+		d.newServer("alice", "127.0.0.1:1")
+	}
+}

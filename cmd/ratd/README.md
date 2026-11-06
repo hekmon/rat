@@ -108,9 +108,10 @@ Rejected:
 - **A URL path**, which does not reach tool handlers.
 
 A server is built for each request, and the SDK asks for it twice (for the protocol versions it
-supports, then to serve): about 0.1 ms and 335 KB each with the schemas cached
-(`SchemaCache`), measured with 8 tools, against milliseconds of tmux for a tool call and seconds
-for a model to answer. Rejected: a server kept per session, a map for no noticeable gain.
+supports, then to serve): about 0.25 ms and 400 KB each with the schemas cached (`SchemaCache`),
+measured with 9 tools by `BenchmarkNewServer` (`go test -bench NewServer -benchmem`), against
+milliseconds of tmux for a tool call and seconds for a model to answer. Rejected: a server kept
+per session, a map for no noticeable gain.
 
 Sessions are only kept apart by ratd: a command typed in a terminal reaches every session of its
 tmux server (see the limit of the isolation model in `AGENTS.md`).
