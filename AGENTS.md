@@ -179,6 +179,11 @@ look, and enforced by tests where it can be checked.
   Only the chosen path is visible in code, so name the rejected ones when they were real
   contenders. Never paraphrase the code below: it adds nothing and will drift.
 - **Names** carry meaning too: a name stating its concept needs less comment.
+- **The README and the manual** are for the people using rat, not its design: the README tells
+  what rat is and how to try it, for a sysadmin evaluating it on a machine of their own; the
+  manual (`MANUAL.md`) how to run it in production: deployment, security, the shell
+  configuration of the terminals. What a reader needs before trying rat goes in the README, the
+  rest in the manual, keeping the README short enough to be read.
 
 Everywhere:
 

@@ -1,0 +1,388 @@
+# RAT manual
+
+Operating RAT: running ratd as a service, its security, and the shell configuration its
+terminals rely on. What RAT is, and how to try it, are in the [README](README.md).
+
+- [Deployment](#deployment): [Linux, with systemd](#linux-with-systemd) ·
+  [macOS, with launchd](#macos-with-launchd)
+- [Security](#security): [Mutual TLS](#mutual-tls) ·
+  [A sub CA of your PKI](#a-sub-ca-of-your-pki) · [Deploying safely](#deploying-safely)
+- [Your shell configuration](#your-shell-configuration)
+
+## Deployment
+
+ratd is meant to run as a service, under a Unix user of its own (see Security). Linux with systemd
+is the recommended target, the only one where the kill switch is complete: stopping the service
+ends every process in its control group, commands detached from their terminals included. ratd
+runs on macOS too, but launchd leaves detached commands running.
+
+### Linux, with systemd
+
+```sh
+useradd --create-home --shell /usr/sbin/nologin rat
+echo 'DenyUsers rat' > /etc/ssh/sshd_config.d/rat.conf && systemctl reload sshd
+install -d -m 755 /etc/rat/prod && cp -r bundle-prod/server /etc/rat/prod/
+chmod 755 /etc/rat/prod/server && chown rat /etc/rat/prod/server/server.key
+```
+
+```ini
+# /etc/systemd/system/ratd-prod.service
+[Unit]
+Description=RAT: persistent terminals for agents, tenant prod
+# the address of --listen must be up when ratd binds it, or ratd exits: a VPN address needs
+# the unit of the VPN before this one as well (After=wg-quick@wg0.service)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+# a Unix user for RAT alone: what agents do is bounded by it
+User=rat
+# ratd tells systemd when it serves: systemctl start waits for it, and reports a failed startup
+Type=notify
+ExecStart=/usr/local/bin/ratd --bundle /etc/rat/prod/server --listen :7281
+# the default, and what the kill switch relies on: stopping the service kills every process
+# left in its control group, detached commands (nohup, setsid, daemons) included
+KillMode=control-group
+# above the worst stop of ratd: 10 seconds for the calls in flight, then 7 for its terminals
+TimeoutStopSec=30
+# what the service may take of the machine, every process counted, terminals included: values to
+# fit the machine and the work of the agents (see Resources below)
+#TasksMax=2048
+#MemoryMax=8G
+#CPUQuota=400%
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```sh
+systemctl enable --now ratd-prod
+journalctl -u ratd-prod -f
+```
+
+- **The only door is ratd's.** `useradd` gives the account no password (nothing matches the locked
+  field it leaves: sshd refuses an empty password and a guess alike, password authentication on
+  or not) and, with `--shell`, no login shell, which the terminals do not need: they run the bash
+  ratd finds in its PATH, whatever the shell of the account. What closes ssh is `DenyUsers`: an
+  agent can add a key to `~/.ssh/authorized_keys`, which a login shell turns into a shell, and a
+  `nologin` one still into a tunnel (`ssh -N -L` needs no shell). `DenyUsers` refuses the account
+  before it authenticates, key, password and tunnel alike (measured with OpenSSH 9.2 on Debian 12;
+  leaving it out of an `AllowUsers` list does the same). Check with `sshd -T | grep -i denyusers`.
+  Reach the account with `sudo -u rat`, as the attach command does (see Security): it runs the
+  command itself, where `su -` and `sudo -i` run the login shell, and are refused.
+- **The bundle belongs to root, but for its key.** ratd only reads it, and the agents run as its
+  user: a bundle that user could write, an agent could replace with one of its own, whose clients
+  ratd would let in at its next start (measured on Debian 12): ratd warns at startup of a bundle
+  its user can write, naming the paths. The key stays the user's, ratd having to read it and
+  refusing it readable by others: an agent can spoil it, and ratd then refuses to start, or copy
+  it, which stopping the service does not revoke (see Security).
+- **The kill switch.** `systemctl stop ratd-prod` stops ratd, its endpoint first, the terminals
+  and the commands they run, and whatever else is left in the service: commands detached from
+  their terminals included (measured with systemd 252: a `nohup` command started by an agent is
+  gone). Keep `KillMode=control-group`: started by hand, ratd can not stop what detached from its
+  terminals.
+- **No `Restart=`, on purpose.** ratd restarts its terminals when they die, and only exits when
+  it can not keep them up: the service then shows as failed, for whoever monitors it.
+- **Resources are bounded by the service, not by ratd.** Whoever calls ratd has a shell: a loop
+  of `tmux new-window`, a fork bomb or a build eating the memory gets around any count ratd could
+  keep of windows or calls. The control group of the service counts every process it holds,
+  terminals and detached commands included. `TasksMax=` caps its processes and threads (the
+  default of systemd, 15% of the limit of the system, usually allows thousands), `MemoryMax=`
+  keeps the out-of-memory killer within the service, which kills its largest process (a build,
+  rather than another service of the machine), `CPUQuota=` keeps the machine responsive. Their
+  values depend on the machine and the work of the agents: the unit holds them commented. At a
+  limit, starting a process fails: windows and commands do not start, tool calls fail, and the
+  stop still ends everything, systemd killing what is left in the group. A file operation stuck
+  on a hung file system holds its content in ratd until it returns, the agent being told to check
+  the file before writing again: `MemoryMax=` also bounds what retries could pile up. Rejected:
+  limits in ratd (windows per session, calls at once), which a single command typed in a
+  terminal gets around.
+- **One unit per tenant**, each with its bundle and port. Tenants whose agents must not reach each
+  other need a Unix user each (see [Users, tenants and
+  sessions](README.md#users-tenants-and-sessions)).
+- **Logs** go to the journal: every tool call (the client, the tool, the outcome, never the
+  content of what agents type or read), the start and stop, the bundle expiry warnings. Each
+  level is a priority of the journal: `journalctl -u ratd-prod -p warning` shows what needs an
+  admin.
+
+### macOS, with launchd
+
+Create a standard user named `rat` (System Settings, Users & Groups; not an administrator), and
+install the bundle as on Linux. Unlike `useradd`, this gives the user a password and a login
+shell: if Remote Login is on, leave `rat` out of the users it allows (General, Sharing, Remote
+Login), and take its login shell away, which the terminals do not need:
+`sudo dscl . -create /Users/rat UserShell /usr/bin/false`. Then, as a daemon of the system
+running as that user, in `/Library/LaunchDaemons/com.github.hekmon.rat.prod.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.github.hekmon.rat.prod</string>
+  <key>UserName</key>
+  <string>rat</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/ratd</string>
+    <string>--bundle</string>
+    <string>/etc/rat/prod/server</string>
+    <string>--listen</string>
+    <string>:7281</string>
+  </array>
+  <!-- launchd starts jobs with /usr/bin:/bin:/usr/sbin:/sbin, whose bash (3.2) ratd refuses:
+       the one of Homebrew must come first. HOME is where terminals start. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/rat</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardErrorPath</key>
+  <string>/Library/Logs/rat/ratd-prod.log</string>
+</dict>
+</plist>
+```
+
+```sh
+sudo install -d -o root -g wheel -m 755 /Library/Logs/rat
+sudo touch /Library/Logs/rat/ratd-prod.log
+sudo chown rat /Library/Logs/rat/ratd-prod.log
+sudo chflags sappnd /Library/Logs/rat/ratd-prod.log
+sudo chown root:wheel /Library/LaunchDaemons/com.github.hekmon.rat.prod.plist
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.github.hekmon.rat.prod.plist
+tail -f /Library/Logs/rat/ratd-prod.log
+```
+
+- **The kill switch is partial.** `sudo launchctl bootout system/com.github.hekmon.rat.prod`
+  stops ratd, its endpoint first, the terminals and the commands they run in the foreground. But
+  launchd only ends the process group of the service, not what it started: commands detached from
+  their terminals (`nohup`, `setsid`, daemons) outlive it (measured: a `nohup` command started by
+  an agent is left running). macOS has nothing like the control groups of systemd. With a user
+  for rat alone, end them all after the service: `sudo pkill -KILL -u rat`.
+- **The log is out of the agents' reach**, as the journal is on Linux. launchd opens it as the
+  user of the job, `rat`, appending to it: the file has to be that user's, or the job does not
+  start. In a directory of root, with the system append-only flag (`sappnd`), which only root
+  clears, agents can add lines to it, but neither rewrite, truncate, rename nor remove it. To
+  rotate it, stop the service (ratd keeps writing to the file it opened), clear the flag (`sudo
+  chflags nosappnd`), move the file, and create it again as above. Taken from the source of launchd
+  (`launchd-842`, the last one published: the user is taken before the file is opened, with
+  `O_APPEND`) and from measures of others on recent macOS, not measured with RAT.
+- **No `KeepAlive`, on purpose**, as there is no `Restart=` on Linux.
+- **One plist per tenant**, each with its label, bundle and port.
+
+## Security
+
+ratd hands out a shell: who gets in is decided by mutual TLS, and what they can do once in by the
+Unix user it runs as. Stopping ratd leaves no terminal and no way in; run as a service with
+systemd, it also stops what agents detached from their terminals (on macOS, see Deployment).
+
+### Mutual TLS
+
+TLS is what HTTPS uses: the connection is encrypted, and the client checks the certificate of the
+server, to know it talks to the right one. With mutual TLS, the server checks a certificate of the
+client as well: ratd only talks to clients presenting a certificate of the bundle of its tenant.
+Any other connection is cut during the handshake, before a single request reaches ratd: there is
+no login page, no password to guess, nothing to try.
+
+It protects as SSH keys do, and in the same way: each side holds a private key that never leaves
+it, and proves it holds it at each connection. A client key is to ratd what an SSH private key is
+to a server; the bundle stands for `authorized_keys`, but closed:
+
+- **Nothing on the server lets a client in.** ratd holds its own key and the certificate of the
+  bundle's authority, which is public. The key of that authority existed only while generating
+  the bundle, and was never written: no one can issue a certificate afterwards, not even someone
+  controlling the server. Nor does the certificate of ratd stand for a client: each certificate
+  carries one extended key usage, server or client authentication, which each side requires of
+  its peer (`openssl x509 -in server.crt -noout -text` shows it). A password or an API key would
+  instead travel with every request and, kept in clear, sit next to the terminals, readable by
+  the agents running there.
+- **Modern and fixed:** TLS 1.3 only, with keys that change at each connection (what is captured
+  today can not be decrypted with a key stolen tomorrow), ECDSA P-256 certificates.
+- **On every address, loopback included**: other users of the machine reach loopback too.
+- **Revoking is generating a new bundle**, and deploying it: a bundle is closed, no certificate
+  can be added to it nor removed from it. Certificates are valid 10 years, and every side warns
+  once less than one remains. This holds for the server key too, which the agents can read (see
+  Deploying safely).
+
+Unlike HTTPS on the web, the client does not check the name of the host it reaches: certificates
+carry no address, as both sides know each other beforehand, and presenting the certificate of the
+bundle proves being its ratd, wherever it is reached (a tunnel, another address). Most harnesses
+can not accept this, nor present a certificate: the rat stdio bridge does it for them. And unlike
+SSH, no session is tied to a connection: the terminals keep running whether agents are connected
+or not, until the service stops.
+
+### A sub CA of your PKI
+
+The bundles of `rat-tool` stand alone: their CA is a root of its own, whose key was never written.
+When your organization runs a PKI, a sub CA of it can take that place: its certificates fill the
+same directories, ratd and rat check them the same way, and your PKI issues them. A client is
+added by issuing its certificate, with nothing to deploy to ratd or to the other clients.
+
+The guarantee of a closed bundle goes: whoever can use the key of the sub CA, in your PKI, can
+issue themselves a shell as the user running ratd. And the sub CA is rat's alone, one per tenant,
+never your root nor an issuing CA shared with other uses: ratd lets in every certificate it signs
+for client authentication, and clients, checking no host name, take for ratd every certificate
+it signs for server authentication.
+
+Its certificates follow the rules of a bundle, which `rat-tool bundle inspect` checks as ratd and
+rat do:
+
+- **The sub CA signs no CA:** its path length is limited to 0 (`pathlen:0`). Otherwise ratd would
+  let in the certificates of every CA under it.
+- **Names:** the sub CA and the server certificate carry the tenant as their common name
+  (`CN=prod`), each client certificate its session (`CN=alice`), as plain names: letters,
+  digits, `_` and `-`, up to 32 characters. The rest of the subject is yours.
+- **One role per certificate:** server authentication for ratd, client authentication for a
+  client, never both (extended key usage).
+- **No address needed:** the server certificate may carry DNS names or IP addresses, clients do
+  not check them.
+
+Each directory holds the files of a bundle: `ca.crt`, the sub CA alone (not the chain up to your
+root, as every certificate of the file would be trusted), and the certificate and key of its
+side, ECDSA or RSA, the key unencrypted in PKCS#8 and readable by its owner only. From a key in
+another format, or from a `.pfx` (what AD CS exports), here for alice:
+
+```sh
+openssl pkcs8 -topk8 -nocrypt -in alice.key.pem -out client.key
+openssl pkcs12 -in alice.pfx -clcerts -nokeys -out client.crt
+openssl pkcs12 -in alice.pfx -nocerts -nodes | openssl pkcs8 -topk8 -nocrypt -out client.key
+chmod 600 client.key
+```
+
+A sub CA revokes certificates with its CRL, which ratd and rat fetch from the CRL distribution
+point of their own certificate, over http or https (AD CS lists an LDAP one first: add one over
+http). A certificate naming none revokes nothing: name it in every template of the sub CA, as a
+side whose certificate names none refuses a peer whose certificate names one, the CA revoking
+what it can not check. `rat-tool bundle inspect` tells, offline, where each directory fetches
+its CRL from, or that it names none. ratd fetches it while starting, and refuses to start
+without a valid one; rat fetches it at its first request. Both fetch it again as they are used,
+every 15 minutes, in the background, and at once when the CRL they hold is stale, refusing
+everything while they can have no valid one: after a sleep, or an outage of your PKI longer than
+the validity of its CRL. A fetch failing is a warning in their logs, and in the status of ratd:
+
+- **Revoking a client** cuts it at its next request: ratd checks every request, the answer
+  telling the client why. Its terminals keep running: stop them, or the service, as needed.
+- **Revoking the server certificate** makes every client refuse that ratd: a server key copied off
+  the machine is revoked with its certificate. Issue the server a new certificate, under the same
+  sub CA: the clients keep theirs.
+
+Renewing a certificate takes no restart: replace the files of its directory, and ratd and rat use
+them from their next connection on, the terminals and the calls in flight untouched. The renewed
+certificate must be of the same sub CA and name, its key new or not: a new key is a warning in
+their logs, and in the status of ratd for a day, for you to see a key you did not rotate. Files
+refused (another CA, another name, a check failing) are a warning, the certificate in use kept.
+A new sub CA takes a restart of ratd and of the harnesses, and is to be deployed to every
+client.
+
+### Deploying safely
+
+RAT is not a sandbox: terminals run as the user running ratd, and an agent can do whatever that
+user can. Tenants and sessions keep agents apart from mistakes, not from a malicious agent. RAT
+enforces what it can (mutual TLS, bounded reads, terminals free of your configuration), and
+leaves the rest to how you deploy it:
+
+- **Avoid root.** ratd as root hands root to every agent, and to whoever holds a client key: one
+  mistaken command, or an instruction an agent read in a web page or a file, and the machine is
+  lost. Unless the machine is meant to be the agent's (a machine you can lose, given to it whole),
+  run ratd as an unprivileged user (see Deployment). ratd warns at startup when run as root: a
+  service missing its `User=` runs silently as root otherwise.
+- **A Unix user for RAT, and for nothing else.** What agents do is bounded by what this user can
+  do: give it none of your own files, no password, and no login but ratd (no login shell, and
+  sshd refusing it: see Deployment).
+- **No sudo, or sudo for named commands only.** When agents must run privileged commands, grant
+  the user these commands only, never every command (`ALL`), in a file of `/etc/sudoers.d` edited
+  with `visudo -f`, which refuses a file with an error:
+
+  ```
+  rat ALL=(root) NOPASSWD: /usr/bin/systemctl restart myapp, /usr/bin/journalctl --no-pager -u myapp
+  ```
+
+  - Full paths, and the arguments in full. A wildcard (`*`) matches any arguments, spaces and
+    options included: `systemctl restart *` restarts any service, and does more.
+  - No command that can start another one or write any file: editors (`vim`, `nano`), `find`,
+    `tar`, `cp`, `tee`, shells and interpreters, scripts the user can change. Each is root for
+    whoever runs it.
+  - No pager: `journalctl` or `systemctl status` open `less` under sudo (which resets the
+    environment, `PAGER` included), whose `!` runs a shell as root. Grant them with
+    `--no-pager`.
+  - `NOPASSWD` is needed, agents typing no password, and acceptable because the list is closed.
+    Check what it grants with `sudo -l -U rat`.
+- **No secrets in its reach.** Agents read what the user reads: keep credentials, tokens and keys
+  out of its home and environment. Keys it needs to reach other machines should be of their own,
+  restricted on the other side (`authorized_keys` options, a restricted command).
+- **Client keys are credentials.** A client key grants a shell as that user: give each harness its
+  own (logs then tell who did what), never copy one elsewhere, and generate a new bundle to revoke
+  one (bundles are closed: no certificate can be added nor removed), or revoke its certificate in
+  your PKI (see A sub CA of your PKI). A leaked client key is an incident: whoever used it had
+  that shell, and could copy the server key (see below) or leave something behind. The logs tell
+  whether it was used, each call naming its client and the address it came from. Then revoking the
+  client alone would not be enough: generate a new bundle and deploy it to ratd and every client
+  (with a sub CA, revoke the server certificate as well, and issue a new one), and look for what
+  the user may have kept.
+- **The server key is readable by the agents.** ratd reads it as its user, the one the terminals
+  run as: an agent can copy it off the machine. It lets no one into ratd: its certificate is only
+  valid for a server, and ratd only accepts certificates valid for a client (see Mutual TLS). So
+  its holder can not be a man in the middle, relaying the calls of clients to ratd: only pose as
+  ratd to them, wherever they reach for it, on their way to the machine or on its port once ratd
+  is stopped. Their agents then read screens made up to instruct them, and what they send is
+  collected. Stopping the service does not revoke the key: after an incident, or any doubt about
+  what ran as that user, generate a new bundle and deploy it, to ratd and every client, or, with
+  a sub CA of your PKI, revoke the server certificate and issue a new one.
+- **Choose who can reach the port.** `--listen :7281`, the default, answers on every address of
+  the machine, the internet included when the machine is on it, and mutual TLS is made for
+  that: whoever holds no client certificate is refused during the handshake. What stays exposed
+  is the handshake itself, to a flaw yet unknown in Go's TLS or in ratd. A firewall letting only
+  the machines of the agents in removes most of that exposure at no cost, and a private or VPN
+  address (`--listen 10.8.0.2:7281`) all of it.
+- **Watch, read-only.** Attach to the terminals of a tenant as its user, in read-only mode:
+  `sudo -u rat tmux -L rat-prod attach -r -t alice` (the socket is named after the tenant, here
+  `prod`, and the session after the client, here `alice`: the terminals of that client). Move
+  between its windows with `C-b n`, `C-b p`, `C-b l` and `C-b 0` to `C-b 9`; read-only refuses
+  the window list (`C-b w`), and scrolling back (`C-b [`) before tmux 3.7. The terminals are the
+  agents': what you type would reach them, and a window you resize stays so.
+- **Keep a trail.** The logs of ratd tell who called, from where, when, which tool on which
+  window, never what was typed or read (see Logs in `cmd/ratd/README.md`): the transcripts of the
+  harnesses hold that. The audit of the system records every process the user runs, with its
+  arguments, whatever started it (scripts and detached commands included), out of the reach of
+  agents. With `auditd`, in `/etc/audit/rules.d/rat.rules`:
+
+  ```
+  -a always,exit -F arch=b64 -S execve -F uid=rat -k rat
+  -a always,exit -F arch=b32 -S execve -F uid=rat -k rat
+  ```
+
+  Then `ausearch -k rat -i` lists them. A command run through `sudo` runs as root: sudo logs it
+  itself.
+- **What outlives the service.** Stopping the service stops the terminals and whatever agents
+  started, detached or not (with systemd; on macOS, end what is left with `pkill -u rat`, see
+  Deployment). What an agent set up to outlive it, as the user (crontab, user services,
+  `~/.ssh/authorized_keys`, files), a dedicated user lets you find all at once, and cut by
+  locking the account: `usermod --expiredate 1 rat`, which expires the account itself, not only
+  its password (`passwd -l`, which stops neither cron jobs nor ssh keys): cron then runs none of
+  its jobs, and sshd refuses it even without `DenyUsers` (measured with Debian 12).
+
+## Your shell configuration
+
+Terminals run bash as a login shell, which reads the bash startup files of the user running RAT
+(`~/.bash_profile`, `~/.profile`…). With a user for RAT alone (see Deployment), these startup
+files are RAT's: leave them as the account was created. What makes a shell pleasant to a human has
+no use for agents, and gets in their way: a prompt framework such as starship hides how commands
+exited, and an alias such as `rm='rm -i'` makes a command ask a question the agent did not expect.
+Running RAT as your own user brings your configuration to the terminals of the agents.
+
+RAT enforces what it relies on, but a startup file can still defeat it: one assigning
+`PROMPT_COMMAND` (rather than adding to it) removes what makes a pasted text wait for Enter, and
+unless bash does it by itself (5.1 and later, without an inputrc turning it off), each line of a
+pasted text then runs as soon as it is pasted. It also removes what tells RAT when a command
+finished, and how. A command run before RAT's does less: one changing the exit status hides the
+status (starship does, `history -a` added in front does), and any, even one keeping it (direnv),
+hides the status of each command of a pipeline: `command | tee log` then tells the status of tee
+only. RAT checks what the bash prompt ends up with when it starts, warns, and only tells agents
+what holds, but does not refuse to run. A startup file changed while RAT runs is only checked at
+its next start: meanwhile, the windows created since tell agents they record no prompt, why, and
+how to fix it.

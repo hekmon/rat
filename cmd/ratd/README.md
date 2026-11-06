@@ -786,7 +786,7 @@ secrets agents type (passwords at a `sudo` prompt, tokens) in logs readable by w
 journal, and wherever logs are shipped. The trail is elsewhere, whole: the logs of ratd tell who
 called, from where, when, which tool on which window; the transcripts of harnesses hold every
 call with its arguments and its result; the audit of the system (`auditd`) records every process
-the user of ratd runs, with its arguments, whatever started it (see Security in the README).
+the user of ratd runs, with its arguments, whatever started it (see Security in [`MANUAL.md`](../../MANUAL.md#security)).
 
 At debug level, one line per MCP request (the session, the address, the method, the duration),
 whatever the protocol version: clients initialize, or discover the server from protocol 2026-07-28
