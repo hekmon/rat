@@ -17,13 +17,21 @@ var (
 	ErrSessionExists = errors.New("session already exists")
 )
 
-// ListSessions returns the names of the existing sessions, sorted by name.
+// ListSessions returns the names of the existing sessions, sorted by name. A name may break the
+// naming rule: tmux accepts spaces, which a command typed in a terminal can give
+// (tmux new-session -s 'my build').
 func (c *Controller) ListSessions(ctx context.Context) ([]string, error) {
 	out, err := c.run(ctx, "list-sessions", "-F", "#{session_name}")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list sessions: %w", err)
 	}
-	return strings.Fields(out), nil
+	// one name per line, as is: tmux escapes the control characters of a session name, newlines
+	// included, and a name split on spaces would be taken for other sessions
+	var sessions []string
+	for line := range strings.Lines(out) {
+		sessions = append(sessions, strings.TrimSuffix(line, "\n"))
+	}
+	return sessions, nil
 }
 
 // FirstWindow is the name of the window a session is created with.

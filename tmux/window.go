@@ -20,6 +20,8 @@ var (
 
 // Window describes a terminal, as tmux sees it when asked.
 type Window struct {
+	// Name is how the window is found. A command typed in a terminal can give one outside the
+	// naming rule, which tmux accepts: the window is described, but no command reaches it.
 	Name string
 	// Command is the process in the foreground of the terminal: the shell (bash) when it waits
 	// for input, the running program otherwise. bash also shows for what bash runs: builtins and
@@ -78,22 +80,27 @@ type Prompt struct {
 // NoStatus is the Status of a Prompt following no command.
 const NoStatus = -1
 
-// windowFormat is the tmux format describing a window, parsed by parseWindow. Fields are
-// separated by spaces: tmux replaces control characters (such as tabs) by '_' in its output, so
-// the separator has to be printable. The name (validated) and the numbers can not contain it,
-// the prompt, the input and the command are quoted by tmux (q: escapes spaces and special
-// characters with a backslash), and the path comes last so it needs no quoting. The prompt, the
-// input and the hook marker are options a command typed in a terminal can write: they are read
-// leniently, the marker turned into 0 or 1 by tmux (set, and not 0).
-const windowFormat = "#{window_name} #{window_activity} #{alternate_on} #{history_size} #{?#{" + hookedOption +
+// windowFormat is the tmux format describing a window, parsed by parseWindow, on a line. Fields
+// are separated by spaces, which tmux can escape (see Spaces separate, tmux quotes, in README.md):
+// the numbers can not contain one, the name, the prompt, the input and the command are quoted by
+// tmux (q: escapes spaces and special characters with a backslash), and the path comes last so
+// it needs no quoting. The name is quoted although rat gives valid names only: a command typed in
+// a terminal can give any (tmux new-window -n 'my build'), which must not fail the description of
+// the other windows. The prompt, the input and the hook marker are options such a command can
+// write: they are read leniently, the marker turned into 0 or 1 by tmux (set, and not 0).
+const windowFormat = "#{q:window_name} #{window_activity} #{alternate_on} #{history_size} #{?#{" + hookedOption +
 	"},1,0} #{q:" + promptOption + "} #{q:" + inputOption + "} #{q:pane_current_command} #{pane_current_path}"
 
 func parseWindow(line string) (w Window, err error) {
-	fields := strings.SplitN(line, " ", 6)
-	if len(fields) != 6 {
+	name, rest, ok := cutQuoted(line)
+	if !ok {
 		return w, fmt.Errorf("unexpected window description %q", line)
 	}
-	prompt, rest, ok := cutQuoted(fields[5])
+	fields := strings.SplitN(rest, " ", 5)
+	if len(fields) != 5 {
+		return w, fmt.Errorf("unexpected window description %q", line)
+	}
+	prompt, rest, ok := cutQuoted(fields[4])
 	if !ok {
 		return w, fmt.Errorf("unexpected window description %q", line)
 	}
@@ -106,13 +113,13 @@ func parseWindow(line string) (w Window, err error) {
 		return w, fmt.Errorf("unexpected window description %q", line)
 	}
 	var numbers [4]int64
-	for i, field := range fields[1:5] {
+	for i, field := range fields[:4] {
 		if numbers[i], err = strconv.ParseInt(field, 10, 64); err != nil {
 			return w, fmt.Errorf("unexpected window description %q: %w", line, err)
 		}
 	}
 	return Window{
-		Name:       fields[0],
+		Name:       name,
 		Command:    command,
 		Path:       path,
 		Activity:   time.Unix(numbers[0], 0),

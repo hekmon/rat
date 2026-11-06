@@ -64,6 +64,27 @@ func TestSessionsNames(t *testing.T) {
 	}
 }
 
+// TestSessionsForeignNames guards that a session a command typed in a terminal named with a space,
+// as tmux accepts (tmux new-session -s 'a b'), is listed under its name, and not taken for the
+// sessions its words name: a missing session a is still told missing, rather than its command
+// failing as is.
+func TestSessionsForeignNames(t *testing.T) {
+	c := startTestServer(t, "sessionsforeign")
+	ctx := context.Background()
+	if err := c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.run(ctx, "new-session", "-d", "-s", "a b"); err != nil {
+		t.Fatal(err)
+	}
+	if sessions, err := c.ListSessions(ctx); err != nil || !slices.Equal(sessions, []string{"a b", "s"}) {
+		t.Errorf("expected [a b s], got %q, %v", sessions, err)
+	}
+	if _, err := c.ListWindows(ctx, "a"); !errors.Is(err, ErrSessionNotFound) {
+		t.Errorf("expected ErrSessionNotFound, got %v", err)
+	}
+}
+
 // TestCommandsWithoutServer guards that commands fail with ErrServerNotRunning when the server
 // is not running, and never start a server by themselves (as a daemon rat would not watch).
 func TestCommandsWithoutServer(t *testing.T) {

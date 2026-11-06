@@ -39,11 +39,11 @@ func foregroundIs(c *Controller, session, window, command string) func() (bool, 
 	}
 }
 
-// TestParseWindow guards the parsing of the window format, whose prompt, input and command are
-// quoted by tmux and whose path comes last unquoted, the hook marker, and the parsing of prompts,
-// with the statuses of a pipeline, and inputs: the mark of a prompt being recorded reads as no
-// prompt, and a value rat did not write, which a command typed in a terminal can, as no prompt or
-// no input, rather than failing.
+// TestParseWindow guards the parsing of the window format, whose name, prompt, input and command
+// are quoted by tmux and whose path comes last unquoted, the hook marker, and the parsing of
+// prompts, with the statuses of a pipeline, and inputs: the mark of a prompt being recorded reads
+// as no prompt, and a value rat did not write, which a command typed in a terminal can, as no
+// prompt or no input, rather than failing.
 func TestParseWindow(t *testing.T) {
 	w, err := parseWindow(`w 1700000000 1 42 1 0\ 1790000000 1790000100 my\ prog\|x /tmp/a dir|b`)
 	if err != nil {
@@ -54,6 +54,13 @@ func TestParseWindow(t *testing.T) {
 		Input: time.Unix(1790000100, 0), Hooked: true}
 	if !reflect.DeepEqual(w, expected) {
 		t.Errorf("got %+v, expected %+v", w, expected)
+	}
+	// a name a command typed in a terminal gave, outside the naming rule
+	for line, name := range map[string]string{`my\ build 1700000000 0 0 0   bash /tmp`: "my build",
+		`it\'s\  1700000000 0 0 0   bash /tmp`: "it's ", ` 1700000000 0 0 0   bash /tmp`: ""} {
+		if w, err := parseWindow(line); err != nil || w.Name != name || w.Command != "bash" || w.Path != "/tmp" {
+			t.Errorf("%q: expected the window %q, got %+v, %v", line, name, w, err)
+		}
 	}
 	for _, line := range []string{"", "w", "w 1700000000 0 0 0", "w 1700000000 0 0 0 1\\ 1790000000 bash",
 		"w 1700000000 0 0 0  1790000100 bash", "w notanumber 0 0 0   bash /tmp", "w 1700000000 0 x 0   bash /tmp",
@@ -267,6 +274,42 @@ func TestListWindows(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventually(t, "sleep in the foreground", foregroundIs(c, "s", FirstWindow, "sleep"))
+}
+
+// TestListWindowsForeignNames guards that a window a command typed in a terminal named outside the
+// naming rule, as tmux accepts (tmux new-window -n 'my build'), does not fail the description of
+// the windows of its session: it is listed under its name, the other windows still described.
+// No command reaches it until renamed, its name being refused before reaching tmux.
+func TestListWindowsForeignNames(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	c := startTestServer(t, "windowsforeign")
+	ctx := context.Background()
+	if err := c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	foreign := []string{"my build", `a\b`, "it's", "end ", ""}
+	for _, name := range foreign {
+		if _, err := c.run(ctx, "new-window", "-d", "-t", "=s:", "-n", name); err != nil {
+			t.Fatalf("%q: %v", name, err)
+		}
+	}
+	windows, err := c.ListWindows(ctx, "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed []string
+	for _, w := range windows {
+		listed = append(listed, w.Name)
+	}
+	if expected := append([]string{FirstWindow}, foreign...); !slices.Equal(listed, expected) {
+		t.Errorf("expected the windows %q, got %q", expected, listed)
+	}
+	if _, err = c.Window(ctx, "s", FirstWindow); err != nil {
+		t.Errorf("expected %s described, got %v", FirstWindow, err)
+	}
+	if err = c.KillWindow(ctx, "s", "my build"); !errors.Is(err, names.ErrInvalid) {
+		t.Errorf("expected names.ErrInvalid, got %v", err)
+	}
 }
 
 // TestWindowsDigitNames guards that a window name made of digits only is refused before reaching

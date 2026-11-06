@@ -321,6 +321,11 @@ checks the name is free before creating a window (under a lock, the check and th
 are atomic within rat). This only protects against rat itself: a `tmux new-window` typed in a
 terminal could still create a duplicate.
 
+The same goes for the rule: tmux accepts any name (`tmux new-window -n 'my build'`, or
+`new-session -s`, typed in a terminal). Such a window or session is listed under its name, the
+others still described (see Spaces separate, tmux quotes), but no command reaches it until it is
+renamed: its name is refused before reaching tmux.
+
 ### display-message never fails
 
 `display-message` does not fail on a missing target: for a missing session it prints empty
@@ -349,21 +354,33 @@ This is distinct from the locale of the terminals (see Environment): `-u` fixes 
 prints, `LC_ALL=C.UTF-8` fixes what bash reads. Both are needed for a text to survive from
 input to capture.
 
-### Printable separators only
+### Spaces separate, tmux quotes
 
-tmux also replaces control characters by `_` in its formatted output (`-F`, `-p`): a tab
-separating fields comes back as `_`, and the fields can not be told apart anymore. Rejected
-separators: tabs and other control characters (replaced), and non ASCII characters (replaced
-too without `-u`, and not worth depending on).
+With `-u`, tmux prints the values of a format as they are, control characters included: it only
+replaces them by `_` for a client without UTF-8, as it does non ASCII characters (measured with
+tmux 3.3a and 3.4). No character is a safe separator by itself: a tab, a comma or a space can be
+in a window name, a path, or an option a command typed in a terminal wrote.
 
-The window description is therefore separated by spaces, which must not be ambiguous:
+The window description is therefore separated by spaces, which tmux can escape:
 
-- neither the name (validated) nor the numbers (activity, full screen, scrollback) can contain
-  a space;
-- the last prompt (see Prompts) and the foreground command are quoted by tmux, with the `q:`
-  format modifier escaping spaces and special characters with a backslash, and unquoted by rat;
+- the numbers (activity, full screen, scrollback, the hook marker) can not contain a space;
+- the name, the last prompt (see Prompts), the input and the foreground command are quoted by
+  tmux, with the `q:` format modifier escaping spaces and special characters with a backslash,
+  and unquoted by rat. The name too: rat gives valid names only, but tmux accepts any, which a
+  command typed in a terminal can give (`tmux new-window -n 'my build'`, see Names);
 - the working directory comes last, so it needs no quoting: everything after the command is
   the path.
+
+A newline is left, which `q:` does not escape, while a window is described on a line: a window
+named with one (`new-window -n` keeps it, `rename-window` escapes it), a working directory or an
+option holding one fails the description of every window of its session, until the window
+closes, leaves the directory, or the option is written again. Only a command typed in a terminal
+can do it, a command run in such a directory being the likeliest. Rejected: giving each value
+with its length in bytes (`#{n:pane_current_path}` before `#{pane_current_path}`), which no
+content can break, but tmux looks each of them up on its own, and reads the foreground command and
+the working directory from the system at each lookup: a command starting in between would give a
+length of another value. Session names have no such case: tmux escapes their control characters,
+so sessions are listed one per line, as they are.
 
 ### show-environment escapes `$`
 
