@@ -290,7 +290,8 @@ rat do:
   let in the certificates of every CA under it.
 - **Names:** the sub CA and the server certificate carry the tenant as their common name
   (`CN=prod`), each client certificate its session (`CN=alice`), as plain names: letters,
-  digits, `_` and `-`, up to 32 characters. The rest of the subject is yours.
+  digits, `_` and `-`, up to 32 characters. The rest of the subject is yours. ratd refuses a
+  client of another name at each of its requests (403).
 - **One role per certificate:** server authentication for ratd, client authentication for a
   client, never both (extended key usage).
 - **No address needed:** the server certificate may carry DNS names or IP addresses, clients do

@@ -245,18 +245,19 @@ func (d *daemon) serve(ctx context.Context, listener net.Listener) error {
 	return nil
 }
 
-// checkClients serves with next the requests of clients whose certificate is still valid, and not
-// revoked by the CRL of the CA (mtls.Side.CheckPeer), answering 403 the others, and 503 every
-// request while ratd can have no valid CRL, the body telling why. On every request, rather than
-// during the handshake alone: a connection kept alive outlives its handshake, by hours for a
-// client calling more often than the idle timeout, and Go refuses a handshake with "bad
-// certificate" whatever the reason. Without a CRL named by its certificate, revocation is not
-// checked.
+// checkClients serves with next the requests of clients whose certificate names a plain name, is
+// still valid, and not revoked by the CRL of the CA (mtls.Side.CheckPeer), answering 403 the
+// others, and 503 every request while ratd can have no valid CRL, the body telling why. On every
+// request, rather than during the handshake alone: a connection kept alive outlives its
+// handshake, by hours for a client calling more often than the idle timeout, and Go refuses a
+// handshake with "bad certificate" whatever the reason. Without a CRL named by its certificate,
+// revocation is not checked.
 func (d *daemon) checkClients(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.TLS != nil && len(req.TLS.PeerCertificates) > 0 {
 			if err := d.source.Side().CheckPeer(req.Context(), req.TLS.PeerCertificates[0]); err != nil {
-				// the client revoked or expired is refused, every client while ratd has no valid CRL
+				// the client misnamed, revoked or expired is refused, every client while ratd has no
+				// valid CRL
 				status := http.StatusForbidden
 				if errors.Is(err, mtls.ErrCRL) {
 					status = http.StatusServiceUnavailable
@@ -272,7 +273,7 @@ func (d *daemon) checkClients(next http.Handler) http.Handler {
 
 // getServer returns the MCP server of the request, for the session its client certificate names,
 // or nil, answered 400, without one. The certificate was checked during the handshake, by the TLS
-// configuration of the bundle: its name follows the naming rule.
+// configuration of the bundle, and its name by checkClients: it follows the naming rule.
 func (d *daemon) getServer(req *http.Request) *mcp.Server {
 	if req.TLS == nil {
 		return nil

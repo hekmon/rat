@@ -766,10 +766,10 @@ size of a screen refused), the path and size of a file. Never the content: neith
 keys (they can spell a password one key at a time), nor files. And the lifecycle: startup
 (version, tenant, address, read budget, bundle expiry, the CRL fetched), the check of the
 terminals, tmux exits and restarts, the crash budget, shutdown. A request refused (a client
-revoked or expired, or no valid CRL) is a warning, with the session, the address and why; so is
-a fetch of the CRL failing, with when the CRL held goes stale, and each newer CRL is logged. A
-renewal of the server certificate is logged, a warning when its key changed; so are bundle files
-changed and refused, and restored (see Renewal in `mtls/README.md`).
+misnamed, revoked or expired, or no valid CRL) is a warning, with the session, the address and
+why; so is a fetch of the CRL failing, with when the CRL held goes stale, and each newer CRL is
+logged. A renewal of the server certificate is logged, a warning when its key changed; so are
+bundle files changed and refused, and restored (see Renewal in `mtls/README.md`).
 
 The address tells apart the agents sharing a client certificate, and shows a certificate used from
 an unexpected machine. It is the peer of the connection: behind a proxy, the proxy's, whose own

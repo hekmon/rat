@@ -135,11 +135,12 @@ Each side checks the certificate of its peer, and its own, which a side revoked 
 than its peers refusing it:
 
 - **ratd, on every request** (`Side.CheckPeer`): a connection kept alive outlives a handshake. It
-  answers 403 a client revoked, or whose certificate expired since the handshake (a PKI issuing
-  short-lived certificates relies on their expiry alone), and 503 every client while it has no
-  valid CRL, the body telling why: refused during the handshake, a client would only learn "bad
-  certificate", the alert Go sends whatever the reason. The terminals of a client revoked keep
-  running: revoking closes the way in, stopping the service is the kill switch.
+  answers 403 a client revoked, misnamed (see Names), or whose certificate expired since the
+  handshake (a PKI issuing short-lived certificates relies on their expiry alone), and 503 every
+  client while it has no valid CRL, the body telling why: refused during the handshake, a client
+  would only learn "bad certificate", the alert Go sends whatever the reason. The terminals of a
+  client revoked keep running: revoking closes the way in, stopping the service is the kill
+  switch.
 - **A client, during the handshake and around every request** (`ClientConfig`,
   `connect.HTTPClient`): it refuses a server revoked, so that a server key copied off the machine
   is revoked with its certificate, the PKI issuing the server a new one under the same CA, while
@@ -186,7 +187,10 @@ call. Agents meant to share terminals share a client certificate.
 Names are carried in the subject common name, and are plain names, validated as tmux names are
 (package `tmux/names`: letters, digits, `_` and `-`), when generating and when loading. They are
 required: the tmux controller accepts an empty tenant for its default socket, but a tenant
-served by ratd is always named.
+served by ratd is always named. The name of a peer is checked too, on each request
+(`Side.CheckPeer`), before ratd takes it for a session: a sub CA of another PKI names its
+certificates as its templates do, and a new line in a name, shown in the status line of ratd,
+would start other fields for systemd.
 
 The CA names the tenant too, so that a client directory tells which tenant it reaches. Its
 subject also carries the organization `rat CA`, which keeps it distinct from the subject of the

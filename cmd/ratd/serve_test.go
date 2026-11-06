@@ -5,11 +5,13 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -318,5 +320,39 @@ func BenchmarkNewServer(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		d.newServer("alice", "127.0.0.1:1")
+	}
+}
+
+// TestCheckClientsNames guards that ratd refuses a client whose certificate names no plain name,
+// 403 telling why, before anything takes it for a session: a sub CA of another PKI may issue one,
+// and a new line in it, shown in the status line, would start other fields for systemd.
+func TestCheckClientsNames(t *testing.T) {
+	bundle := newBundle(t, "t")
+	side, err := mtls.Load(mtls.ServerDir(bundle))
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller, err := tmux.New(side.Tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := newDaemon(slog.New(slog.DiscardHandler), side, controller, terminalsHold, defaultReadBudget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := false
+	handler := d.checkClients(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { served = true }))
+	req := httptest.NewRequest(http.MethodPost, connect.Path, nil)
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{{
+		Subject: pkix.Name{CommonName: "alice\nSTOPPING=1"}, NotBefore: time.Now().Add(-time.Hour),
+		NotAfter: time.Now().Add(time.Hour),
+	}}}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	body := recorder.Body.String()
+	if recorder.Code != http.StatusForbidden || served || !strings.Contains(body, `invalid name "alice\nSTOPPING=1"`) ||
+		strings.Contains(body, "\nSTOPPING") {
+		t.Errorf("expected 403 telling the name quoted, the request not served, got %d (served %v): %q",
+			recorder.Code, served, body)
 	}
 }

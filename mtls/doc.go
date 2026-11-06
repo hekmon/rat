@@ -42,8 +42,8 @@
 // # Checks
 //
 // ratd checks client certificates: signed by the CA of the bundle, valid, clientAuth, and not
-// revoked, their validity and revocation again on every request ([Side.CheckPeer]). Clients check
-// the server certificate the same way with serverAuth, but not the host name they reach: it
+// revoked, their name, validity and revocation again on every request ([Side.CheckPeer]). Clients
+// check the server certificate the same way with serverAuth, but not the host name they reach: it
 // carries no address. Each side also checks its own directory when loading it ([Load]: files, key
 // permissions, key matching the certificate, CA, role, validity, names, CRL distribution point),
 // to fail at startup rather than at the first connection; rat-tool runs the same checks for
