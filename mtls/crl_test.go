@@ -162,8 +162,9 @@ func TestParseCRL(t *testing.T) {
 }
 
 // TestCRLURL guards where the CRL of a side is fetched from: the first distribution point of its
-// certificate over http or https, none when it names none, and a load refused (ErrCRL, the last
-// check) when none is over HTTP: the CA revokes, rat could not tell what.
+// certificate over https, else the first over http, whatever their order, none when it names
+// none, and a load refused (ErrCRL, the last check) when none is over HTTP: the CA revokes, rat
+// could not tell what.
 func TestCRLURL(t *testing.T) {
 	ca := crlCA(t, "t")
 	for _, tc := range []struct {
@@ -176,6 +177,9 @@ func TestCRLURL(t *testing.T) {
 		{"https", []string{"https://pki.example/t.crl"}, "https://pki.example/t.crl"},
 		{"LDAP first", []string{"ldap:///CN=t,CN=CDP?certificateRevocationList", "http://pki.example/t.crl"},
 			"http://pki.example/t.crl"},
+		// over http, a side holding no CRL yet takes an older one handed to it
+		{"http first", []string{"http://pki.example/t.crl", "https://pki.example/t.crl"}, "https://pki.example/t.crl"},
+		{"two over http", []string{"http://a.example/t.crl", "http://b.example/t.crl"}, "http://a.example/t.crl"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if address := crlSide(t, ca, Server, "t", tc.points...).CRLURL(); address != tc.expected {

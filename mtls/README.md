@@ -86,9 +86,10 @@ readily, and a sub CA per tenant keeps the tenants apart as bundles do.
 
 ### Revocation
 
-A sub CA of another PKI revokes certificates with a CRL. Each side fetches the CRL of its CA from
-the distribution point of its own certificate, the first over http or https: every certificate
-of the CA names the same CRL, and taking it from the certificate of a peer would let a client
+A sub CA of another PKI revokes certificates with a CRL. Each side fetches the CRL of its CA
+from the distribution point of its own certificate, the first over https, else the first over
+http, whatever their order (over http, a CRL can be replayed, see below): every certificate of
+the CA names the same CRL, and taking it from the certificate of a peer would let a client
 choose an address for ratd to fetch. A certificate naming none revokes nothing: a bundle, or a
 PKI issuing short-lived certificates instead. One naming only LDAP distribution points (which AD
 CS lists first) is refused: the CA revokes, and rat could not tell what.

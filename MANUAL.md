@@ -339,11 +339,11 @@ chmod 600 client.key
 #### Revocation
 
 ratd and rat fetch the CRL of the sub CA from the CRL distribution point of their own
-certificate, over http or https: AD CS lists an LDAP one first, add one over http. A certificate
-naming none revokes nothing: name it in every template of the sub CA, as a side whose certificate
-names none refuses a peer whose certificate names one, the CA revoking what it can not check.
-`rat-tool bundle inspect` tells, offline, where each directory fetches its CRL from, or that it
-names none.
+certificate, the first over https, else the first over http, whatever their order: AD CS lists
+an LDAP one first, add one over http or https. A certificate naming none revokes nothing: name
+it in every template of the sub CA, as a side whose certificate names none refuses a peer whose
+certificate names one, the CA revoking what it can not check. `rat-tool bundle inspect` tells,
+offline, where each directory fetches its CRL from, or that it names none.
 
 ratd fetches it while starting, and refuses to start without a valid one; rat at its first
 request. Both fetch it again as they are used, every 15 minutes in the background, a minute after

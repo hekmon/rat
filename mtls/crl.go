@@ -50,16 +50,29 @@ var (
 )
 
 // crlAddress returns the address the CRL of the CA of cert is fetched from: the first
-// distribution point of cert over http or https, every certificate of the CA naming the same CRL.
-// It returns "" when cert names none: the CA revokes nothing (a bundle, a PKI issuing short-lived
-// certificates). The error wraps ErrCRL for distribution points none of which is over HTTP (LDAP,
-// which AD CS lists first): the CA revokes, and rat could not tell what.
+// distribution point of cert over https, else the first over http, every certificate of the CA
+// naming the same CRL. https first, whatever the order of the certificate: over http, a side
+// holding no CRL yet takes an older one someone on its network hands it (see Revocation in the
+// README). It returns "" when cert names none: the CA revokes nothing (a bundle, a PKI issuing
+// short-lived certificates). The error wraps ErrCRL for distribution points none of which is over
+// HTTP (LDAP, which AD CS lists first): the CA revokes, and rat could not tell what.
 func crlAddress(cert *x509.Certificate) (string, error) {
 	points := cert.CRLDistributionPoints
+	var plain string
 	for _, point := range points {
-		if u, err := url.Parse(point); err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" {
-			return point, nil
+		u, err := url.Parse(point)
+		if err != nil || u.Host == "" {
+			continue
 		}
+		switch {
+		case u.Scheme == "https":
+			return point, nil
+		case u.Scheme == "http" && plain == "":
+			plain = point
+		}
+	}
+	if plain != "" {
+		return plain, nil
 	}
 	if len(points) > 0 {
 		return "", fmt.Errorf("%w: the certificate names no distribution point over http or https: %q", ErrCRL, points)
@@ -136,7 +149,8 @@ func (s *Side) OnCRL(events CRLEvents) {
 }
 
 // CRLURL returns the address the CRL of the CA of the side is fetched from, the first distribution
-// point of its certificate over http or https, or "" when it names none: the CA revokes nothing.
+// point of its certificate over https, else over http, or "" when it names none: the CA revokes
+// nothing.
 func (s *Side) CRLURL() string {
 	if s.revocation == nil {
 		return ""
