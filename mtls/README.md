@@ -325,8 +325,9 @@ again when its files change: ratd and rat use one, `Load` and `Parse` stay for c
 not.
 
 - **Looked at on use**: at each handshake and each request, at most once a second, a stat of
-  each file (its size and modification time). Nothing on a timer, nor a goroutine; any renewal
-  tool works (a copy, a rename), with no hook to write.
+  each file (its size, mode and modification time; a chmod, fixing a key refused for being
+  readable by others, changes neither its size nor its time). Nothing on a timer, nor a goroutine;
+  any renewal tool works (a copy, a rename), with no hook to write.
 - **A renewal is the same CA, role and name**, the files passing every check of loading. Its key
   may be new: some PKIs issue one at each renewal, and a key copied off the machine stays valid
   only until the certificate it goes with is replaced, where renewing the same key keeps it
