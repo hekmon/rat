@@ -296,8 +296,8 @@ rat do:
   client, never both (extended key usage).
 - **No address needed:** the server certificate may carry DNS names or IP addresses, clients do
   not check them.
-- **A CRL distribution point over http or https**, in every certificate or in none (see
-  Revocation).
+- **A CRL distribution point over http or https**, in every certificate or in none, the sub CA
+  allowed to sign CRLs (`cRLSign`, see Revocation).
 
 As openssl extension sections, for the sub CA of tenant `prod` and its two templates:
 

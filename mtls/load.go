@@ -57,7 +57,7 @@ func Checks() []Check {
 		{"certificate of its role only", ErrRole},
 		{"certificates valid now", ErrValidity},
 		{"plain names, the server naming the tenant of its CA", names.ErrInvalid},
-		{"CRL distribution point over http, if any", ErrCRL},
+		{"CRL distribution point over http, if any, of a CA signing CRLs", ErrCRL},
 	}
 }
 
@@ -137,7 +137,7 @@ func (s *Side) expiresFirst() *x509.Certificate {
 //  7. names (names.ErrInvalid): the certificate and the CA carry plain names, the same for the
 //     server, which names the tenant its CA names;
 //  8. CRL (ErrCRL): the CRL distribution points of the certificate, if any, include one over
-//     http or https, the CRL being fetched later (see Side.CRL).
+//     http or https, and the CA may sign CRLs, the CRL being fetched later (see Side.CRL).
 func Load(dir string) (*Side, error) {
 	return load(dir, time.Now())
 }
@@ -259,6 +259,13 @@ func checkSide(role Role, ca, cert *x509.Certificate, key crypto.Signer, labels 
 	address, err := crlAddress(cert)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", labels.cert, err)
+	}
+	// Go checks the right to sign CRLs when checking one, at the first fetch: a CA naming its CRL
+	// without it would pass the checks here, then make ratd refuse to start, the CRL "not signed
+	// by the CA". A CA carrying no key usage may sign anything, as Go takes it.
+	if address != "" && ca.KeyUsage != 0 && ca.KeyUsage&x509.KeyUsageCRLSign == 0 {
+		return nil, fmt.Errorf("%w: %s names a CRL, which %s may not sign (no cRLSign key usage)", ErrCRL, labels.cert,
+			labels.ca)
 	}
 	side := &Side{
 		Role:   role,

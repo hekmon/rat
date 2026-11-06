@@ -589,3 +589,50 @@ func TestCRLWaitersShareFailure(t *testing.T) {
 		t.Errorf("a check after the failure: expected a fetch of its own, got %v after %d fetches", err, fetches.Load())
 	}
 }
+
+// TestLoadCRLSign guards that loading refuses a certificate naming a CRL its CA may not sign (no
+// cRLSign key usage), the last check (ErrCRL): Go only checks it when checking the CRL, ratd then
+// refusing to start with the CRL "not signed by the CA", where rat-tool bundle inspect told
+// nothing. A CA carrying no key usage may sign anything, as Go takes it.
+func TestLoadCRLSign(t *testing.T) {
+	now := time.Now()
+	for _, tc := range []struct {
+		name     string
+		usage    x509.KeyUsage
+		expected error
+	}{
+		{"CA signing certificates only", x509.KeyUsageCertSign, ErrCRL},
+		{"CA signing CRLs too", x509.KeyUsageCertSign | x509.KeyUsageCRLSign, nil},
+		{"CA carrying no key usage", 0, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ca, err := create(&x509.Certificate{
+				Subject: pkix.Name{CommonName: "t"}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
+				IsCA: true, BasicConstraintsValid: true, KeyUsage: tc.usage, MaxPathLenZero: true,
+			}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			alice, err := create(&x509.Certificate{
+				Subject: pkix.Name{CommonName: "alice"}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
+				BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature,
+				ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+				CRLDistributionPoints: []string{"http://pki.example/t.crl"},
+			}, &ca)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dir := filepath.Join(t.TempDir(), "alice")
+			if err = writeSide(dir, ca.cert, alice, Client); err != nil {
+				t.Fatal(err)
+			}
+			_, err = load(dir, now)
+			if !errors.Is(err, tc.expected) || (tc.expected == nil) != (err == nil) {
+				t.Fatalf("expected %v, got %v", tc.expected, err)
+			}
+			if err != nil && (checkOf(err) != len(Checks())-1 || !strings.Contains(err.Error(), "no cRLSign key usage")) {
+				t.Errorf("expected the last check, telling cRLSign, got %v", err)
+			}
+		})
+	}
+}

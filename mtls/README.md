@@ -420,8 +420,10 @@ reports one line per check, the ones before a failure having passed:
    tenant its CA names: ratd serves the tenant of its CA, while its clients are told the one of
    its certificate. A bundle always names the same, a sub CA of another PKI may not.
 8. **CRL**: the CRL distribution points of the certificate, if any, include one over http or
-   https (see Revocation). The CRL itself is fetched when first needed, not when loading:
-   `rat-tool bundle inspect` stays offline, and rat contacts nothing before its first request.
+   https (see Revocation), and the CA may sign CRLs (`cRLSign`), which Go only checks when
+   checking a CRL, a CA without it making ratd refuse to start. The CRL itself is fetched when
+   first needed, not when loading: `rat-tool bundle inspect` stays offline, and rat contacts
+   nothing before its first request.
 
 Credentials may live elsewhere than in a directory: a secret store, an embedded asset, for a Go
 program connecting to ratd directly. `Parse` takes the contents of the three files and runs the
