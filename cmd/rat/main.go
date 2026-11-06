@@ -66,9 +66,10 @@ func run(ctx context.Context, logger *slog.Logger, target flags.Target, stdin io
 	if side.Role != mtls.Client {
 		return fmt.Errorf("bundle: %w: %s is the directory of the server, not of a client", mtls.ErrRole, target.Bundle)
 	}
-	if side.ExpiresSoon(time.Now()) {
-		logger.Warn(side.ExpiryWarning(), "expiry", side.NotAfter(), "days_left", int(time.Until(side.NotAfter()).Hours()/24))
-	}
+	// the warnings end with run, not with the process: tests run it many times
+	warnings, stopWarnings := context.WithCancel(ctx)
+	defer stopWarnings()
+	warnExpiry(warnings, logger, watcher)
 	watcher.OnCRL(logCRL(logger))
 	watcher.OnWatch(logWatch(logger))
 	client, err := connect.HTTPClient(watcher)
@@ -89,6 +90,35 @@ func run(ctx context.Context, logger *slog.Logger, target flags.Target, stdin io
 	reason := r.run(ctx, stdin)
 	logger.Info("stopped", "reason", reason)
 	return nil
+}
+
+// expiryCheckInterval is how often rat tells again that its certificate expires soon, as ratd does
+// of its own. A variable for tests.
+var expiryCheckInterval = 24 * time.Hour
+
+// warnExpiry warns if the certificate in use of source expires soon (mtls.Side.ExpiresSoon): now,
+// before rat relays, then every expiryCheckInterval until ctx is done. A rat runs for weeks, and
+// warned only when starting, it would tell nothing of a certificate going unrenewed until every
+// request fails. The certificate in use: a renewal ends the warnings.
+func warnExpiry(ctx context.Context, logger *slog.Logger, source mtls.Source) {
+	warn := func() {
+		if side := source.Side(); side.ExpiresSoon(time.Now()) {
+			logger.Warn(side.ExpiryWarning(), "expiry", side.NotAfter(), "days_left", int(time.Until(side.NotAfter()).Hours()/24))
+		}
+	}
+	warn()
+	go func() {
+		ticker := time.NewTicker(expiryCheckInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				warn()
+			}
+		}
+	}()
 }
 
 // logCRL returns the events logging what happens to the CRL of the CA, fetched at the first

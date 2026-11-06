@@ -304,8 +304,8 @@ any user could create first to block the tenant.
 ## Expiry
 
 An expired bundle stops every client at once, years after anyone remembers how it was made.
-Every side warns in the last tenth of the validity of whichever of its certificate and CA expires
-first: ratd at startup and every day, rat at startup (on its stderr, which harnesses log),
+Every side warns in the last tenth of the validity of whichever of its certificate and CA
+expires first: ratd and rat at startup and every day (rat on its stderr, which harnesses log),
 rat-tool when inspecting a bundle or checking a ratd. Sysadmins need reminding, often.
 
 A tenth is a year for a bundle. A sub CA of another PKI issues certificates valid for a year or

@@ -345,14 +345,17 @@ func (s *status) run(ctx context.Context, tenant, address string) {
 	}
 }
 
-// leftText tells a delay left, coarse: days beyond two, hours beyond one, minutes below.
+// leftText tells a delay left, coarse: days beyond two, hours beyond one, minutes beyond one, and
+// under a minute below, rather than 0m, read as none left.
 func leftText(left time.Duration) string {
 	switch {
 	case left >= 48*time.Hour:
 		return fmt.Sprintf("%dd", int(left.Hours()/24))
 	case left >= time.Hour:
 		return fmt.Sprintf("%dh", int(left.Hours()))
-	default:
+	case left >= time.Minute:
 		return fmt.Sprintf("%dm", int(left.Minutes()))
+	default:
+		return "<1m"
 	}
 }

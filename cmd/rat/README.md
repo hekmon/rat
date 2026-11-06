@@ -23,9 +23,11 @@ harness command line is checked by copying it, with the same names and the same 
 At startup, rat loads and checks its client directory (key matching the certificate, CA, role,
 validity, name, see package `mtls`): a failure is written on stderr before it exits, and the
 harness shows a server that failed to start. It warns on stderr in the last tenth of the
-validity, a year for a bundle (see Expiry in `mtls/README.md`). It does not contact ratd before
-the first message, nor fetch the CRL of its CA (see Revocation in `mtls/README.md`): a ratd or a
-PKI briefly down does not fail the startup of the harness, the first request tells.
+validity, a year for a bundle (see Expiry in `mtls/README.md`), then every day while it runs, of
+the certificate in use: a rat runs for weeks, and would otherwise tell nothing of a certificate
+left unrenewed until every request fails. It does not contact ratd before the first message, nor
+fetch the CRL of its CA (see Revocation in `mtls/README.md`): a ratd or a PKI briefly down does
+not fail the startup of the harness, the first request tells.
 
 ## Relay
 

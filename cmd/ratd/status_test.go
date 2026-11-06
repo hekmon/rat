@@ -292,3 +292,16 @@ func TestStatusBundleFiles(t *testing.T) {
 		t.Errorf("new key a day ago: expected nothing of it, got %q", line)
 	}
 }
+
+// TestLeftText guards the coarse delays the status tells: days beyond two, hours beyond one,
+// minutes beyond one, and under a minute rather than 0m, read as none left.
+func TestLeftText(t *testing.T) {
+	for left, expected := range map[time.Duration]string{
+		3 * 24 * time.Hour: "3d", 47 * time.Hour: "47h", 90 * time.Minute: "1h", 59 * time.Minute: "59m",
+		time.Minute: "1m", 59 * time.Second: "<1m", time.Second: "<1m",
+	} {
+		if text := leftText(left); text != expected {
+			t.Errorf("%s: expected %q, got %q", left, expected, text)
+		}
+	}
+}
