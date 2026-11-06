@@ -24,6 +24,13 @@
 // ([Side.CRL]), telling its holder what happens to it ([Side.OnCRL]), and checks ([FetchCRL]): of
 // the CA, complete, current. A certificate naming none revokes nothing, as in a bundle.
 //
+// # Renewal
+//
+// A [Watcher] holds the side of a directory, loading it again when its files change: a
+// certificate renewed by a PKI, with the same CA, role and name, its key new or not, is used from
+// the next handshake on, without a restart. A new CA takes a restart. The TLS configurations take
+// a [Source], a Side or a Watcher, and use the side in use at each handshake.
+//
 // # Roles and names
 //
 // Certificates carry their role (extended key usage): serverAuth for ratd, clientAuth for

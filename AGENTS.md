@@ -16,8 +16,8 @@ at once, and to know what they leave behind.
   package of its own (`tmux/names`), shared with mtls.
 - **`mtls` package**: the TLS contract between ratd and its clients: a CA, a server named after
   its tenant and clients named after their session, generated together as a closed bundle by
-  rat-tool, or issued by a sub CA of another PKI, whose CRL each side fetches and checks, and the
-  TLS configuration of each side.
+  rat-tool, or issued by a sub CA of another PKI, whose CRL each side fetches and checks, and
+  whose renewals each side takes while running, and the TLS configuration of each side.
 - **`ratd` (MCP server)**: high level, agent facing, served over HTTP with mutual TLS. Each of
   its tools serves a purpose (list, create and close windows, send text or keys, read a window,
   wait for a command, read and write files), and composing the controller primitives to serve it

@@ -112,16 +112,18 @@ func command(logs io.Writer) *cli.Command {
 // Stopping closes the door first (no call gets in anymore), then stops the terminals.
 // It also returns an error when the tmux server died too often: ratd then shows as failed.
 func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int, listen func() (net.Listener, error)) error {
-	side, err := mtls.Load(bundle)
+	watcher, err := mtls.Watch(bundle)
 	if err != nil {
 		return fmt.Errorf("bundle: %w", err)
 	}
+	side := watcher.Side()
 	if side.Role != mtls.Server {
 		return fmt.Errorf("bundle: %w: %s is the directory of a client, not of the server", mtls.ErrRole, bundle)
 	}
 	// Starting without the CRL the certificate names would let in the certificates it revokes,
 	// and before tmux starts, a failure stops nothing.
-	side.OnCRL(logCRL(logger))
+	watcher.OnCRL(logCRL(logger))
+	watcher.OnWatch(logWatch(logger))
 	crl, err := side.CRL(ctx)
 	if err != nil {
 		return fmt.Errorf("bundle: %w", err)
@@ -153,15 +155,19 @@ func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int
 		logger.Info("terminals stopped")
 	}()
 	checked, degraded := checkTerminals(ctx, logger, controller)
-	d, err := newDaemon(logger, side, controller, checked, readBudget)
+	d, err := newDaemon(logger, watcher, controller, checked, readBudget)
 	if err != nil {
 		return err
 	}
 	d.notifier, d.status.notifier = notifier, notifier
 	d.status.degrade(append(deployment, degraded...)...)
-	side.OnCRL(mtls.CRLEvents{Fetched: func(*mtls.CRL) { d.status.crlRenewed() }, Failed: func(_ error, held *mtls.CRL) {
+	watcher.OnCRL(mtls.CRLEvents{Fetched: func(*mtls.CRL) { d.status.crlRenewed() }, Failed: func(_ error, held *mtls.CRL) {
 		d.status.crlFailed(held)
 	}})
+	watcher.OnWatch(mtls.WatchEvents{
+		Reloaded: func(_ *mtls.Side, newKey bool) { d.status.renewed(time.Now(), newKey) },
+		Refused:  func(err error) { d.status.refused(err) },
+	})
 	listener, err := listen()
 	if err != nil {
 		return err
@@ -178,7 +184,7 @@ func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int
 			stopServing()
 		}
 	}()
-	go warnExpiry(serving, logger, side, d.status)
+	go warnExpiry(serving, logger, watcher, d.status)
 	err = d.serve(serving, listener)
 	logger.Info("door closed")
 	d.status.stop("stopping the terminals")
@@ -209,13 +215,37 @@ func logCRL(logger *slog.Logger) mtls.CRLEvents {
 	}
 }
 
+// logWatch returns the events logging what happens to the files of the server directory: a
+// renewal, a warning when it changes the key, which a human should know of (a rotation, or a key
+// replaced after it leaked), and files refused, the side in use kept.
+func logWatch(logger *slog.Logger) mtls.WatchEvents {
+	return mtls.WatchEvents{
+		Reloaded: func(side *mtls.Side, newKey bool) {
+			attrs := []any{"serial", side.Certificate.Leaf.SerialNumber, "expiry", side.NotAfter()}
+			if newKey {
+				logger.Warn("server certificate renewed with a new key", attrs...)
+				return
+			}
+			logger.Info("server certificate renewed", attrs...)
+		},
+		Refused: func(err error) {
+			if err == nil {
+				logger.Info("bundle files restored: the side in use is theirs again")
+				return
+			}
+			logger.Warn("bundle files changed and refused, the side in use kept", "error", err)
+		},
+	}
+}
+
 // warnExpiry warns now, then every day until ctx is done, if the bundle of side expires soon
 // (mtls.Side.ExpiresSoon): sysadmins need reminding, often. The expiry is told to status as well.
-func warnExpiry(ctx context.Context, logger *slog.Logger, side *mtls.Side, status *status) {
+func warnExpiry(ctx context.Context, logger *slog.Logger, source mtls.Source, status *status) {
 	ticker := time.NewTicker(expiryCheckInterval)
 	defer ticker.Stop()
 	for {
-		if side.ExpiresSoon(time.Now()) {
+		// the side in use, renewed or not: a renewal refused still gets reminded
+		if side := source.Side(); side.ExpiresSoon(time.Now()) {
 			logger.Warn(side.ExpiryWarning(), "expiry", side.NotAfter(), "days_left", int(time.Until(side.NotAfter()).Hours()/24))
 			status.expires(side.NotAfter())
 		}

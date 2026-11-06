@@ -298,6 +298,54 @@ is generated again, a certificate of another PKI issued again by it.
 Rejected: a fixed delay, a year or a month, too early for one kind of certificate or too late for
 the other.
 
+## Renewal
+
+A sub CA of another PKI renews certificates a year at a time, or less. A side renewed is used
+without a restart: a restart of ratd stops every terminal, and a rat running for weeks would
+present its certificate past its expiry. A Watcher holds the side of a directory, and loads it
+again when its files change: ratd and rat use one, `Load` and `Parse` stay for callers that do
+not.
+
+- **Looked at on use**: at each handshake and each request, at most once a second, a stat of
+  each file (its size and modification time). Nothing on a timer, nor a goroutine; any renewal
+  tool works (a copy, a rename), with no hook to write.
+- **A renewal is the same CA, role and name**, the files passing every check of loading. Its key
+  may be new: some PKIs issue one at each renewal, and a key copied off the machine stays valid
+  only until the certificate it goes with is replaced, where renewing the same key keeps it
+  valid with every certificate after it. A new key is logged as a warning, and shown a day in
+  the status of ratd: a rotation, or a key replaced after it leaked, which a human should know
+  of.
+- **A new CA takes a restart**: the trust of the side changes, which a human decides, and the
+  clients need the new CA too. Another role or name is refused: a running rat would move its
+  agent to the terminals of another session.
+- **Files refused keep the side in use**, told once per change, a warning: a renewal copied
+  halfway never breaks a running side, and the expiry warning keeps telling of the certificate
+  in use. Files holding the side in use again, after a refusal, are told restored.
+- **From the next handshake on**: ratd picks the certificate of each handshake from the side in
+  use, connections open keeping theirs until they close. The CRL held, and what is told of it,
+  carry over to the side renewed when its certificate names the same distribution point.
+
+Two pitfalls of Go:
+
+- The server configuration gives the certificate of each handshake with `GetConfigForClient`,
+  not `GetCertificate`: Go skips `GetCertificate` for `Certificates` when the client names no
+  host (an address), and `httptest` fills `Certificates`. The configuration of the handshake is
+  a copy made then, keeping what the caller set after `ServerConfig` (ALPN).
+- The client configuration gives its certificate with `GetClientCertificate`, which presents it
+  whatever the server asks: it sends none to a server asking for another CA, as Go does with
+  `Certificates`, for a ratd of another tenant to tell "certificate required".
+
+Rejected:
+
+- **Reloading on SIGHUP** (`systemctl reload`): every renewal job would have to send it, and
+  nothing sends one to rat.
+- **Restarting the HTTP server** on a change: it would cut the calls in flight, or wait for them,
+  and free the port a moment, for another process to take.
+- **Accepting a new CA while running**: the trust of a side changing unnoticed.
+- **Refusing a new key while running**: a restart for each rotation, which a PKI issuing a key
+  at each renewal makes routine, would push to renewals keeping the same key, valid forever once
+  copied.
+
 ## One directory per side
 
 A bundle is written as one directory for the server and one per client, each holding the CA

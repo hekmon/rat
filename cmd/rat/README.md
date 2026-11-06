@@ -124,7 +124,8 @@ ratd gives a tool call, so that a connection hanging is cut rather than waited f
 
 `log/slog`, text handler, on stderr, which harnesses keep: startup (version, server, tenant,
 session, bundle expiry, the address of the CRL or none), each newer CRL, a fetch of the CRL
-failing (a warning, with when the CRL held goes stale), relay failures (the method and
-identifier, the error), expiry warnings, the stop and its reason. At debug level, one line per
-message (method, identifier, HTTP status, duration), and each call canceled. Never the content
-of a message.
+failing (a warning, with when the CRL held goes stale), a renewal of its certificate (a warning
+when its key changed) and files refused (see Renewal in `mtls/README.md`), relay failures (the
+method and identifier, the error), expiry warnings, the stop and its reason. At debug level, one
+line per message (method, identifier, HTTP status, duration), and each call canceled. Never the
+content of a message.

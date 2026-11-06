@@ -660,10 +660,11 @@ serving tenant prod on [::]:7281 · bracketed paste overridden, bundle expires i
 - **Degradations**: known issues of a ratd serving all the same, logged once when found, and shown
   for as long as they hold, in a fixed order, with short labels (the log tells the details):
   running as root or a bundle its user can write (see Startup), what bash startup files defeat in
-  the terminals or the check not running, the bundle expiring soon (updated daily), the CRL of
-  the CA not renewed (with when the one held goes stale) or none valid, the deaths of the tmux
-  server within the window of its restart budget (gone once older). At most
-  five at once: some exclude others. First in the line, should a terminal cut it.
+  the terminals or the check not running, the bundle expiring soon (updated daily), the CRL of the
+  CA not renewed (with when the one held goes stale) or none valid, the bundle files changed and
+  refused (a new CA pending a restart, or another reason), the server key changed by a renewal
+  (for a day), the deaths of the tmux server within the window of its restart budget (gone once
+  older). Some exclude others. First in the line, should a terminal cut it.
 - **Last seen**, per session, the time of its last request, whatever the method: the five most
   recent, then a count of the others. Last seen rather than active or idle: requests are
   stateless, no connection stays open between them.
@@ -765,7 +766,8 @@ keys (they can spell a password one key at a time), nor files. And the lifecycle
 terminals, tmux exits and restarts, the crash budget, shutdown. A request refused by the CRL of
 the CA (a client revoked, or no valid CRL) is a warning, with the session, the address and why;
 so is a fetch of the CRL failing, with when the CRL held goes stale, and each newer CRL is
-logged.
+logged. A renewal of the server certificate is logged, a warning when its key changed; so are
+bundle files changed and refused, and restored (see Renewal in `mtls/README.md`).
 
 The address tells apart the agents sharing a client certificate, and shows a certificate used from
 an unexpected machine. It is the peer of the connection: behind a proxy, the proxy's, whose own

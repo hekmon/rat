@@ -16,17 +16,33 @@ import (
 // It does not check revocation: ratd checks it on every request (Side.CheckRevoked), which a
 // connection kept alive outlives a handshake for. Refused during the handshake, a client would
 // only learn "bad certificate", the alert Go sends whatever the reason.
+//
+// The certificate is the one of the side of source at each handshake: a Watcher renews it while
+// ratd runs, its CA unchanged (see Watcher).
 // The error wraps ErrRole for the side of a client: a client can not run a server.
-func ServerConfig(side *Side) (*tls.Config, error) {
+func ServerConfig(source Source) (*tls.Config, error) {
+	side := source.Side()
 	if side.Role != Server {
 		return nil, fmt.Errorf("%w: the directory of a %s can not serve", ErrRole, side.Role)
 	}
-	return &tls.Config{
+	config := &tls.Config{
 		Certificates: []tls.Certificate{side.Certificate},
 		ClientAuth:   tls.RequireAndVerifyClientCert,
-		ClientCAs:    pool(side.CA),
-		MinVersion:   tls.VersionTLS13,
-	}, nil
+		// the CA of a Watcher never changes: a new one takes a restart
+		ClientCAs:  pool(side.CA),
+		MinVersion: tls.VersionTLS13,
+	}
+	// The configuration of each handshake, with the certificate of the side in use. Not
+	// GetCertificate, which Go skips for Certificates when the client names no host (an address),
+	// as httptest sets them. A copy made at the handshake keeps what the caller set after
+	// ServerConfig (ALPN).
+	config.GetConfigForClient = func(*tls.ClientHelloInfo) (*tls.Config, error) {
+		handshake := config.Clone()
+		handshake.GetConfigForClient = nil
+		handshake.Certificates = []tls.Certificate{source.Side().Certificate}
+		return handshake, nil
+	}
+	return config, nil
 }
 
 // ClientConfig returns the TLS configuration of a client of ratd, from the side of the client in
@@ -35,15 +51,28 @@ func ServerConfig(side *Side) (*tls.Config, error) {
 // which the server certificate does not carry. TLS 1.3 only. A server refused fails the handshake
 // with an error wrapping ErrNotSignedByCA, ErrValidity, ErrRole, ErrRevoked or ErrCRL (see
 // Side.CheckRevoked: the CRL is fetched at the first handshake needing it).
+//
+// The certificate presented, and the CRL checked, are those of the side of source at each
+// handshake: a Watcher renews them while the client runs, its CA unchanged (see Watcher).
 // The error wraps ErrRole for the side of the server: the server can not stand for a client.
-func ClientConfig(side *Side) (*tls.Config, error) {
+func ClientConfig(source Source) (*tls.Config, error) {
+	side := source.Side()
 	if side.Role != Client {
 		return nil, fmt.Errorf("%w: the directory of the %s can not be a client", ErrRole, side.Role)
 	}
+	// the CA of a Watcher never changes: a new one takes a restart
 	roots := pool(side.CA)
 	return &tls.Config{
-		Certificates: []tls.Certificate{side.Certificate},
-		MinVersion:   tls.VersionTLS13,
+		GetClientCertificate: func(request *tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			certificate := source.Side().Certificate
+			// No certificate for a server asking for another CA, as Go does with Certificates: a
+			// ratd of another tenant then tells "certificate required" (see TestConfigs).
+			if request.SupportsCertificate(&certificate) != nil {
+				return &tls.Certificate{}, nil
+			}
+			return &certificate, nil
+		},
+		MinVersion: tls.VersionTLS13,
 		// Go has no option to skip the host name check alone: InsecureSkipVerify turns off the
 		// whole verification of the server certificate, which VerifyConnection does again, host
 		// name aside. The server still proves it holds the key of its certificate: Go checks the
@@ -65,7 +94,7 @@ func ClientConfig(side *Side) (*tls.Config, error) {
 				return verificationError(err)
 			}
 			// Bounded by the timeout of a fetch: VerifyConnection is given no context.
-			return side.CheckRevoked(context.Background(), state.PeerCertificates[0])
+			return source.Side().CheckRevoked(context.Background(), state.PeerCertificates[0])
 		},
 	}, nil
 }

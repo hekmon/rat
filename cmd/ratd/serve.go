@@ -88,8 +88,10 @@ type daemon struct {
 	logger *slog.Logger
 	// sdkLogger is the logger of the MCP SDK (see newDaemon)
 	sdkLogger *slog.Logger
-	// side is the server directory of the bundle, which names the tenant
-	side *mtls.Side
+	// side is the server directory of the bundle, which names the tenant, as loaded at startup;
+	// source gives the side in use, renewed while ratd runs (see mtls.Watcher)
+	side   *mtls.Side
+	source mtls.Source
 	// controller runs the tmux server of the tenant, where each client works in its session
 	controller *tmux.Controller
 	// host is the name of the machine, told to agents
@@ -123,7 +125,7 @@ type daemon struct {
 // newDaemon returns ratd serving the tenant of side, the server directory of its bundle, with the
 // terminals of controller, telling agents only what holds in them (terminals, see checkTerminals),
 // its reads bounded by readBudget bytes.
-func newDaemon(logger *slog.Logger, side *mtls.Side, controller *tmux.Controller, terminals tmux.TerminalsCheck,
+func newDaemon(logger *slog.Logger, source mtls.Source, controller *tmux.Controller, terminals tmux.TerminalsCheck,
 	readBudget int) (*daemon, error) {
 	host, err := os.Hostname()
 	if err != nil {
@@ -147,7 +149,8 @@ func newDaemon(logger *slog.Logger, side *mtls.Side, controller *tmux.Controller
 	if !logger.Enabled(context.Background(), slog.LevelDebug) {
 		sdkLogger = slog.New(minLevel{Handler: logger.Handler(), min: slog.LevelWarn})
 	}
-	return &daemon{logger: logger, sdkLogger: sdkLogger, side: side, controller: controller, host: host, user: username,
+	return &daemon{logger: logger, sdkLogger: sdkLogger, side: source.Side(), source: source, controller: controller,
+		host: host, user: username,
 		terminals: terminals, instructions: instructions, readBudget: readBudget, inputSchemas: inputSchemas,
 		schemas: mcp.NewSchemaCache(), status: newStatus(logger)}, nil
 }
@@ -178,7 +181,7 @@ func (h minLevel) WithGroup(name string) slog.Handler {
 // serving (see status), and stopping once ctx is done.
 func (d *daemon) serve(ctx context.Context, listener net.Listener) error {
 	d.stopping = ctx.Done()
-	tlsConfig, err := mtls.ServerConfig(d.side)
+	tlsConfig, err := mtls.ServerConfig(d.source)
 	if err != nil {
 		return err
 	}
@@ -250,7 +253,7 @@ func (d *daemon) serve(ctx context.Context, listener net.Listener) error {
 func (d *daemon) refuseRevoked(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.TLS != nil && len(req.TLS.PeerCertificates) > 0 {
-			if err := d.side.CheckRevoked(req.Context(), req.TLS.PeerCertificates[0]); err != nil {
+			if err := d.source.Side().CheckRevoked(req.Context(), req.TLS.PeerCertificates[0]); err != nil {
 				status := http.StatusForbidden
 				if !errors.Is(err, mtls.ErrRevoked) {
 					status = http.StatusServiceUnavailable

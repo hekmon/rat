@@ -15,7 +15,7 @@ import (
 // configuration on http.DefaultTransport would change a global of the process, and a bare
 // http.Transport loses the defaults (proxy from the environment, dial and handshake timeouts). It
 // has no timeout: callers bound each request.
-func HTTPClient(side *mtls.Side) (*http.Client, error) {
+func HTTPClient(side mtls.Source) (*http.Client, error) {
 	config, err := mtls.ClientConfig(side)
 	if err != nil {
 		return nil, err
@@ -39,12 +39,12 @@ func HTTPClient(side *mtls.Side) (*http.Client, error) {
 // the response, it checks the certificate of ratd on the connection used, dropping the response
 // of a ratd revoked since its handshake.
 type revocationTransport struct {
-	side *mtls.Side
+	side mtls.Source
 	next *http.Transport
 }
 
 func (t *revocationTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if _, err := t.side.CRL(req.Context()); err != nil {
+	if _, err := t.side.Side().CRL(req.Context()); err != nil {
 		// a RoundTripper closes the body of the request, even when failing
 		if req.Body != nil {
 			_ = req.Body.Close()
@@ -56,7 +56,7 @@ func (t *revocationTransport) RoundTrip(req *http.Request) (*http.Response, erro
 		return nil, err
 	}
 	if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
-		if err = t.side.CheckRevoked(req.Context(), resp.TLS.PeerCertificates[0]); err != nil {
+		if err = t.side.Side().CheckRevoked(req.Context(), resp.TLS.PeerCertificates[0]); err != nil {
 			_ = resp.Body.Close()
 			t.next.CloseIdleConnections()
 			return nil, err
@@ -77,7 +77,7 @@ func (t *revocationTransport) CloseIdleConnections() {
 //	side, err := mtls.Load("clients/alice")
 //	transport, err := connect.Transport(side, "host:7281")
 //	session, err := mcp.NewClient(implementation, nil).Connect(ctx, transport, nil)
-func Transport(side *mtls.Side, server string) (*mcp.StreamableClientTransport, error) {
+func Transport(side mtls.Source, server string) (*mcp.StreamableClientTransport, error) {
 	client, err := HTTPClient(side)
 	if err != nil {
 		return nil, err

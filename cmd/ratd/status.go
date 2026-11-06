@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -17,6 +18,10 @@ import (
 // changed: the times it shows are coarse (see seenText), most renders send nothing. A variable for
 // tests.
 var statusInterval = 10 * time.Second
+
+// keyChangeShown is how long the status tells the server key changed with a renewal: a day, for
+// the operator to see it at a glance, after which the log tells it.
+const keyChangeShown = 24 * time.Hour
 
 // statusSessions is how many sessions the status names at most, the most recently seen.
 const statusSessions = 5
@@ -85,6 +90,11 @@ type status struct {
 	// goes stale, zero when none valid is held
 	crlFailing bool
 	crlStale   time.Time
+	// caChanged tells ca.crt changed, which takes a restart; filesRefused that the files changed,
+	// and were refused for another reason; keyChanged is when a renewal last changed the key,
+	// shown for keyChangeShown
+	caChanged, filesRefused bool
+	keyChanged              time.Time
 	// deaths are the times the tmux server died on its own, shown for deathWindow
 	deaths      []time.Time
 	deathWindow time.Duration
@@ -164,6 +174,29 @@ func (s *status) crlRenewed() {
 	s.tell(time.Now())
 }
 
+// renewed records that the server certificate was renewed at now, newKey telling its key changed,
+// and tells systemd at once. The expiry shown is of the certificate replaced: told again by
+// warnExpiry, if due.
+func (s *status) renewed(now time.Time, newKey bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.caChanged, s.filesRefused, s.expiry = false, false, time.Time{}
+	if newKey {
+		s.keyChanged = now
+	}
+	s.tell(now)
+}
+
+// refused records that the files of the server directory changed and were refused (err), or hold
+// the side in use again (nil), and tells systemd at once.
+func (s *status) refused(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.caChanged = errors.Is(err, mtls.ErrCAChanged)
+	s.filesRefused = err != nil && !s.caChanged
+	s.tell(time.Now())
+}
+
 // died records that the tmux server died on its own at now, shown for window (the window of the
 // restart policy, within which deaths make ratd exit), and tells systemd at once.
 func (s *status) died(now time.Time, window time.Duration) {
@@ -200,6 +233,15 @@ func (s *status) render(now time.Time) string {
 		} else {
 			issues = append(issues, "bundle expired")
 		}
+	}
+	switch {
+	case s.caChanged:
+		issues = append(issues, "CA changed, restart pending")
+	case s.filesRefused:
+		issues = append(issues, "bundle files refused")
+	}
+	if !s.keyChanged.IsZero() && now.Sub(s.keyChanged) < keyChangeShown {
+		issues = append(issues, "server key changed "+seenText(now.Sub(s.keyChanged)))
 	}
 	if s.crlFailing {
 		if left := s.crlStale.Sub(now); left > 0 {

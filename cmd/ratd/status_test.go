@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -197,5 +198,34 @@ func TestStatusCRL(t *testing.T) {
 	s.crlFailed(nil)
 	if line := s.render(now); !strings.Contains(line, "no valid CRL, every client refused") {
 		t.Errorf("no CRL held: expected every client refused, got %q", line)
+	}
+}
+
+// TestStatusBundleFiles guards what the status tells of the files of the server directory
+// changing: a new CA pending a restart, other files refused, nothing once restored, and a renewal
+// with a new key for a day.
+func TestStatusBundleFiles(t *testing.T) {
+	now := time.Now()
+	s := newStatus(slog.New(slog.DiscardHandler))
+	s.serving = "serving"
+	for _, tc := range []struct {
+		err      error
+		expected string
+	}{
+		{fmt.Errorf("%w: ca.crt holds another CA", mtls.ErrCAChanged), "CA changed, restart pending"},
+		{fmt.Errorf("%w: another client", mtls.ErrIdentityChanged), "bundle files refused"},
+		{nil, ""},
+	} {
+		s.refused(tc.err)
+		if line := s.render(now); (tc.expected == "" && line != "serving") || !strings.Contains(line, tc.expected) {
+			t.Errorf("refused %v: expected %q, got %q", tc.err, tc.expected, line)
+		}
+	}
+	s.renewed(now, true)
+	if line := s.render(now.Add(2 * time.Hour)); !strings.Contains(line, "server key changed 2h ago") {
+		t.Errorf("new key: expected it told, got %q", line)
+	}
+	if line := s.render(now.Add(25 * time.Hour)); strings.Contains(line, "key") {
+		t.Errorf("new key a day ago: expected nothing of it, got %q", line)
 	}
 }

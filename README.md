@@ -576,6 +576,14 @@ the validity of its CRL. A fetch failing is a warning in their logs, and in the 
   the machine is revoked with its certificate. Issue the server a new certificate, under the same
   sub CA: the clients keep theirs.
 
+Renewing a certificate takes no restart: replace the files of its directory, and ratd and rat use
+them from their next connection on, the terminals and the calls in flight untouched. The renewed
+certificate must be of the same sub CA and name, its key new or not: a new key is a warning in
+their logs, and in the status of ratd for a day, for you to see a key you did not rotate. Files
+refused (another CA, another name, a check failing) are a warning, the certificate in use kept.
+A new sub CA takes a restart of ratd and of the harnesses, and is to be deployed to every
+client.
+
 ### Deploying safely
 
 RAT is not a sandbox: terminals run as the user running ratd, and an agent can do whatever that

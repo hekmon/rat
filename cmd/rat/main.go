@@ -57,18 +57,21 @@ func command(stdin io.Reader, stdout, logs io.Writer) *cli.Command {
 // harness still shows it: ratd itself is only reached by the first message, so that a ratd briefly
 // down does not fail the startup of the harness.
 func run(ctx context.Context, logger *slog.Logger, target flags.Target, stdin io.Reader, stdout io.Writer) error {
-	side, err := mtls.Load(target.Bundle)
+	// reloaded when renewed: a rat may run for weeks, past the expiry of the certificate it started with
+	watcher, err := mtls.Watch(target.Bundle)
 	if err != nil {
 		return fmt.Errorf("bundle: %w", err)
 	}
+	side := watcher.Side()
 	if side.Role != mtls.Client {
 		return fmt.Errorf("bundle: %w: %s is the directory of the server, not of a client", mtls.ErrRole, target.Bundle)
 	}
 	if side.ExpiresSoon(time.Now()) {
 		logger.Warn(side.ExpiryWarning(), "expiry", side.NotAfter(), "days_left", int(time.Until(side.NotAfter()).Hours()/24))
 	}
-	side.OnCRL(logCRL(logger))
-	client, err := connect.HTTPClient(side)
+	watcher.OnCRL(logCRL(logger))
+	watcher.OnWatch(logWatch(logger))
+	client, err := connect.HTTPClient(watcher)
 	if err != nil {
 		return err
 	}
@@ -103,6 +106,29 @@ func logCRL(logger *slog.Logger) mtls.CRLEvents {
 				return
 			}
 			logger.Warn("CRL fetch failed, the CRL held kept", "error", err, "stale_at", held.NextUpdate)
+		},
+	}
+}
+
+// logWatch returns the events logging what happens to the files of the client directory: a
+// renewal, a warning when it changes the key, and files refused, the side in use kept (a new CA
+// takes a restart of the harness).
+func logWatch(logger *slog.Logger) mtls.WatchEvents {
+	return mtls.WatchEvents{
+		Reloaded: func(side *mtls.Side, newKey bool) {
+			attrs := []any{"serial", side.Certificate.Leaf.SerialNumber, "expiry", side.NotAfter()}
+			if newKey {
+				logger.Warn("client certificate renewed with a new key", attrs...)
+				return
+			}
+			logger.Info("client certificate renewed", attrs...)
+		},
+		Refused: func(err error) {
+			if err == nil {
+				logger.Info("bundle files restored: the side in use is theirs again")
+				return
+			}
+			logger.Warn("bundle files changed and refused, the side in use kept", "error", err)
 		},
 	}
 }
