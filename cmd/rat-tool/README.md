@@ -50,17 +50,22 @@ checked by copying those. Step by step, stopping at the first failure with a mes
 that step:
 
 1. **Files**: the checks of `bundle inspect`, and a client directory rather than the server's.
-2. **Network**: the address answers (TCP, 10 seconds at most), on the connection the TLS step
-   then uses: one closed without a handshake would show in the logs of ratd as a refused one.
+2. **Network**: the address answers (20 seconds at most, with the TLS step), as rat reaches it:
+   through the proxy of the environment, if any (`HTTPS_PROXY`, `NO_PROXY`), which the step names,
+   its password aside, when it passes as when it fails (a proxy refusing ratd only says
+   `Forbidden`). A request of the transport of rat (`connect.HTTPClient`, but for its checks around
+   a request, the TLS configuration checking the CRL during the handshake) does this step and the
+   next, on a single connection: one closed without a handshake would show in the logs of ratd as a
+   refused one. Rather than a connection of its own: the step would pass where rat fails, going
+   through a proxy, which only the MCP step would go through.
 3. **TLS**: the handshake, and when it fails, why. It reports the tenant, from the server
    certificate, and the session, from the client certificate. In TLS 1.3, a client completes its
-   handshake before the server has checked its certificate: a refusal only shows on the first
-   read. A plain HTTP request follows the handshake, for that read to come at once rather than
-   after waiting on a timer (any status will do). A refusal by ratd is explained from its alert
+   handshake before the server has checked its certificate: a refusal only shows on the first read,
+   of the answer to the request (any status will do). A refusal by ratd is explained from its alert
    (see package `mtls`): a certificate of another bundle of the tenant, of another tenant, of
    another role, expired. A refusal by ratd checking the CRL of its CA comes as an answer (403,
-   503), whose body is told. A server refused by this client is told as package `mtls` tells it,
-   the CRL of its CA included.
+   503), whose body is told. A server refused by this client is told as package `mtls` tells it, the
+   CRL of its CA included.
 4. **MCP**: the client of the Go SDK connects (initialize, or discover from protocol 2026-07-28
    on), through `connect.Transport`, then shows the server information, the protocol version,
    and the instructions, which carry the bracketed paste warning when ratd has one: a human sees

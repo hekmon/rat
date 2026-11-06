@@ -3,13 +3,14 @@ package main
 import (
 	"bufio"
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
+	"net/url"
 	"strings"
 	"time"
 
@@ -50,9 +51,8 @@ type checker struct {
 	target flags.Target
 	// side is the client directory, loaded by the files step
 	side *mtls.Side
-	// conn is the connection to ratd opened by the network step, on which the TLS step runs its
-	// handshake: closed without one, it would show in the logs of ratd as a refused handshake
-	conn net.Conn
+	// reached is what the request of the network step got, which the TLS step tells
+	reached reached
 	// session is the MCP session opened by the MCP step
 	session *mcp.ClientSession
 }
@@ -62,9 +62,6 @@ type checker struct {
 func checkRatd(ctx context.Context, cmd *cli.Command) error {
 	c := &checker{out: cmd.Root().Writer, target: flags.FromCommand(cmd)}
 	defer func() {
-		if c.conn != nil {
-			_ = c.conn.Close()
-		}
 		if c.session != nil {
 			_ = c.session.Close()
 		}
@@ -109,54 +106,97 @@ func (c *checker) files(context.Context) bool {
 	return true
 }
 
-// network checks the address of ratd answers, keeping the connection for the TLS step.
-func (c *checker) network(ctx context.Context) bool {
-	fmt.Fprintln(c.out, "Network")
-	start := time.Now()
-	var err error
-	if c.conn, err = (&net.Dialer{Timeout: dialTimeout}).DialContext(ctx, "tcp", c.target.Server); err != nil {
-		return c.fail("%s does not answer: %s", c.target.Server, innermost(err))
-	}
-	c.ok("%s answers (TCP, %d ms)", c.target.Server, time.Since(start).Milliseconds())
-	return true
+// reached is what a request to ratd got: an answer, the first line of its body, or why there is
+// none.
+type reached struct {
+	resp *http.Response
+	line string
+	err  error
 }
 
-// tls checks ratd and this client accept each other. In TLS 1.3, a client completes its handshake
-// before the server has checked its certificate: a refusal only shows on the first read. An HTTP
-// request follows the handshake, for that read to come without waiting on a timer.
-func (c *checker) tls(ctx context.Context) bool {
-	fmt.Fprintln(c.out, "TLS")
+// network checks ratd answers, as rat reaches it: through the proxy of the environment, if any
+// (connect.Proxy), on the connection of a request of the TLS configuration rat presents. One
+// request does both steps, the network then TLS, on a single connection: one closed without a
+// handshake would show in the logs of ratd as a refused one. The request is answered once its
+// handshake succeeded, for the TLS step to tell. Rather than a connection of its own: the steps
+// would pass where rat goes through a proxy failing, which only the MCP step would go through.
+func (c *checker) network(ctx context.Context) bool {
+	fmt.Fprintln(c.out, "Network")
+	proxy, err := connect.Proxy(c.target.Server)
+	if err != nil {
+		return c.fail("invalid proxy in the environment: %v", err)
+	}
+	through := ""
+	if proxy != nil {
+		// its password, if any, never told
+		through = " through the proxy " + proxy.Redacted()
+	}
 	config, err := mtls.ClientConfig(c.side)
 	if err != nil {
 		return c.fail("%v", err)
 	}
 	config.NextProtos = []string{"http/1.1"}
-	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
+	// The transport of rat (connect.HTTPClient), but for its checks around requests, before the
+	// connection: the TLS configuration checks the CRL during the handshake, for the TLS step.
+	defaultTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return c.fail("the default HTTP transport was replaced")
+	}
+	transport := defaultTransport.Clone()
+	transport.TLSClientConfig, transport.Proxy, transport.DisableKeepAlives = config, http.ProxyFromEnvironment, true
+	defer transport.CloseIdleConnections()
+	// the network and TLS steps, each bounded as when done apart
+	ctx, cancel := context.WithTimeout(ctx, 2*dialTimeout)
 	defer cancel()
-	tlsConn := tls.Client(c.conn, config)
-	if err = tlsConn.HandshakeContext(ctx); err != nil {
-		return c.fail("%s", handshakeFailure(err))
-	}
-	_ = tlsConn.SetDeadline(time.Now().Add(dialTimeout))
-	_, err = fmt.Fprintf(tlsConn, "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", connect.Path, c.target.Server)
-	if err == nil {
-		var resp *http.Response
-		if resp, err = http.ReadResponse(bufio.NewReader(tlsConn), nil); err == nil {
-			// ratd checks clients on every request: it refuses a client revoked or expired, or every client
-			// while it has no valid CRL, with an answer telling why, not with an alert
-			if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusServiceUnavailable {
-				line, _ := bufio.NewReader(resp.Body).ReadString('\n')
-				_ = resp.Body.Close()
-				return c.fail("ratd refused this client: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(line))
-			}
-			_ = resp.Body.Close()
-		}
-	}
+	start := time.Now()
+	var handshake time.Time
+	trace := &httptrace.ClientTrace{TLSHandshakeStart: func() { handshake = time.Now() }}
+	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodGet,
+		connect.Endpoint(c.target.Server), nil)
 	if err != nil {
-		return c.fail("%s", handshakeFailure(err))
+		return c.fail("%v", err)
 	}
-	c.ok("ratd serves tenant %s, and accepts this client as session %s", mtls.PeerName(tlsConn.ConnectionState()),
-		c.side.Name)
+	resp, err := (&http.Client{Transport: transport}).Do(req)
+	// the error of the request, not the URL it was for
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		err = urlErr.Err
+	}
+	if handshake.IsZero() {
+		if err == nil {
+			err = errors.New("no TLS handshake")
+		}
+		// a proxy refusing ratd only says "Forbidden"
+		return c.fail("%s does not answer%s: %s", c.target.Server, through, innermost(err))
+	}
+	c.reached = reached{resp: resp, err: err}
+	if resp != nil {
+		c.reached.line, _ = bufio.NewReader(resp.Body).ReadString('\n')
+		_ = resp.Body.Close()
+	}
+	if proxy != nil {
+		c.ok("%s answers%s (%d ms)", c.target.Server, through, handshake.Sub(start).Milliseconds())
+	} else {
+		c.ok("%s answers (TCP, %d ms)", c.target.Server, handshake.Sub(start).Milliseconds())
+	}
+	return true
+}
+
+// tls tells whether ratd and this client accept each other, from the request of the network step.
+// In TLS 1.3, a client completes its handshake before the server has checked its certificate: a
+// refusal only shows on the first read, of the answer of the request.
+func (c *checker) tls(context.Context) bool {
+	fmt.Fprintln(c.out, "TLS")
+	r := c.reached
+	if r.err != nil {
+		return c.fail("%s", handshakeFailure(r.err))
+	}
+	// ratd checks clients on every request: it refuses a client revoked or expired, or every client
+	// while it has no valid CRL, with an answer telling why, not with an alert
+	if r.resp.StatusCode == http.StatusForbidden || r.resp.StatusCode == http.StatusServiceUnavailable {
+		return c.fail("ratd refused this client: HTTP %d: %s", r.resp.StatusCode, strings.TrimSpace(r.line))
+	}
+	c.ok("ratd serves tenant %s, and accepts this client as session %s", mtls.PeerName(*r.resp.TLS), c.side.Name)
 	return true
 }
 
