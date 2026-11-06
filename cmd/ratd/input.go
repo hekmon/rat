@@ -96,14 +96,17 @@ func (d *daemon) sendText(ctx context.Context, session string, in tools.SendText
 
 // sendKeys presses the keys of in. An unknown key name is refused, naming it, and nothing is sent:
 // tmux would type it as text. The log line tells the number of keys, never the keys: they can
-// spell a password one key at a time.
+// spell a password one key at a time. Nor the key refused, told by its position: an agent mistaking
+// send_keys for send_text may give a password, or a whole command, as a key name.
 func (d *daemon) sendKeys(ctx context.Context, session string, in tools.SendKeysInput) result {
 	attrs := []any{"keys", len(in.Keys)}
 	if len(in.Keys) == 0 {
 		return result{outcome: failed, text: "No key to press: give at least one key name.", attrs: attrs}
 	}
-	for _, key := range in.Keys {
-		if err := tmux.CheckKey(key); err != nil {
+	for i, key := range in.Keys {
+		if tmux.CheckKey(key) != nil {
+			// not the error of CheckKey, which quotes the key for callers to tell it
+			err := fmt.Errorf("%w: key %d of %d", tmux.ErrInvalidKey, i+1, len(in.Keys))
 			return result{outcome: failed, err: err, attrs: attrs,
 				text: fmt.Sprintf("Unknown key %q: key names are %s. To type text, use send_text.", key, keyNames)}
 		}

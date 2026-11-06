@@ -763,7 +763,9 @@ tool, the window, the outcome (`ok`, `message` for a result that is not an error
 its cause) and the duration, plus what tells the action without its content: the size of a text
 and whether Enter was pressed, the number of keys, the rows of history asked and read (and the
 size of a screen refused), the path and size of a file. Never the content: neither text, nor
-keys (they can spell a password one key at a time), nor files. And the lifecycle: startup
+keys (they can spell a password one key at a time), not even a key name refused, told by its
+position (an agent mistaking `send_keys` for `send_text` may give a password as a key name), nor
+files. And the lifecycle: startup
 (version, tenant, address, read budget, bundle expiry, the CRL fetched), the check of the
 terminals, tmux exits and restarts, the crash budget, shutdown. A request refused (a client
 misnamed, revoked or expired, or no valid CRL) is a warning, with the session, the address and

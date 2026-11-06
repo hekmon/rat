@@ -78,7 +78,9 @@ func TestSendText(t *testing.T) {
 }
 
 // TestSendKeys guards send_keys: keys act as keys (C-c interrupts), an unknown name is refused
-// naming it, with nothing sent, and the log line tells the number of keys, never the keys.
+// naming it, with nothing sent, and the log line tells the number of keys, never the keys, a
+// key refused included, told by its position: an agent mistaking send_keys for send_text may give
+// a password as a key name.
 func TestSendKeys(t *testing.T) {
 	session, controller, logs, _ := connectTools(t, "test-ratd-sendkeys")
 	expectTool(t, session, "list_windows", nil, false)
@@ -99,8 +101,11 @@ func TestSendKeys(t *testing.T) {
 	expectTool(t, session, "send_keys", map[string]any{"window": "main", "keys": []string{"C-c"}}, false, "Pressed in main: C-c.")
 	eventually(t, "sleep interrupted", foreground("bash"))
 	if out := logs.String(); !strings.Contains(out, "tool=send_keys window=main outcome=ok") || !strings.Contains(out, "keys=1") ||
-		strings.Contains(out, "C-c") {
+		strings.Contains(out, "C-c") || strings.Contains(out, "Ctrl-C") {
 		t.Errorf("expected the number of keys to be logged, never the keys:\n%s", out)
+	}
+	if out := logs.String(); !strings.Contains(out, `error="invalid key name: key 2 of 2"`) {
+		t.Errorf("expected the key refused to be told by its position:\n%s", out)
 	}
 }
 
