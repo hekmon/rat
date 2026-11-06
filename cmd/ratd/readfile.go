@@ -211,6 +211,16 @@ func (r *fileRead) whole() result {
 		if text := withHeader(header, r.numbered(data, 1)); len(text) <= budget {
 			return result{text: text, attrs: []any{"lines", lines, "bytes", len(text), "cut", false, "counted", true}}
 		}
+		// The file fits, not the result: told what does not, rather than a file over the budget,
+		// which the size told would contradict. Its lines are counted already.
+		over, instead := "with the header of the result", "Read a range"
+		if r.in.LineNumbers {
+			over, instead = "with line numbers", "Read it without line_numbers, or a range"
+		}
+		return result{outcome: message, attrs: []any{"counted", true}, text: fmt.Sprintf("%s holds %s, %s, modified "+
+			"%s ago: %s, more than the read budget (%s). %s with start_line and max_lines (start_line -100 for the "+
+			"last 100 lines).", r.path, sizeText(len(data)), plural(lines, "line"), sinceText(time.Since(r.modified)),
+			over, sizeText(budget), instead)}
 	}
 	lines, counted, err := r.countLines(0)
 	if err != nil {

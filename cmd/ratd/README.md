@@ -442,9 +442,11 @@ What `read_file` sends is checked first, as it can not be taken back from a mode
    with an output to parse, and saying nothing of size;
 4. the result fits the read budget. Without a range, a file over the budget returns only its
    size, line count and modification time, for the agent to pick a range: nothing big lands in
-   its context by surprise. With a range, a read returns the whole lines that fit and tells where
-   to continue, as `read(2)` returns fewer bytes than asked. A single line over the budget (a
-   minified file) can not be cut: the tool points to the terminal (`head -c`, `cut`).
+   its context by surprise. A file within the budget whose result is not, with its line numbers
+   (about 7 bytes a line) or its header, is told so, and how to read it: told over the budget, its
+   size under the budget would contradict it. With a range, a read returns the whole lines that
+   fit and tells where to continue, as `read(2)` returns fewer bytes than asked. A single line over
+   the budget (a minified file) can not be cut: the tool points to the terminal (`head -c`, `cut`).
 
 Lines rather than bytes: agents think in lines, and a byte offset cuts lines and characters. The
 cost is that reaching line 30000 reads what comes before, having no index: fast enough for

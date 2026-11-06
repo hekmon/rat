@@ -88,6 +88,18 @@ func TestReadFileBudget(t *testing.T) {
 		big+" holds "+sizeText(len(content))+", 20000 lines, modified 0s ago: more than the read budget (64 KiB). "+
 			"Read a range with start_line and max_lines (start_line -100 for the last 100 lines).")
 
+	// a file within the budget, not with its line numbers, nor one at the budget with its header: told
+	// so, not as a file over the budget
+	numbered := writeTestFile(t, home, "numbered.txt", strings.Repeat("ab\n", 12000))
+	expectTool(t, session, "read_file", map[string]any{"path": numbered, "line_numbers": true}, false,
+		numbered+" holds 35.2 KiB, 12000 lines, modified 0s ago: with line numbers, more than the read budget "+
+			"(64 KiB). Read it without line_numbers, or a range with start_line and max_lines (start_line -100 for "+
+			"the last 100 lines).")
+	full := writeTestFile(t, home, "full.txt", strings.Repeat("x\n", defaultReadBudget/2))
+	expectTool(t, session, "read_file", map[string]any{"path": full}, false,
+		full+" holds 64 KiB, 32768 lines, modified 0s ago: with the header of the result, more than the read "+
+			"budget (64 KiB). Read a range with start_line and max_lines (start_line -100 for the last 100 lines).")
+
 	continuation := regexp.MustCompile(`; cut to the read budget \(64 KiB\): continue with start_line (\d+)\]\n`)
 	var readBack strings.Builder
 	for start := 1; ; {
