@@ -276,6 +276,9 @@ Generate the bundle of a tenant, with a client per harness:
 rat-tool bundle generate --tenant prod --client alice --client bob --output bundle-prod
 ```
 
+With a PKI of your own, a sub CA of it can issue them instead (see
+[A sub CA of your PKI](#a-sub-ca-of-your-pki)).
+
 Copy `bundle-prod/server` to the server, and `bundle-prod/clients/alice` and
 `bundle-prod/clients/bob` to the machines of their harnesses, each directory whole, and to that
 side only: a client key is what lets its holder in, and nothing else does.
@@ -517,6 +520,44 @@ bundle proves being its ratd, wherever it is reached (a tunnel, another address)
 can not accept this, nor present a certificate: the rat stdio bridge does it for them. And unlike
 SSH, no session is tied to a connection: the terminals keep running whether agents are connected
 or not, until the service stops.
+
+### A sub CA of your PKI
+
+The bundles of `rat-tool` stand alone: their CA is a root of its own, whose key was never written.
+When your organization runs a PKI, a sub CA of it can take that place: its certificates fill the
+same directories, ratd and rat check them the same way, and your PKI issues them. A client is
+added by issuing its certificate, with nothing to deploy to ratd or to the other clients.
+
+The guarantee of a closed bundle goes: whoever can use the key of the sub CA, in your PKI, can
+issue themselves a shell as the user running ratd. And the sub CA is rat's alone, one per tenant,
+never your root nor an issuing CA shared with other uses: ratd lets in every certificate it signs
+for client authentication, and clients, checking no host name, take for ratd every certificate
+it signs for server authentication.
+
+Its certificates follow the rules of a bundle, which `rat-tool bundle inspect` checks as ratd and
+rat do:
+
+- **The sub CA signs no CA:** its path length is limited to 0 (`pathlen:0`). Otherwise ratd would
+  let in the certificates of every CA under it.
+- **Names:** the sub CA and the server certificate carry the tenant as their common name
+  (`CN=prod`), each client certificate its session (`CN=alice`), as plain names: letters,
+  digits, `_` and `-`, up to 32 characters. The rest of the subject is yours.
+- **One role per certificate:** server authentication for ratd, client authentication for a
+  client, never both (extended key usage).
+- **No address needed:** the server certificate may carry DNS names or IP addresses, clients do
+  not check them.
+
+Each directory holds the files of a bundle: `ca.crt`, the sub CA alone (not the chain up to your
+root, as every certificate of the file would be trusted), and the certificate and key of its
+side, ECDSA or RSA, the key unencrypted in PKCS#8 and readable by its owner only. From a key in
+another format, or from a `.pfx` (what AD CS exports), here for alice:
+
+```sh
+openssl pkcs8 -topk8 -nocrypt -in alice.key.pem -out client.key
+openssl pkcs12 -in alice.pfx -clcerts -nokeys -out client.crt
+openssl pkcs12 -in alice.pfx -nocerts -nodes | openssl pkcs8 -topk8 -nocrypt -out client.key
+chmod 600 client.key
+```
 
 ### Deploying safely
 

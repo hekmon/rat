@@ -11,6 +11,11 @@
 // directory holding what it needs, the CA certificate included, and nothing else. Certificates
 // are valid for 10 years, and every side warns once less than a year remains ([ExpiryWarning]).
 //
+// A sub CA of another PKI can take the place of the CA of a bundle, dedicated to one tenant: it
+// fills the same directories, with certificates following the same rules, and issues clients as
+// they come. Loading checks what a certificate can tell of it: it signs no CA, and names the
+// tenant.
+//
 // # Roles and names
 //
 // Certificates carry their role (extended key usage): serverAuth for ratd, clientAuth for

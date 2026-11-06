@@ -14,9 +14,9 @@ at once, and to know what they leave behind.
   and destroyed manually, no automatic behavior) but opinionated for agent usage: it exposes
   what agents need, not all of tmux, and enforces the invariants below. Its naming rule is a
   package of its own (`tmux/names`), shared with mtls.
-- **`mtls` package**: the TLS contract between ratd and its clients: closed bundles (a CA, a
-  server named after its tenant and clients named after their session, generated together) and
-  the TLS configuration of each side.
+- **`mtls` package**: the TLS contract between ratd and its clients: a CA, a server named after
+  its tenant and clients named after their session, generated together as a closed bundle by
+  rat-tool, or issued by a sub CA of another PKI, and the TLS configuration of each side.
 - **`ratd` (MCP server)**: high level, agent facing, served over HTTP with mutual TLS. Each of
   its tools serves a purpose (list, create and close windows, send text or keys, read a window,
   wait for a command, read and write files), and composing the controller primitives to serve it
@@ -80,11 +80,12 @@ An agent closing all its windows simply finds a fresh `main` on its next call.
 | Session | one tmux session | a client certificate of the bundle | telling apart the clients of a tenant |
 | Window | one terminal running `bash` | the agent, by name | a workspace |
 
-Both names are chosen when the bundle is generated, and carried by its certificates: ratd reads
-its tenant from its server certificate, and the session of each request from the client
-certificate presenting it. Agents never choose their tenant nor their session, and a client can
-only reach its own session. Agents meant to share terminals share a client certificate. The
-controller accepts an empty tenant (socket `rat`), ratd does not: a tenant is always named.
+Both names are chosen when the certificates are issued (the bundle generated, or by the PKI of a
+sub CA), and carried by them: ratd reads its tenant from its server certificate, and the session
+of each request from the client certificate presenting it. Agents never choose their tenant nor
+their session, and a client can only reach its own session. Agents meant to share terminals share
+a client certificate. The controller accepts an empty tenant (socket `rat`), ratd does not: a
+tenant is always named.
 
 **Limit:** all tenants of a Unix user run as that user. A command typed in a terminal can reach
 other tenants (tmux sockets, signals, files), or even run tmux within tmux. Within a tenant, ratd

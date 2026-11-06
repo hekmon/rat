@@ -10,7 +10,7 @@ address is in the ratd README.
 - **ratd**: the CA certificate (public), its server certificate and key. Terminals run as the
   same user and can read that key: it lets them impersonate ratd towards a client, not get in,
   and a shell is what they already have. Nothing on the server can issue a client certificate:
-  the CA key no longer exists.
+  the CA key no longer exists, or, for a sub CA of another PKI, is kept by that PKI.
 - **A client**: the CA certificate, its own certificate and key. That key is the credential: it
   grants a shell as the user running ratd, and it never reaches the server.
 
@@ -54,6 +54,34 @@ Rejected:
 - **A short validity**: a bundle expiring stops every client at once, the warnings a year ahead
   would start with it, and a key leaked stays valid until then, long enough to be used.
 
+## A sub CA of another PKI
+
+A side is its directory and the checks of loading, not the tool that wrote it: a sub CA of
+another PKI (an organization's) can take the place of the CA of a bundle, filling the same
+directories with certificates following the same rules. That PKI issues the clients of the
+tenant, adding one with no new bundle, and keeps the key of the sub CA: whoever can use it can
+issue a shell, where nobody can for a closed bundle. `rat-tool` only generates closed bundles:
+managing another PKI is out of scope.
+
+The sub CA is dedicated to one tenant, as the CA of a bundle is: ratd lets in every certificate
+it signs for clients, and clients, checking no host name, take for ratd every certificate it
+signs for servers. Loading checks what certificates can tell of it:
+
+- **It signs no CA** (path length 0, see Loading a side): the certificates of the CAs under it
+  would get into ratd.
+- **It names the tenant with a plain name**: an issuing CA shared with other uses has a name
+  of another kind (`Example Issuing CA 01`), refused, in practice.
+- **It is alone in `ca.crt`**: the chain up to the root of the PKI would make ratd trust the root,
+  and every certificate under it.
+
+That it signs for rat alone is left to the PKI.
+
+Rejected: **trusting a CA shared with other uses** (the root of the PKI, an issuing CA of the
+organization), rat's certificates carrying a marker of their own (a URI naming the tenant and the
+session), checked by each side. It would hold, at the price of a field of rat's own in every
+certificate, bundles included, and of a template for it in the PKI, while a PKI creates a sub CA
+readily, and a sub CA per tenant keeps the tenants apart as bundles do.
+
 ## Names in the certificates
 
 The server certificate names the tenant, and ratd serves the tenant it names: the bundle is the
@@ -71,7 +99,8 @@ subject also carries the organization `rat CA`, which keeps it distinct from the
 server certificate: equal to its issuer, the server certificate would be self-issued (RFC 5280).
 
 Clients are fixed when the bundle is generated: adding one, hence a session, means a new bundle
-for everyone. A tenant has a handful of clients, and regenerating is cheap.
+for everyone. A tenant has a handful of clients, and regenerating is cheap. A sub CA of another
+PKI issues them as they come (see below).
 
 ## No address in the server certificate
 
@@ -150,7 +179,8 @@ any user could create first to block the tenant.
 ## Algorithms
 
 - **ECDSA P-256**: the widest support among TLS stacks, including those of harnesses connecting
-  directly. Ed25519 certificates are not supported everywhere.
+  directly. Ed25519 certificates are not supported everywhere. Loading a side takes any key Go
+  signs with, in PKCS#8: a sub CA of another PKI may issue RSA keys, which work as well.
 - **TLS 1.3 only**: both ends are recent, and nothing older needs negotiating. Certificates only
   need the digital signature key usage: TLS 1.3 key exchange is always ephemeral Diffie-Hellman,
   never encryption with the certificate key.
