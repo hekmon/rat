@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hekmon/rat/internal/testpki"
 	"github.com/hekmon/rat/mtls"
@@ -34,6 +35,8 @@ func (s *switchingSource) set(side *mtls.Side) {
 }
 
 func (s *switchingSource) OnCRL(mtls.CRLEvents) {}
+
+func (s *switchingSource) OnWatch(mtls.WatchEvents) {}
 
 // TestHTTPClientRevocation guards that the client checks the certificate of ratd after every
 // response, not only during the handshake: a server revoked once the response was served is
@@ -182,5 +185,58 @@ func TestHTTPClientRefusesBeforeSending(t *testing.T) {
 	defer mu.Unlock()
 	if len(bodies) != 1 {
 		t.Errorf("expected ratd to receive the first request only, got %q", bodies)
+	}
+}
+
+// TestHTTPClientRenewal guards that a client whose certificate is renewed presents the renewed one
+// at its next request, rather than the one replaced on a connection kept alive, which a client in
+// constant use keeps for hours, past the expiry of the certificate it presented.
+func TestHTTPClientRenewal(t *testing.T) {
+	pki := testpki.NewSubCA(t, "t", "")
+	serverSide, err := mtls.Load(mtls.ServerDir(pki.Dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := mtls.ServerConfig(serverSide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var presented []string
+	ratd := httptest.NewUnstartedServer(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		presented = append(presented, req.TLS.PeerCertificates[0].SerialNumber.String())
+	}))
+	ratd.TLS = config
+	ratd.StartTLS()
+	defer ratd.Close()
+	watcher, err := mtls.Watch(mtls.ClientDir(pki.Dir, "carol"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := HTTPClient(watcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func() {
+		t.Helper()
+		resp, err := client.Get(ratd.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}
+	first := watcher.Side().Certificate.Leaf.SerialNumber.String()
+	get()
+	renewed := pki.Renew("carol", false).String()
+	// the files are looked at once a second at most
+	time.Sleep(1100 * time.Millisecond)
+	get()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(presented) != 2 || presented[0] != first || presented[1] != renewed {
+		t.Errorf("expected serial %s, then %s, got %v", first, renewed, presented)
 	}
 }

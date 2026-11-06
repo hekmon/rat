@@ -12,19 +12,25 @@ import (
 )
 
 // Source gives the side of a TLS configuration (see ServerConfig, ClientConfig) at each handshake,
-// and tells what happens to its CRL: a Side, fixed, or a Watcher, reloading it when renewed.
+// and tells what happens to its CRL and to its files: a Side, fixed, or a Watcher, reloading it
+// when renewed.
 type Source interface {
 	// Side returns the side in use.
 	Side() *Side
 	// OnCRL adds events told what happens to the CRL of the side in use, and of the sides after
 	// it (see Side.OnCRL).
 	OnCRL(events CRLEvents)
+	// OnWatch adds events told what happens to the files of the side (see WatchEvents).
+	OnWatch(events WatchEvents)
 }
 
 // Side returns s: a side loaded once is its own source, never renewed.
 func (s *Side) Side() *Side {
 	return s
 }
+
+// OnWatch tells nothing: a side loaded once is never renewed.
+func (s *Side) OnWatch(WatchEvents) {}
 
 var (
 	// ErrCAChanged is returned for a directory whose CA changed: the trust of the side changes, which

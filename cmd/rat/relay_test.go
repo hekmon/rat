@@ -485,3 +485,37 @@ func TestRunServerDirectory(t *testing.T) {
 		t.Errorf("expected mtls.ErrRole, got %v", err)
 	}
 }
+
+// TestRelayRenewal guards that rat, as run starts it, presents its client certificate renewed
+// while it relays at the next request, rather than the one replaced, on a connection kept alive
+// for as long as it is in use.
+func TestRelayRenewal(t *testing.T) {
+	pki := testpki.NewSubCA(t, "t", "")
+	mcp := newMCPServer()
+	var mu sync.Mutex
+	var presented []string
+	addr := fakeRatd(t, pki.Dir, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		mu.Lock()
+		presented = append(presented, req.TLS.PeerCertificates[0].SerialNumber.String())
+		mu.Unlock()
+		mcp.handler.ServeHTTP(w, req)
+	}), nil)
+	p := startRat(t, pki.Dir, addr, slog.LevelInfo)
+	if code, message, _ := errorOf(t, p.exchange(t, ping)); code != 0 {
+		t.Fatalf("first ping: %d %s", code, message)
+	}
+	renewed := pki.Renew("alice", false).String()
+	// the files are looked at once a second at most
+	time.Sleep(1100 * time.Millisecond)
+	if code, message, _ := errorOf(t, p.exchange(t, ping)); code != 0 {
+		t.Fatalf("second ping: %d %s", code, message)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(presented) != 2 || presented[1] != renewed || presented[0] == renewed {
+		t.Errorf("expected a first certificate, then the renewed %s, got %v", renewed, presented)
+	}
+	if !strings.Contains(p.logs.String(), `msg="client certificate renewed"`) {
+		t.Errorf("expected the renewal logged:\n%s", p.logs)
+	}
+}

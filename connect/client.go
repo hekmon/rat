@@ -11,7 +11,8 @@ import (
 
 // HTTPClient returns an HTTP client presenting the certificate of side, a client directory of a
 // bundle, and checking ratd as package mtls does, the CRL of its CA on every request (see
-// revocationTransport). Its transport is its own, cloned from the default one: setting the
+// revocationTransport). A Watcher as side has its renewed certificate presented from the next
+// request on. Its transport is its own, cloned from the default one: setting the
 // configuration on http.DefaultTransport would change a global of the process, and a bare
 // http.Transport loses the defaults (proxy from the environment, dial and handshake timeouts). It
 // has no timeout: callers bound each request.
@@ -29,6 +30,10 @@ func HTTPClient(side mtls.Source) (*http.Client, error) {
 	// The connections kept idle were checked against the CRL held before: the next request
 	// checks ratd against the new one during its handshake, rather than after its response.
 	side.OnCRL(mtls.CRLEvents{Fetched: func(*mtls.CRL) { transport.CloseIdleConnections() }})
+	// The connections kept idle present the certificate replaced: the next request presents the
+	// renewed one during its handshake, rather than the old one until it expires, a client in
+	// constant use keeping a connection for hours.
+	side.OnWatch(mtls.WatchEvents{Reloaded: func(*mtls.Side, bool) { transport.CloseIdleConnections() }})
 	return &http.Client{Transport: &revocationTransport{side: side, next: transport}}, nil
 }
 

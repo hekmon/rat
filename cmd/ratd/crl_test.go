@@ -167,3 +167,57 @@ func uncheckingClient(t *testing.T, dir string) *http.Client {
 	config := &tls.Config{Certificates: []tls.Certificate{certificate}, InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}
 	return &http.Client{Transport: &http.Transport{TLSClientConfig: config}, Timeout: 5 * time.Second}
 }
+
+// TestRunRenewal guards that ratd, as run starts it, presents its certificate renewed while it
+// serves at the next handshake, without a restart, a new key logged as a warning.
+func TestRunRenewal(t *testing.T) {
+	pki := testpki.NewSubCA(t, "test-ratd-renew", "")
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs := &logBuffer{}
+	ctx, cancel := context.WithCancel(context.Background())
+	ran := make(chan error, 1)
+	go func() {
+		ran <- run(ctx, slog.New(slog.NewTextHandler(logs, nil)), mtls.ServerDir(pki.Dir), defaultReadBudget,
+			func() (net.Listener, error) { return listener, nil })
+	}()
+	defer func() {
+		cancel()
+		if err := <-ran; err != nil {
+			t.Error(err)
+		}
+	}()
+	carol, err := tls.LoadX509KeyPair(filepath.Join(mtls.ClientDir(pki.Dir, "carol"), "client.crt"),
+		filepath.Join(mtls.ClientDir(pki.Dir, "carol"), "client.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the serial of the certificate ratd presents, once it serves
+	presented := func() string {
+		t.Helper()
+		conn, err := tls.Dial("tcp", listener.Addr().String(), &tls.Config{InsecureSkipVerify: true,
+			Certificates: []tls.Certificate{carol}, MinVersion: tls.VersionTLS13})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		return conn.ConnectionState().PeerCertificates[0].SerialNumber.String()
+	}
+	for deadline := time.Now().Add(15 * time.Second); !strings.Contains(logs.String(), "msg=serving"); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("ratd did not serve:\n%s", logs)
+		}
+	}
+	first := presented()
+	renewed := pki.Renew("server", true).String()
+	// the files are looked at once a second at most
+	time.Sleep(1100 * time.Millisecond)
+	if second := presented(); second == first || second != renewed {
+		t.Errorf("expected the renewed certificate %s presented, after %s, got %s", renewed, first, second)
+	}
+	if !strings.Contains(logs.String(), `msg="server certificate renewed with a new key"`) {
+		t.Errorf("expected the renewal with a new key logged as a warning:\n%s", logs)
+	}
+}

@@ -39,65 +39,105 @@ func NewSubCA(t testing.TB, tenant, crlURL string) *PKI {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bundle := filepath.Join(t.TempDir(), "bundle")
-	serials := map[string]*big.Int{}
-	for i, side := range []struct {
-		name, dir string
-		usage     x509.ExtKeyUsage
-		crl       bool
-	}{
-		{"server", mtls.ServerDir(bundle), x509.ExtKeyUsageServerAuth, true},
-		{"alice", mtls.ClientDir(bundle, "alice"), x509.ExtKeyUsageClientAuth, true},
-		{"bob", mtls.ClientDir(bundle, "bob"), x509.ExtKeyUsageClientAuth, true},
-		{"carol", mtls.ClientDir(bundle, "carol"), x509.ExtKeyUsageClientAuth, false},
+	pki := &PKI{Dir: filepath.Join(t.TempDir(), "bundle"), t: t, ca: ca, caDER: caDER, key: caKey,
+		serials: map[string]*big.Int{}, sides: map[string]*side{}}
+	for _, s := range []*side{
+		{name: "server", common: tenant, dir: mtls.ServerDir(pki.Dir), role: "server", usage: x509.ExtKeyUsageServerAuth,
+			crl: crlURL},
+		{name: "alice", common: "alice", dir: mtls.ClientDir(pki.Dir, "alice"), role: "client",
+			usage: x509.ExtKeyUsageClientAuth, crl: crlURL},
+		{name: "bob", common: "bob", dir: mtls.ClientDir(pki.Dir, "bob"), role: "client",
+			usage: x509.ExtKeyUsageClientAuth, crl: crlURL},
+		{name: "carol", common: "carol", dir: mtls.ClientDir(pki.Dir, "carol"), role: "client",
+			usage: x509.ExtKeyUsageClientAuth},
 	} {
+		pki.sides[s.name] = s
+		pki.issue(s, true)
+	}
+	return pki
+}
+
+// side is a directory the CA issued, and what its certificate carries.
+type side struct {
+	name, common, dir, role string
+	usage                   x509.ExtKeyUsage
+	// crl is the distribution point its certificate names, none if empty
+	crl string
+	key *ecdsa.PrivateKey
+}
+
+// Renew issues the side name ("server" for the server) a new certificate, with a new key if
+// asked, and writes it in place of the one it holds, as a renewal does: written next to the old
+// files, then renamed in place. It returns the serial number of the new certificate.
+func (p *PKI) Renew(name string, newKey bool) *big.Int {
+	p.t.Helper()
+	s, ok := p.sides[name]
+	if !ok {
+		p.t.Fatalf("no side %q", name)
+	}
+	return p.issue(s, newKey)
+}
+
+// issue writes the files of s with a new certificate, and a new key if asked, returning the serial
+// of the certificate.
+func (p *PKI) issue(s *side, newKey bool) *big.Int {
+	p.t.Helper()
+	if newKey || s.key == nil {
 		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {
-			t.Fatal(err)
+			p.t.Fatal(err)
 		}
-		name, role := side.name, "client"
-		if side.usage == x509.ExtKeyUsageServerAuth {
-			name, role = tenant, "server"
-		}
-		template := &x509.Certificate{SerialNumber: big.NewInt(int64(i + 2)), Subject: pkix.Name{CommonName: name},
-			NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature,
-			ExtKeyUsage: []x509.ExtKeyUsage{side.usage}}
-		if side.crl {
-			template.CRLDistributionPoints = []string{crlURL}
-		}
-		certDER, err := x509.CreateCertificate(rand.Reader, template, ca, &key.PublicKey, caKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-		keyDER, err := x509.MarshalPKCS8PrivateKey(key)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err = os.MkdirAll(side.dir, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		for file, block := range map[string]*pem.Block{
-			"ca.crt":      {Type: "CERTIFICATE", Bytes: caDER},
-			role + ".crt": {Type: "CERTIFICATE", Bytes: certDER},
-			role + ".key": {Type: "PRIVATE KEY", Bytes: keyDER},
-		} {
-			if err = os.WriteFile(filepath.Join(side.dir, file), pem.EncodeToMemory(block), 0o600); err != nil {
-				t.Fatal(err)
-			}
-		}
-		serials[side.name] = template.SerialNumber
+		s.key = key
 	}
-	return &PKI{Dir: bundle, t: t, ca: ca, key: caKey, serials: serials}
+	p.issued++
+	now := time.Now()
+	template := &x509.Certificate{SerialNumber: big.NewInt(int64(p.issued + 1)), Subject: pkix.Name{CommonName: s.common},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{s.usage}}
+	if s.crl != "" {
+		template.CRLDistributionPoints = []string{s.crl}
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, template, p.ca, &s.key.PublicKey, p.key)
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(s.key)
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	if err = os.MkdirAll(s.dir, 0o700); err != nil {
+		p.t.Fatal(err)
+	}
+	for file, block := range map[string]*pem.Block{
+		"ca.crt":        {Type: "CERTIFICATE", Bytes: p.caDER},
+		s.role + ".crt": {Type: "CERTIFICATE", Bytes: certDER},
+		s.role + ".key": {Type: "PRIVATE KEY", Bytes: keyDER},
+	} {
+		path := filepath.Join(s.dir, file)
+		if err = os.WriteFile(path+".new", pem.EncodeToMemory(block), 0o600); err != nil {
+			p.t.Fatal(err)
+		}
+		if err = os.Rename(path+".new", path); err != nil {
+			p.t.Fatal(err)
+		}
+	}
+	p.serials[s.name] = template.SerialNumber
+	return template.SerialNumber
 }
 
 // PKI is a sub CA of another PKI, and the directories it issued (see NewSubCA).
 type PKI struct {
 	// Dir holds the directories, laid out as a bundle.
-	Dir     string
-	t       testing.TB
-	ca      *x509.Certificate
-	key     *ecdsa.PrivateKey
+	Dir   string
+	t     testing.TB
+	ca    *x509.Certificate
+	caDER []byte
+	key   *ecdsa.PrivateKey
+	// serials are the serial numbers of the certificate each side holds, sides what it carries;
+	// issued counts the certificates issued, for their serials
 	serials map[string]*big.Int
+	sides   map[string]*side
+	issued  int
 }
 
 // CRL returns a CRL of the CA in DER, valid from an hour ago for two hours, or stale if asked,

@@ -323,8 +323,11 @@ not.
   halfway never breaks a running side, and the expiry warning keeps telling of the certificate
   in use. Files holding the side in use again, after a refusal, are told restored.
 - **From the next handshake on**: ratd picks the certificate of each handshake from the side in
-  use, connections open keeping theirs until they close. The CRL held, and what is told of it,
-  carry over to the side renewed when its certificate names the same distribution point.
+  use, connections open keeping theirs until they close. A client closes its idle connections on
+  a renewal of its certificate (`connect.HTTPClient`), as on a newer CRL: in constant use, it
+  would otherwise present the certificate replaced for hours, past its expiry, which ratd checks
+  during the handshake only. The CRL held, and what is told of it, carry over to the side renewed
+  when its certificate names the same distribution point.
 
 Two pitfalls of Go:
 
