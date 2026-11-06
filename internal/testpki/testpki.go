@@ -18,12 +18,10 @@ import (
 	"github.com/hekmon/rat/mtls"
 )
 
-// SubCABundle writes the directories of tenant as a sub CA of another PKI issues them, laid out as
+// NewSubCA writes the directories of tenant as a sub CA of another PKI issues them, laid out as
 // a bundle: the server, and clients alice and bob, their certificates naming crlURL as their CRL
-// distribution point, and carol, whose certificate names none, refusing such a server. It
-// returns the directory, and a function returning a CRL of the CA in DER, stale if asked,
-// revoking the certificates of the names given ("server" for the server).
-func SubCABundle(t testing.TB, tenant, crlURL string) (string, func(stale bool, revoked ...string) []byte) {
+// distribution point, and carol, whose certificate names none, refusing such a server.
+func NewSubCA(t testing.TB, tenant, crlURL string) *PKI {
 	t.Helper()
 	now := time.Now()
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -89,21 +87,48 @@ func SubCABundle(t testing.TB, tenant, crlURL string) (string, func(stale bool, 
 		}
 		serials[side.name] = template.SerialNumber
 	}
-	crl := func(stale bool, revoked ...string) []byte {
-		thisUpdate := now.Add(-time.Hour)
-		if stale {
-			thisUpdate = now.Add(-3 * time.Hour)
-		}
-		var entries []x509.RevocationListEntry
-		for _, name := range revoked {
-			entries = append(entries, x509.RevocationListEntry{SerialNumber: serials[name], RevocationTime: thisUpdate})
-		}
-		der, err := x509.CreateRevocationList(rand.Reader, &x509.RevocationList{Number: big.NewInt(1),
-			ThisUpdate: thisUpdate, NextUpdate: thisUpdate.Add(2 * time.Hour), RevokedCertificateEntries: entries}, ca, caKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return der
+	return &PKI{Dir: bundle, t: t, ca: ca, key: caKey, serials: serials}
+}
+
+// PKI is a sub CA of another PKI, and the directories it issued (see NewSubCA).
+type PKI struct {
+	// Dir holds the directories, laid out as a bundle.
+	Dir     string
+	t       testing.TB
+	ca      *x509.Certificate
+	key     *ecdsa.PrivateKey
+	serials map[string]*big.Int
+}
+
+// CRL returns a CRL of the CA in DER, valid from an hour ago for two hours, or stale if asked,
+// revoking the certificates of the names given ("server" for the server).
+func (p *PKI) CRL(stale bool, revoked ...string) []byte {
+	thisUpdate := time.Now().Add(-time.Hour)
+	if stale {
+		thisUpdate = time.Now().Add(-3 * time.Hour)
 	}
-	return bundle, crl
+	return p.CRLAt(thisUpdate, thisUpdate.Add(2*time.Hour), revoked...)
+}
+
+// CRLAt returns a CRL of the CA in DER, issued at thisUpdate, stale at nextUpdate, revoking the
+// certificates of the names given ("server" for the server).
+func (p *PKI) CRLAt(thisUpdate, nextUpdate time.Time, revoked ...string) []byte {
+	p.t.Helper()
+	var entries []x509.RevocationListEntry
+	for _, name := range revoked {
+		entries = append(entries, x509.RevocationListEntry{SerialNumber: p.serials[name], RevocationTime: thisUpdate})
+	}
+	der, err := x509.CreateRevocationList(rand.Reader, &x509.RevocationList{Number: big.NewInt(1),
+		ThisUpdate: thisUpdate, NextUpdate: nextUpdate, RevokedCertificateEntries: entries}, p.ca, p.key)
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	return der
+}
+
+// SubCABundle is NewSubCA, returning its directory and its CRL function.
+func SubCABundle(t testing.TB, tenant, crlURL string) (string, func(stale bool, revoked ...string) []byte) {
+	t.Helper()
+	pki := NewSubCA(t, tenant, crlURL)
+	return pki.Dir, pki.CRL
 }

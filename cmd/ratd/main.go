@@ -121,14 +121,12 @@ func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int
 	}
 	// Starting without the CRL the certificate names would let in the certificates it revokes,
 	// and before tmux starts, a failure stops nothing.
+	side.OnCRL(logCRL(logger))
 	crl, err := side.CRL(ctx)
 	if err != nil {
 		return fmt.Errorf("bundle: %w", err)
 	}
-	if crl != nil {
-		logger.Info("CRL fetched", "address", crl.Address, "revoked", crl.Len(), "this_update", crl.ThisUpdate,
-			"next_update", crl.NextUpdate)
-	} else {
+	if crl == nil {
 		// expected of a bundle, telling of a sub CA whose server template lacks a distribution point
 		logger.Info("revocation not checked: the server certificate names no CRL distribution point")
 	}
@@ -161,6 +159,9 @@ func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int
 	}
 	d.notifier, d.status.notifier = notifier, notifier
 	d.status.degrade(append(deployment, degraded...)...)
+	side.OnCRL(mtls.CRLEvents{Fetched: func(*mtls.CRL) { d.status.crlRenewed() }, Failed: func(_ error, held *mtls.CRL) {
+		d.status.crlFailed(held)
+	}})
 	listener, err := listen()
 	if err != nil {
 		return err
@@ -188,6 +189,24 @@ func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int
 		return supervisorErr
 	}
 	return err
+}
+
+// logCRL returns the events logging what happens to the CRL of the CA, for ratd and rat alike: a
+// CRL newer than the one held, and a fetch failing or refused, a warning, with the CRL kept.
+func logCRL(logger *slog.Logger) mtls.CRLEvents {
+	return mtls.CRLEvents{
+		Fetched: func(crl *mtls.CRL) {
+			logger.Info("CRL fetched", "address", crl.Address, "revoked", crl.Len(), "this_update", crl.ThisUpdate,
+				"next_update", crl.NextUpdate)
+		},
+		Failed: func(err error, held *mtls.CRL) {
+			if held == nil {
+				logger.Warn("CRL fetch failed, no valid CRL held: every client is refused", "error", err)
+				return
+			}
+			logger.Warn("CRL fetch failed, the CRL held kept", "error", err, "stale_at", held.NextUpdate)
+		},
+	}
 }
 
 // warnExpiry warns now, then every day until ctx is done, if the bundle of side expires soon

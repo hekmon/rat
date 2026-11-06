@@ -108,9 +108,27 @@ Plain http is enough, the CRL being signed; https is checked against the CAs of 
 the proxy comes from the environment. ratd fetches it while starting, before its terminals
 exist, and refuses to start without a valid one, or with its own certificate revoked: starting
 would let in the certificates the CRL revokes, and refusing loses no terminal. A client fetches
-it at its first handshake: rat contacts nothing before its first request. Each fetches it again
-once the CRL held is stale, one fetch at a time, and accepts no certificate while it can have no
-valid one.
+it at its first handshake: rat contacts nothing before its first request.
+
+Then each fetches it again as it is used, one fetch at a time, never on a timer: an idle side
+fetches nothing.
+
+- **While the CRL held is valid**, a check answers with it at once, and starts a fetch in the
+  background 15 minutes after the last one (a certificate revoked is refused within 15 minutes of
+  the PKI publishing it), or a minute after a fetch failing, the CRL held kept meanwhile.
+- **Without a valid CRL** (none yet, or the one held stale), every check fetches, and accepts no
+  certificate while it can not: a side waking from sleep recovers as soon as its network does.
+- **Delays are told by dates**, the CRL held being judged stale by its next update: the
+  monotonic clock of Go, which durations use, stops on some systems while the machine sleeps,
+  and a laptop asleep for days would count only the minutes it was awake. A clock set back makes
+  a fetch due, the delay being unknown.
+- **A CRL older than the one held is refused**, the one held kept: a CRL replayed would un-revoke
+  the certificates revoked since. Issued at the same date, it is the same CRL.
+
+What happens to the CRL is told to its holder (`Side.OnCRL`): a newer CRL, which rat logs and on
+which it closes its idle connections (see below), and a fetch failing, logged as a warning at
+once, every fetch being an early signal, with when the CRL held goes stale. ratd shows the latter
+in its status line.
 
 Each side checks the certificate of its peer, and its own, which a side revoked tells rather
 than its peers refusing it:
@@ -120,9 +138,13 @@ than its peers refusing it:
   the body telling why: refused during the handshake, a client would only learn "bad
   certificate", the alert Go sends whatever the reason. The terminals of a client revoked keep
   running: revoking closes the way in, stopping the service is the kill switch.
-- **A client, during the handshake** (`ClientConfig`): it refuses a server revoked, so that a
-  server key copied off the machine is revoked with its certificate, the PKI issuing the server
-  a new one under the same CA, while clients keep theirs.
+- **A client, during the handshake and around every request** (`ClientConfig`,
+  `connect.HTTPClient`): it refuses a server revoked, so that a server key copied off the machine
+  is revoked with its certificate, the PKI issuing the server a new one under the same CA, while
+  clients keep theirs. Its connections are kept alive, for hours by a client calling more often
+  than their idle timeout: before each request, it gets the CRL, which refreshes it; on a newer
+  CRL, it closes its idle connections, for the next request to check the server during its
+  handshake; and after each response, it checks the server of the connection used.
 
 A side whose certificate names no CRL refuses a peer whose certificate names one: the CA
 revokes, and the side could not check it, its certificate issued from another template than the
@@ -135,6 +157,12 @@ Rejected:
 
 - **Fetching the CRL the peer names**, for a side whose certificate names none: a client would
   choose an address for ratd to fetch.
+- **Fetching on a timer**: an idle side would fetch for nothing, a laptop asleep would miss its
+  turns, and a side in use needs a fetch on use anyway.
+- **Conditional requests** (`If-Modified-Since`): state to keep for little, at four fetches an
+  hour of a small CRL.
+- **Warning in the last tenth of the validity of the CRL**, as of certificates: with a fetch every
+  15 minutes, a failure is already the early signal.
 - **A CRL file next to `ca.crt`**, delivered by the admin: ratd is one machine, but rat runs on
   every machine of a harness, each needing the file pushed every few days, by tooling every
   organization would have to build.

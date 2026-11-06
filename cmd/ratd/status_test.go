@@ -175,3 +175,27 @@ func TestStatusCalls(t *testing.T) {
 		t.Errorf("expected no wait in flight once it returned, got %q", l)
 	}
 }
+
+// TestStatusCRL guards what the status tells of the CRL of the CA: a renewal failing, with when
+// the CRL held goes stale, every client refused once it did or without one held, and nothing
+// once a newer CRL is fetched.
+func TestStatusCRL(t *testing.T) {
+	now := time.Now()
+	s := newStatus(slog.New(slog.DiscardHandler))
+	s.serving = "serving"
+	s.crlFailed(&mtls.CRL{NextUpdate: now.Add(3*time.Hour + time.Minute)})
+	if line := s.render(now); !strings.Contains(line, "CRL not renewed, stale in 3h") {
+		t.Errorf("renewal failing: expected when the CRL goes stale, got %q", line)
+	}
+	if line := s.render(now.Add(4 * time.Hour)); !strings.Contains(line, "no valid CRL, every client refused") {
+		t.Errorf("CRL stale: expected every client refused, got %q", line)
+	}
+	s.crlRenewed()
+	if line := s.render(now); strings.Contains(line, "CRL") {
+		t.Errorf("renewed: expected nothing of the CRL, got %q", line)
+	}
+	s.crlFailed(nil)
+	if line := s.render(now); !strings.Contains(line, "no valid CRL, every client refused") {
+		t.Errorf("no CRL held: expected every client refused, got %q", line)
+	}
+}

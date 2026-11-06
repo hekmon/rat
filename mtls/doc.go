@@ -20,9 +20,9 @@
 // # Revocation
 //
 // A sub CA of another PKI revokes certificates with a CRL, which each side fetches from the
-// distribution point of its own certificate when first needed ([Side.CRL]), and checks
-// ([FetchCRL]): of the CA, complete, current. A certificate naming none revokes nothing, as in a
-// bundle.
+// distribution point of its own certificate when first needed, and again as it is used
+// ([Side.CRL]), telling its holder what happens to it ([Side.OnCRL]), and checks ([FetchCRL]): of
+// the CA, complete, current. A certificate naming none revokes nothing, as in a bundle.
 //
 // # Roles and names
 //

@@ -660,8 +660,9 @@ serving tenant prod on [::]:7281 · bracketed paste overridden, bundle expires i
 - **Degradations**: known issues of a ratd serving all the same, logged once when found, and shown
   for as long as they hold, in a fixed order, with short labels (the log tells the details):
   running as root or a bundle its user can write (see Startup), what bash startup files defeat in
-  the terminals or the check not running, the bundle expiring soon (updated daily), the
-  deaths of the tmux server within the window of its restart budget (gone once older). At most
+  the terminals or the check not running, the bundle expiring soon (updated daily), the CRL of
+  the CA not renewed (with when the one held goes stale) or none valid, the deaths of the tmux
+  server within the window of its restart budget (gone once older). At most
   five at once: some exclude others. First in the line, should a terminal cut it.
 - **Last seen**, per session, the time of its last request, whatever the method: the five most
   recent, then a count of the others. Last seen rather than active or idle: requests are
@@ -753,16 +754,18 @@ clients share: both sides of the contract in one place.
 
 ## Logs
 
-One line per tool call, at info level, or warning for a failure the agent did not cause (tmux not
-answering, an internal error): the session (the client name), the address of the client, the tool,
-the window, the outcome (`ok`, `message` for a result that is not an error, `error` with its
-cause) and the duration, plus what tells the action without its content: the size of a text and
-whether Enter was pressed, the number of keys, the rows of history asked and read (and the size of
-a screen refused), the path and size of a file. Never the content: neither text, nor keys (they
-can spell a password one key at a time), nor files. And the lifecycle: startup (version, tenant,
-address, read budget, bundle expiry, the CRL fetched), the check of the terminals, tmux exits and
-restarts, the crash budget, shutdown. A request refused by the CRL of the CA (a client revoked,
-or no valid CRL) is a warning, with the session, the address and why.
+One line per tool call, at info level, or warning for a failure the agent did not cause (tmux
+not answering, an internal error): the session (the client name), the address of the client, the
+tool, the window, the outcome (`ok`, `message` for a result that is not an error, `error` with
+its cause) and the duration, plus what tells the action without its content: the size of a text
+and whether Enter was pressed, the number of keys, the rows of history asked and read (and the
+size of a screen refused), the path and size of a file. Never the content: neither text, nor
+keys (they can spell a password one key at a time), nor files. And the lifecycle: startup
+(version, tenant, address, read budget, bundle expiry, the CRL fetched), the check of the
+terminals, tmux exits and restarts, the crash budget, shutdown. A request refused by the CRL of
+the CA (a client revoked, or no valid CRL) is a warning, with the session, the address and why;
+so is a fetch of the CRL failing, with when the CRL held goes stale, and each newer CRL is
+logged.
 
 The address tells apart the agents sharing a client certificate, and shows a certificate used from
 an unexpected machine. It is the peer of the connection: behind a proxy, the proxy's, whose own

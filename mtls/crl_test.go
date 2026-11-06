@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -294,5 +295,127 @@ func TestCheckRevokedTemplates(t *testing.T) {
 	}
 	if c := connect(t, serverConfig, clientConfig); !errors.Is(c.client, ErrCRL) {
 		t.Errorf("expected the client to refuse the server with ErrCRL, got %v", c.client)
+	}
+}
+
+// crlAt returns the CRL of ca in DER, issued at thisUpdate, stale at nextUpdate, revoking the
+// certificates of serials.
+func crlAt(t *testing.T, ca credential, thisUpdate, nextUpdate time.Time, serials ...*big.Int) []byte {
+	t.Helper()
+	entries := make([]x509.RevocationListEntry, 0, len(serials))
+	for _, serial := range serials {
+		entries = append(entries, x509.RevocationListEntry{SerialNumber: serial, RevocationTime: thisUpdate})
+	}
+	der, err := x509.CreateRevocationList(rand.Reader, &x509.RevocationList{Number: big.NewInt(1),
+		ThisUpdate: thisUpdate, NextUpdate: nextUpdate, RevokedCertificateEntries: entries}, ca.cert, ca.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return der
+}
+
+// waitRefreshed waits for the fetch in the background of r, if any, to end.
+func waitRefreshed(t *testing.T, r *revocation) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		r.mu.Lock()
+		refreshing := r.refreshing
+		r.mu.Unlock()
+		if !refreshing {
+			return
+		}
+	}
+	t.Fatal("the fetch in the background did not end")
+}
+
+// TestCRLRefresh guards when a side fetches its CRL again, told by dates rather than durations: a
+// machine asleep for days counts them, and a clock set back fetches. While the CRL held is valid,
+// a check returns at once, fetching in the background crlRefresh after the last fetch, crlRetry
+// after a failure, keeping the CRL held; a CRL older than the one held is refused. Without a
+// valid CRL, every check fetches, and fails while it can not. Each new CRL, and each failure, is
+// told to the events of the side.
+func TestCRLRefresh(t *testing.T) {
+	ca := crlCA(t, "t")
+	var mu sync.Mutex
+	var body []byte
+	status, fetches := http.StatusOK, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		fetches++
+		w.WriteHeader(status)
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+	serve := func(s int, b []byte) {
+		mu.Lock()
+		defer mu.Unlock()
+		status, body = s, b
+	}
+	fetched := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return fetches
+	}
+	start := time.Now().Round(0)
+	clock := start
+	defer func(now func() time.Time) { crlNow = now }(crlNow)
+	crlNow = func() time.Time { return clock }
+
+	ratd := crlSide(t, ca, Server, "t", server.URL)
+	bob := crlSide(t, ca, Client, "bob")
+	var news []*CRL
+	var failures []error
+	ratd.OnCRL(CRLEvents{
+		Fetched: func(crl *CRL) { mu.Lock(); news = append(news, crl); mu.Unlock() },
+		Failed:  func(err error, _ *CRL) { mu.Lock(); failures = append(failures, err); mu.Unlock() },
+	})
+	check := func(step string, expectedFetches int, expectedErr error) {
+		t.Helper()
+		err := ratd.CheckRevoked(context.Background(), bob.Certificate.Leaf)
+		waitRefreshed(t, ratd.revocation)
+		if !errors.Is(err, expectedErr) || (expectedErr == nil) != (err == nil) || fetched() != expectedFetches {
+			t.Errorf("%s: expected %v after %d fetches, got %v after %d", step, expectedErr, expectedFetches, err, fetched())
+		}
+	}
+	week := 7 * 24 * time.Hour
+	first := crlAt(t, ca, start.Add(-time.Hour), start.Add(week))
+	revokingBob := crlAt(t, ca, start.Add(-time.Minute), start.Add(week), bob.Certificate.Leaf.SerialNumber)
+
+	serve(http.StatusOK, first)
+	check("first check", 1, nil)
+	clock = start.Add(10 * time.Minute)
+	check("within the delay", 1, nil)
+	serve(http.StatusOK, revokingBob)
+	clock = start.Add(16 * time.Minute)
+	// the CRL held answers, the new one being fetched meanwhile
+	check("delay passed", 2, nil)
+	check("new CRL", 2, ErrRevoked)
+	clock = clock.Add(3 * 24 * time.Hour)
+	check("asleep for 3 days", 3, ErrRevoked)
+	clock = clock.Add(-time.Hour)
+	check("clock set back", 4, ErrRevoked)
+
+	serve(http.StatusOK, first)
+	clock = clock.Add(16 * time.Minute)
+	check("older CRL fetched", 5, ErrRevoked)
+	check("older CRL refused, the one held kept", 5, ErrRevoked)
+	clock = clock.Add(30 * time.Second)
+	check("failure retried after a minute, not before", 5, ErrRevoked)
+	clock = clock.Add(31 * time.Second)
+	check("failure retried", 6, ErrRevoked)
+
+	serve(http.StatusInternalServerError, nil)
+	clock = start.Add(week + time.Minute)
+	check("stale, the PKI down", 7, ErrCRL)
+	check("stale, fetched at each check", 8, ErrCRL)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(news) != 2 || news[1].Len() != 1 {
+		t.Errorf("expected 2 new CRLs told, the second revoking bob, got %d", len(news))
+	}
+	if len(failures) != 4 || !strings.Contains(failures[0].Error(), "before the CRL held") {
+		t.Errorf("expected 4 failures told, the first refusing the older CRL, got %v", failures)
 	}
 }

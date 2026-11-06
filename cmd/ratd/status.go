@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hekmon/rat/mtls"
 )
 
 // statusInterval is how often ratd renders its status for systemd, which it sends only when it
@@ -79,6 +81,10 @@ type status struct {
 	degraded [degradations]bool
 	// expiry is when the bundle expires, once it does soon (see warnExpiry)
 	expiry time.Time
+	// crlFailing tells the last fetch of the CRL of the CA failed, crlStale when the CRL held then
+	// goes stale, zero when none valid is held
+	crlFailing bool
+	crlStale   time.Time
 	// deaths are the times the tmux server died on its own, shown for deathWindow
 	deaths      []time.Time
 	deathWindow time.Duration
@@ -138,6 +144,26 @@ func (s *status) expires(expiry time.Time) {
 	s.tell(time.Now())
 }
 
+// crlFailed records that a fetch of the CRL of the CA failed, held being the CRL kept, nil when
+// none valid is held, and tells systemd at once: clients are refused once it goes stale.
+func (s *status) crlFailed(held *mtls.CRL) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.crlFailing, s.crlStale = true, time.Time{}
+	if held != nil {
+		s.crlStale = held.NextUpdate
+	}
+	s.tell(time.Now())
+}
+
+// crlRenewed records that a CRL newer than the one held was fetched, and tells systemd at once.
+func (s *status) crlRenewed() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.crlFailing = false
+	s.tell(time.Now())
+}
+
 // died records that the tmux server died on its own at now, shown for window (the window of the
 // restart policy, within which deaths make ratd exit), and tells systemd at once.
 func (s *status) died(now time.Time, window time.Duration) {
@@ -173,6 +199,13 @@ func (s *status) render(now time.Time) string {
 			issues = append(issues, fmt.Sprintf("bundle expires in %d days", int(left.Hours()/24)))
 		} else {
 			issues = append(issues, "bundle expired")
+		}
+	}
+	if s.crlFailing {
+		if left := s.crlStale.Sub(now); left > 0 {
+			issues = append(issues, "CRL not renewed, stale in "+leftText(left))
+		} else {
+			issues = append(issues, "no valid CRL, every client refused")
 		}
 	}
 	s.deaths = slices.DeleteFunc(s.deaths, func(death time.Time) bool { return now.Sub(death) > s.deathWindow })
@@ -265,5 +298,17 @@ func (s *status) run(ctx context.Context, tenant, address string) {
 			return
 		case <-ticker.C:
 		}
+	}
+}
+
+// leftText tells a delay left, coarse: days beyond two, hours beyond one, minutes below.
+func leftText(left time.Duration) string {
+	switch {
+	case left >= 48*time.Hour:
+		return fmt.Sprintf("%dd", int(left.Hours()/24))
+	case left >= time.Hour:
+		return fmt.Sprintf("%dh", int(left.Hours()))
+	default:
+		return fmt.Sprintf("%dm", int(left.Minutes()))
 	}
 }

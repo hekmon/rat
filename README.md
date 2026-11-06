@@ -565,8 +565,10 @@ http). A certificate naming none revokes nothing: name it in every template of t
 side whose certificate names none refuses a peer whose certificate names one, the CA revoking
 what it can not check. `rat-tool bundle inspect` tells, offline, where each directory fetches
 its CRL from, or that it names none. ratd fetches it while starting, and refuses to start
-without a valid one; rat fetches it at its first request. Both fetch it again once the CRL they
-hold is stale, and refuse everything while they can have no valid one:
+without a valid one; rat fetches it at its first request. Both fetch it again as they are used,
+every 15 minutes, in the background, and at once when the CRL they hold is stale, refusing
+everything while they can have no valid one: after a sleep, or an outage of your PKI longer than
+the validity of its CRL. A fetch failing is a warning in their logs, and in the status of ratd:
 
 - **Revoking a client** cuts it at its next request: ratd checks every request, the answer
   telling the client why. Its terminals keep running: stop them, or the service, as needed.

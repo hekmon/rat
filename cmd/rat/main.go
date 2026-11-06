@@ -67,6 +67,7 @@ func run(ctx context.Context, logger *slog.Logger, target flags.Target, stdin io
 	if side.ExpiresSoon(time.Now()) {
 		logger.Warn(side.ExpiryWarning(), "expiry", side.NotAfter(), "days_left", int(time.Until(side.NotAfter()).Hours()/24))
 	}
+	side.OnCRL(logCRL(logger))
 	client, err := connect.HTTPClient(side)
 	if err != nil {
 		return err
@@ -85,4 +86,23 @@ func run(ctx context.Context, logger *slog.Logger, target flags.Target, stdin io
 	reason := r.run(ctx, stdin)
 	logger.Info("stopped", "reason", reason)
 	return nil
+}
+
+// logCRL returns the events logging what happens to the CRL of the CA, fetched at the first
+// request and refreshed as rat relays: a CRL newer than the one held, and a fetch failing or
+// refused, a warning, with the CRL kept.
+func logCRL(logger *slog.Logger) mtls.CRLEvents {
+	return mtls.CRLEvents{
+		Fetched: func(crl *mtls.CRL) {
+			logger.Info("CRL fetched", "address", crl.Address, "revoked", crl.Len(), "this_update", crl.ThisUpdate,
+				"next_update", crl.NextUpdate)
+		},
+		Failed: func(err error, held *mtls.CRL) {
+			if held == nil {
+				logger.Warn("CRL fetch failed, no valid CRL held: requests are refused", "error", err)
+				return
+			}
+			logger.Warn("CRL fetch failed, the CRL held kept", "error", err, "stale_at", held.NextUpdate)
+		},
+	}
 }

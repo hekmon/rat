@@ -10,10 +10,11 @@ import (
 )
 
 // HTTPClient returns an HTTP client presenting the certificate of side, a client directory of a
-// bundle, and checking ratd as package mtls does. Its transport is its own, cloned from the
-// default one: setting the configuration on http.DefaultTransport would change a global of the
-// process, and a bare http.Transport loses the defaults (proxy from the environment, dial and
-// handshake timeouts). It has no timeout: callers bound each request.
+// bundle, and checking ratd as package mtls does, the CRL of its CA on every request (see
+// revocationTransport). Its transport is its own, cloned from the default one: setting the
+// configuration on http.DefaultTransport would change a global of the process, and a bare
+// http.Transport loses the defaults (proxy from the environment, dial and handshake timeouts). It
+// has no timeout: callers bound each request.
 func HTTPClient(side *mtls.Side) (*http.Client, error) {
 	config, err := mtls.ClientConfig(side)
 	if err != nil {
@@ -25,7 +26,48 @@ func HTTPClient(side *mtls.Side) (*http.Client, error) {
 	}
 	transport := defaultTransport.Clone()
 	transport.TLSClientConfig = config
-	return &http.Client{Transport: transport}, nil
+	// The connections kept idle were checked against the CRL held before: the next request
+	// checks ratd against the new one during its handshake, rather than after its response.
+	side.OnCRL(mtls.CRLEvents{Fetched: func(*mtls.CRL) { transport.CloseIdleConnections() }})
+	return &http.Client{Transport: &revocationTransport{side: side, next: transport}}, nil
+}
+
+// revocationTransport checks the CRL of the CA of side around every request, as ratd does: a
+// connection kept alive outlives the check of its handshake, and a client calling more often
+// than the idle timeout keeps it for hours. Before the request, it gets the CRL (mtls.Side.CRL),
+// which refreshes it, refusing the request without a valid one, or with the client revoked. After
+// the response, it checks the certificate of ratd on the connection used, dropping the response
+// of a ratd revoked since its handshake.
+type revocationTransport struct {
+	side *mtls.Side
+	next *http.Transport
+}
+
+func (t *revocationTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if _, err := t.side.CRL(req.Context()); err != nil {
+		// a RoundTripper closes the body of the request, even when failing
+		if req.Body != nil {
+			_ = req.Body.Close()
+		}
+		return nil, err
+	}
+	resp, err := t.next.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
+		if err = t.side.CheckRevoked(req.Context(), resp.TLS.PeerCertificates[0]); err != nil {
+			_ = resp.Body.Close()
+			t.next.CloseIdleConnections()
+			return nil, err
+		}
+	}
+	return resp, nil
+}
+
+// CloseIdleConnections closes the connections kept idle, for http.Client.CloseIdleConnections.
+func (t *revocationTransport) CloseIdleConnections() {
+	t.next.CloseIdleConnections()
 }
 
 // Transport returns the transport of an MCP client of the Go SDK reaching the ratd at server
