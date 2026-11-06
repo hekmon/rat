@@ -6,7 +6,8 @@ terminals rely on. What RAT is, and how to try it, are in the [README](README.md
 - [Deployment](#deployment): [Linux, with systemd](#linux-with-systemd) ·
   [macOS, with launchd](#macos-with-launchd)
 - [Security](#security): [Mutual TLS](#mutual-tls) ·
-  [A sub CA of your PKI](#a-sub-ca-of-your-pki) · [Deploying safely](#deploying-safely)
+  [A bundle of rat-tool](#a-bundle-of-rat-tool) · [A sub CA of your PKI](#a-sub-ca-of-your-pki) ·
+  [Deploying safely](#deploying-safely)
 - [Your shell configuration](#your-shell-configuration)
 
 ## Deployment
@@ -185,49 +186,61 @@ systemd, it also stops what agents detached from their terminals (on macOS, see 
 
 TLS is what HTTPS uses: the connection is encrypted, and the client checks the certificate of the
 server, to know it talks to the right one. With mutual TLS, the server checks a certificate of the
-client as well: ratd only talks to clients presenting a certificate of the bundle of its tenant.
-Any other connection is cut during the handshake, before a single request reaches ratd: there is
-no login page, no password to guess, nothing to try.
+client as well: ratd only talks to clients presenting a certificate issued by the CA of its
+tenant. Any other connection is cut during the handshake, before a single request reaches ratd:
+there is no login page, no password to guess, nothing to try.
 
 It protects as SSH keys do, and in the same way: each side holds a private key that never leaves
 it, and proves it holds it at each connection. A client key is to ratd what an SSH private key is
-to a server; the bundle stands for `authorized_keys`, but closed:
+to a server; the CA of the tenant stands for `authorized_keys`, the certificates it issued being
+the keys listed:
 
-- **Nothing on the server lets a client in.** ratd holds its own key and the certificate of the
-  bundle's authority, which is public. The key of that authority existed only while generating
-  the bundle, and was never written: no one can issue a certificate afterwards, not even someone
-  controlling the server. Nor does the certificate of ratd stand for a client: each certificate
-  carries one extended key usage, server or client authentication, which each side requires of
-  its peer (`openssl x509 -in server.crt -noout -text` shows it). A password or an API key would
-  instead travel with every request and, kept in clear, sit next to the terminals, readable by
-  the agents running there.
+- **Nothing travels that would let a client in.** A password or an API key would travel with
+  every request and, kept in clear, sit next to the terminals, readable by the agents running
+  there. ratd holds its own key and the certificate of the CA, which is public.
+- **One role per certificate.** Each certificate carries one extended key usage, server or client
+  authentication, which each side requires of its peer: the certificate of ratd does not stand
+  for a client (`openssl x509 -in server.crt -noout -text` shows it).
 - **Modern and fixed:** TLS 1.3 only, with keys that change at each connection (what is captured
-  today can not be decrypted with a key stolen tomorrow), ECDSA P-256 certificates.
+  today can not be decrypted with a key stolen tomorrow).
 - **On every address, loopback included**: other users of the machine reach loopback too.
-- **Revoking is generating a new bundle**, and deploying it: a bundle is closed, no certificate
-  can be added to it nor removed from it. Certificates are valid 10 years, and every side warns
-  once less than one remains. This holds for the server key too, which the agents can read (see
-  Deploying safely).
 
-Unlike HTTPS on the web, the client does not check the name of the host it reaches: certificates
-carry no address, as both sides know each other beforehand, and presenting the certificate of the
-bundle proves being its ratd, wherever it is reached (a tunnel, another address). Most harnesses
-can not accept this, nor present a certificate: the rat stdio bridge does it for them. And unlike
-SSH, no session is tied to a connection: the terminals keep running whether agents are connected
-or not, until the service stops.
+Unlike HTTPS on the web, the client does not check the name of the host it reaches: the CA is the
+tenant's alone, and a certificate it issued for server authentication proves being its ratd,
+wherever it is reached (a tunnel, another address). Most harnesses can not accept this, nor
+present a certificate: the rat stdio bridge does it for them. And unlike SSH, no session is tied
+to a connection: the terminals keep running whether agents are connected or not, until the
+service stops.
+
+The CA of a tenant is a bundle that rat-tool generates, standing alone, or a sub CA of your PKI.
+
+### A bundle of rat-tool
+
+A bundle is closed: its CA signed the certificates of the server and of the clients, generated
+together, and its key was never written.
+
+- **Nobody can issue a certificate afterwards**, not even someone controlling the server: nothing
+  on the server lets a client in.
+- **Revoking is generating a new bundle**, and deploying it: no certificate can be added to it
+  nor removed from it, adding a client included. This holds for the server key too, which the
+  agents can read (see Deploying safely).
+- **ECDSA P-256 certificates, valid 10 years**: every side warns once less than a year remains.
+- **Nothing beside rat**: no PKI to run, no CRL, nothing fetched.
 
 ### A sub CA of your PKI
 
-The bundles of `rat-tool` stand alone: their CA is a root of its own, whose key was never written.
-When your organization runs a PKI, a sub CA of it can take that place: its certificates fill the
-same directories, ratd and rat check them the same way, and your PKI issues them. A client is
-added by issuing its certificate, with nothing to deploy to ratd or to the other clients.
+When your organization runs a PKI, a sub CA of it can take the place of the CA of a bundle: its
+certificates fill the same directories, ratd and rat check them the same way, and your PKI issues
+them. A client is added by issuing its certificate, with nothing to deploy to ratd or to the other
+clients; certificates are revoked with a CRL, and renewed without a restart.
 
 The guarantee of a closed bundle goes: whoever can use the key of the sub CA, in your PKI, can
 issue themselves a shell as the user running ratd. And the sub CA is rat's alone, one per tenant,
 never your root nor an issuing CA shared with other uses: ratd lets in every certificate it signs
-for client authentication, and clients, checking no host name, take for ratd every certificate
-it signs for server authentication.
+for client authentication, and clients take for ratd every certificate it signs for server
+authentication.
+
+#### What rat checks
 
 Its certificates follow the rules of a bundle, which `rat-tool bundle inspect` checks as ratd and
 rat do:
@@ -241,6 +254,33 @@ rat do:
   client, never both (extended key usage).
 - **No address needed:** the server certificate may carry DNS names or IP addresses, clients do
   not check them.
+- **A CRL distribution point over http or https**, in every certificate or in none (see
+  Revocation).
+
+As openssl extension sections, for the sub CA of tenant `prod` and its two templates:
+
+```ini
+# the sub CA of tenant prod: CN=prod, the rest of its subject yours
+[ rat_ca ]
+basicConstraints = critical, CA:true, pathlen:0
+keyUsage         = critical, keyCertSign, cRLSign
+
+# the server certificate of ratd: CN=prod
+[ rat_server ]
+basicConstraints      = critical, CA:false
+keyUsage              = critical, digitalSignature
+extendedKeyUsage      = serverAuth
+crlDistributionPoints = URI:http://pki.example.com/rat-prod.crl
+
+# a client certificate: CN=alice, its session
+[ rat_client ]
+basicConstraints      = critical, CA:false
+keyUsage              = critical, digitalSignature
+extendedKeyUsage      = clientAuth
+crlDistributionPoints = URI:http://pki.example.com/rat-prod.crl
+```
+
+#### Files
 
 Each directory holds the files of a bundle: `ca.crt`, the sub CA alone (not the chain up to your
 root, as every certificate of the file would be trusted), and the certificate and key of its
@@ -254,30 +294,47 @@ openssl pkcs12 -in alice.pfx -nocerts -nodes | openssl pkcs8 -topk8 -nocrypt -ou
 chmod 600 client.key
 ```
 
-A sub CA revokes certificates with its CRL, which ratd and rat fetch from the CRL distribution
-point of their own certificate, over http or https (AD CS lists an LDAP one first: add one over
-http). A certificate naming none revokes nothing: name it in every template of the sub CA, as a
-side whose certificate names none refuses a peer whose certificate names one, the CA revoking
-what it can not check. `rat-tool bundle inspect` tells, offline, where each directory fetches
-its CRL from, or that it names none. ratd fetches it while starting, and refuses to start
-without a valid one; rat fetches it at its first request. Both fetch it again as they are used,
-every 15 minutes, in the background, and at once when the CRL they hold is stale, refusing
-everything while they can have no valid one: after a sleep, or an outage of your PKI longer than
-the validity of its CRL. A fetch failing is a warning in their logs, and in the status of ratd:
+#### Revocation
 
+ratd and rat fetch the CRL of the sub CA from the CRL distribution point of their own
+certificate, over http or https: AD CS lists an LDAP one first, add one over http. A certificate
+naming none revokes nothing: name it in every template of the sub CA, as a side whose certificate
+names none refuses a peer whose certificate names one, the CA revoking what it can not check.
+`rat-tool bundle inspect` tells, offline, where each directory fetches its CRL from, or that it
+names none.
+
+ratd fetches it while starting, and refuses to start without a valid one; rat at its first
+request. Both fetch it again as they are used, every 15 minutes in the background, and at once
+when the CRL they hold is stale.
+
+- **Reachable from every side.** The CRL is fetched by ratd, and by rat on every machine running a
+  harness, through the proxy of their environment if any (`HTTPS_PROXY`, `HTTP_PROXY`): a laptop
+  off the VPN refuses every request once the CRL it holds goes stale.
+- **Failing closed.** A side refuses everything while it can have no valid CRL: an outage of your
+  PKI longer than the validity of its CRL cuts every agent. A fetch failing is a warning in the
+  logs, and in the status of ratd, with when the CRL held goes stale: CRLs valid for days, and
+  published daily, leave time to act.
 - **Revoking a client** cuts it at its next request: ratd checks every request, the answer
   telling the client why. Its terminals keep running: stop them, or the service, as needed.
 - **Revoking the server certificate** makes every client refuse that ratd: a server key copied off
   the machine is revoked with its certificate. Issue the server a new certificate, under the same
   sub CA: the clients keep theirs.
 
-Renewing a certificate takes no restart: replace the files of its directory, and ratd and rat use
-them from their next connection on, the terminals and the calls in flight untouched. The renewed
-certificate must be of the same sub CA and name, its key new or not: a new key is a warning in
-their logs, and in the status of ratd for a day, for you to see a key you did not rotate. Files
-refused (another CA, another name, a check failing) are a warning, the certificate in use kept.
-A new sub CA takes a restart of ratd and of the harnesses, and is to be deployed to every
-client.
+#### Renewal
+
+Certificates of your PKI, valid a year or less, warn in the last tenth of their validity,
+telling what to issue again. Renewing a certificate takes no restart: replace the files of its
+directory, and ratd and rat use them from their next connection on, the terminals and the calls
+in flight untouched. The renewed certificate must be of the same sub CA and name, its key new or
+not: a new key is a warning in their logs, and in the status of ratd for a day, for you to see a
+key you did not rotate. Files refused (another CA, another name, a check failing) are a warning,
+the certificate in use kept. A new sub CA takes a restart of ratd and of the harnesses, and is
+to be deployed to every client.
+
+Write the files of a renewal next to the old ones, then rename them in place (`mv`): the key
+owned by the user of ratd, mode 600, as ratd refuses a key readable by others, the certificates
+root's (see Deployment). The key and the certificate renamed one after the other may be seen
+apart: refused, then taken at the next change, a warning and nothing broken.
 
 ### Deploying safely
 
