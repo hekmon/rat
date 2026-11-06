@@ -80,8 +80,9 @@ journalctl -u ratd-prod -f
 - **The kill switch.** `systemctl stop ratd-prod` stops ratd, its endpoint first, the terminals
   and the commands they run, and whatever else is left in the service: commands detached from
   their terminals included (measured with systemd 252: a `nohup` command started by an agent is
-  gone). Keep `KillMode=control-group`: started by hand, ratd can not stop what detached from its
-  terminals.
+  gone; with systemd 255 and tmux 3.4 too, whose panes ratd keeps in the service, see
+  [`tmux/README.md`](tmux/README.md)). Keep `KillMode=control-group`: started by hand, ratd can
+  not stop what detached from its terminals.
 - **No `Restart=`, on purpose.** ratd restarts its terminals when they die, and only exits when
   it can not keep them up: the service then shows as failed, for whoever monitors it.
 - **Resources are bounded by the service, not by ratd.** Whoever calls ratd has a shell: a loop

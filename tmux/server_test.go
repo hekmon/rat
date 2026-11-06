@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -364,6 +365,77 @@ func TestServerOptions(t *testing.T) {
 		if !slices.Contains(variables, variable+"="+expected) {
 			t.Errorf("expected %s=%s in the environment of terminals", variable, expected)
 		}
+	}
+}
+
+// TestServerUserBusHidden guards that the server process runs without the variables naming the user
+// bus (userBusEnvironment), which terminals get all the same: tmux 3.4 and later built with systemd
+// move each pane into a scope of the user manager when its server can reach that bus, out of the
+// control group of rat's service, whose stop then leaves detached commands running. The variables
+// are the real ones when set, for a tmux that moves panes to try (it fails then on the cgroup of
+// the pane, without the fix), harmless ones otherwise. The server environment and the cgroup are
+// read from /proc: Linux only, as is systemd.
+func TestServerUserBusHidden(t *testing.T) {
+	values := map[string]string{"DBUS_SESSION_BUS_ADDRESS": "unix:path=/nonexistent/bus", "XDG_RUNTIME_DIR": t.TempDir()}
+	for _, name := range userBusEnvironment {
+		if value, ok := os.LookupEnv(name); ok {
+			values[name] = value
+		}
+		t.Setenv(name, values[name])
+	}
+	c := newTestController(t, "userbus")
+	if err := c.StartServer(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// a terminal writing its environment, renamed once whole, then staying, for its cgroup
+	dir := t.TempDir()
+	environment, written := filepath.Join(dir, "environment"), filepath.Join(dir, "written")
+	if _, err := c.run(context.Background(), "new-session", "-d", "-s", "userbus", "-n", "w",
+		"env > "+shellQuote(written)+" && mv "+shellQuote(written)+" "+shellQuote(environment)+"; exec sleep 60"); err != nil {
+		t.Fatal(err)
+	}
+	var variables []string
+	eventually(t, "environment written", func() (bool, string) {
+		data, err := os.ReadFile(environment)
+		variables = strings.Split(string(data), "\n")
+		return err == nil, fmt.Sprint(err)
+	})
+	for name, value := range values {
+		if !slices.Contains(variables, name+"="+value) {
+			t.Errorf("expected %s=%s in the environment of terminals", name, value)
+		}
+	}
+	if runtime.GOOS != "linux" {
+		return
+	}
+	server := strconv.Itoa(c.server.cmd.Process.Pid)
+	data, err := os.ReadFile(filepath.Join("/proc", server, "environ"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for variable := range strings.SplitSeq(string(data), "\x00") {
+		name, _, _ := strings.Cut(variable, "=")
+		if slices.Contains(userBusEnvironment, name) {
+			t.Errorf("expected no %s in the environment of the server process, got %s", name, variable)
+		}
+	}
+	// tmux 3.4 and 3.5 move a pane once forked, from the server, its child running meanwhile
+	time.Sleep(500 * time.Millisecond)
+	out, err := c.run(context.Background(), "display-message", "-p", "-t", target("userbus", "w"), "#{pane_pid}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane := strings.TrimSpace(out)
+	serverGroup, err := os.ReadFile(filepath.Join("/proc", server, "cgroup"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	paneGroup, err := os.ReadFile(filepath.Join("/proc", pane, "cgroup"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(paneGroup) != string(serverGroup) {
+		t.Errorf("expected the pane in the control group of the server, %q, got %q", serverGroup, paneGroup)
 	}
 }
 

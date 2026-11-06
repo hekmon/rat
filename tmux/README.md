@@ -292,6 +292,35 @@ default server instead: an agent typing `tmux kill-server` would kill the user's
 and a plain `tmux` would open a tmux nested in its terminal, which tmux refuses as long as
 `TMUX` is set.
 
+### Panes stay in rat's control group
+
+Built with systemd, tmux 3.4 and later move each new pane into a scope of its own
+(`tmux-spawn-<uuid>.scope`, for systemd-oomd), asking the systemd user manager over the user bus.
+Out of the control group of rat's service, a pane escapes its stop: `systemctl stop` stops ratd,
+which stops tmux and the bash of each window, but leaves running what agents detached from their
+terminals (`nohup`, `setsid`), and the limits of the service (`TasksMax=`, `MemoryMax=`) no longer
+bound the terminals. Measured with the tmux 3.4 of Ubuntu 24.04, ratd run as a user service
+(`systemd-run --user`): both detached commands survived the stop, in their scope. Packaged so: Ubuntu
+24.04 (3.4), Debian 13 (3.5a), Fedora and Arch (3.8); not Debian 12 (3.3a, before it) nor Alpine (no
+systemd). tmux has no option to turn it off, only a build flag (`--disable-cgroups`).
+
+tmux connects to the user bus with libsystemd, which finds it from `DBUS_SESSION_BUS_ADDRESS`,
+else from `XDG_RUNTIME_DIR`, read from the process environment, and gives up without both (systemd
+v255 to its current source). A service of the system with `User=` gets neither, unless it sets them
+or goes through PAM (`PAMName=`); a user service, or ratd started from a session, gets both. So the
+server runs without them (`userBusEnvironment`), and gives them back to terminals with
+`set-environment`, where `systemctl --user` needs them: tmux moves a pane from the environment of
+its server process, which it only changes in its children (panes, jobs), never from the one it gives
+the pane, even from 3.6 on, where the move runs in the child of the pane, before its environment is
+set (`spawn.c`). Measured with tmux 3.4: the pane stays in the control group of the server, with
+both variables, and a user service stops the commands its agents detached. `TestServerUserBusHidden`
+guards it.
+
+Rejected: removing them from terminals too, which would leave a user service without
+`systemctl --user` in its terminals, and terminals differing from the environment of their user;
+checking at startup that panes share ratd's control group, which needs a pane ratd does not create
+at startup, and races the move of tmux 3.4 and 3.5, made from the server once the pane runs.
+
 ## Targets and names
 
 ### Exact targets, never IDs

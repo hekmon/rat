@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -227,6 +228,14 @@ var terminalEnvironment = [][2]string{
 	{"SYSTEMD_PAGER", "cat"},
 }
 
+// userBusEnvironment are the variables naming the user bus of systemd, which the server process
+// runs without, and which StartServer gives terminals back: tmux 3.4 and later built with systemd
+// move each new pane into a scope of the user manager when its server can reach that bus (for
+// systemd-oomd), out of the control group of rat's service. Stopping the service would then leave
+// what the agents detached from their terminals running. libsystemd finds the user bus from these
+// two only, in the process environment, which tmux never changes but in its children.
+var userBusEnvironment = []string{"DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"}
+
 // windowKeys are the keys moving between the windows of a session (C-b n, p, l, 0 to 9), each with
 // the window it targets, bound to switch-client rather than to the tmux defaults (next-window,
 // previous-window, last-window, select-window): a human watching read-only (attach -r) only gets
@@ -261,6 +270,9 @@ func fixedSize(target string) []string {
 // installed (the returned error then wraps exec.ErrNotFound) in version bashMinVersion or later
 // (the error then wraps ErrUnsupportedBash). It refuses a socket another server answers on,
 // leaving that server untouched: the error then wraps ErrServerSocketInUse, with its PID.
+// The server process runs without the user bus of systemd (userBusEnvironment), which terminals
+// get all the same: its terminals and what they start stay in the control group of the caller,
+// for a service manager stopping it to stop them too.
 func (c *Controller) StartServer(ctx context.Context) (err error) {
 	defer c.serverAction.Unlock()
 	c.serverAction.Lock()
@@ -285,6 +297,12 @@ func (c *Controller) StartServer(ctx context.Context) (err error) {
 	p := &serverProcess{}
 	p.ctx, p.cancel = context.WithCancel(ctx)
 	p.cmd = c.cmd(p.ctx, []string{"-D"})
+	// Without the user bus, which terminals get back once it is ready: tmux would move each pane out
+	// of the control group of rat's service (see userBusEnvironment).
+	p.cmd.Env = slices.DeleteFunc(os.Environ(), func(variable string) bool {
+		name, _, _ := strings.Cut(variable, "=")
+		return slices.Contains(userBusEnvironment, name)
+	})
 	p.cmd.Cancel = func() error {
 		// let tmux clean up (socket, clients) before resorting to SIGKILL
 		return p.cmd.Process.Signal(syscall.SIGTERM)
@@ -395,6 +413,14 @@ readiness:
 	}
 	for _, variable := range terminalEnvironment {
 		args = append(args, "set-environment", "-g", variable[0], variable[1], ";")
+	}
+	// The user bus the server runs without, for terminals to keep it (systemctl --user): tmux moves a
+	// pane from the environment of its server process, never from the one it gives the pane.
+	for _, name := range userBusEnvironment {
+		if value, ok := os.LookupEnv(name); ok {
+			// from rat's environment: a value ending with ';' would end the command
+			args = append(args, "set-environment", "-g", name, tmuxArg(value), ";")
+		}
 	}
 	for _, key := range windowKeys {
 		args = append(args, "bind-key", "-T", "prefix", key[0], "switch-client", "-t", key[1], ";")
