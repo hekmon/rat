@@ -82,7 +82,8 @@ ratd at host:7281 serves this client.
 ```
 
 It calls no tool: listing windows, for instance, would create the session. Its exit code is not
-zero on failure, for scripts. It warns once less than a year of validity remains.
+zero on failure, for scripts. It warns in the last tenth of the validity, a year for a bundle
+(see Expiry in `mtls/README.md`).
 
 It is written with the `Client` of the Go SDK and package `connect`, as a harness author would:
 it checks that ratd stays a standard MCP server, where rat talks to ratd through a relay of its

@@ -22,9 +22,10 @@ harness command line is checked by copying it, with the same names and the same 
 
 At startup, rat loads and checks its client directory (key matching the certificate, CA, role,
 validity, name, see package `mtls`): a failure is written on stderr before it exits, and the
-harness shows a server that failed to start. It warns on stderr once less than a year of
-validity remains. It does not contact ratd before the first message: a ratd briefly down does
-not fail the startup of the harness, the first request tells.
+harness shows a server that failed to start. It warns on stderr in the last tenth of the
+validity, a year for a bundle (see Expiry in `mtls/README.md`). It does not contact ratd before
+the first message: a ratd briefly down does not fail the startup of the harness, the first
+request tells.
 
 ## Relay
 

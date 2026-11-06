@@ -267,21 +267,23 @@ func TestErrorLog(t *testing.T) {
 	}
 }
 
-// TestWarnExpiry guards that ratd warns of a bundle expiring within a year, and only then.
+// TestWarnExpiry guards that ratd warns of a bundle expiring soon (mtls.Side.ExpiresSoon), and only
+// then: here a certificate valid for a year, warned of 30 days before it expires, not 100.
 func TestWarnExpiry(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // a single check
+	day := 24 * time.Hour
 	for _, tc := range []struct {
 		left time.Duration
 		warn bool
-	}{{100 * 24 * time.Hour, true}, {2 * mtls.ExpiryWarning, false}} {
-		expiry := &x509.Certificate{NotAfter: time.Now().Add(tc.left)}
+	}{{30 * day, true}, {100 * day, false}} {
+		expiry := &x509.Certificate{NotBefore: time.Now().Add(tc.left - 365*day), NotAfter: time.Now().Add(tc.left)}
 		side := &mtls.Side{CA: expiry, Certificate: tls.Certificate{Leaf: expiry}}
 		logs := &logBuffer{}
 		logger := slog.New(slog.NewTextHandler(logs, nil))
 		s := newStatus(logger)
 		warnExpiry(ctx, logger, side, s)
-		if warned := strings.Contains(logs.String(), "expires within a year"); warned != tc.warn {
+		if warned := strings.Contains(logs.String(), "expires soon"); warned != tc.warn {
 			t.Errorf("%s left: expected a warning %v, got:\n%s", tc.left, tc.warn, logs)
 		}
 		if told := s.expiry.Equal(expiry.NotAfter); told != tc.warn {

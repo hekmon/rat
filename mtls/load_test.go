@@ -1,10 +1,13 @@
 package mtls
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -180,5 +183,50 @@ func TestLoadNames(t *testing.T) {
 		if _, err = load(dir, now); !errors.Is(err, names.ErrInvalid) || checkOf(err) != len(Checks())-1 {
 			t.Errorf("tenant %q, %s %q: expected names.ErrInvalid, the last check, got %v", tc.tenant, tc.role, tc.name, err)
 		}
+	}
+}
+
+// TestExpiresSoon guards when the holders of a side warn of its expiry: in the last tenth of the
+// validity of whichever of its certificate and CA expires first, a year for a bundle, and not
+// from the first day of a certificate valid for a year, as another PKI issues them. The warning
+// names what expires first, and what to do.
+func TestExpiresSoon(t *testing.T) {
+	now := time.Now()
+	day, year := 24*time.Hour, 365*24*time.Hour
+	// a certificate valid from since ago, for validity, its issuer named issuer
+	cert := func(subject, issuer string, since, validity time.Duration) *x509.Certificate {
+		return &x509.Certificate{RawSubject: []byte(subject), RawIssuer: []byte(issuer),
+			NotBefore: now.Add(-since), NotAfter: now.Add(-since + validity)}
+	}
+	side := func(role Role, ca, leaf *x509.Certificate) *Side {
+		return &Side{Role: role, CA: ca, Certificate: tls.Certificate{Leaf: leaf}}
+	}
+	for _, tc := range []struct {
+		name    string
+		side    *Side
+		soon    bool
+		warning string
+	}{
+		{"bundle, new", side(Client, cert("ca", "ca", day, 10*year), cert("alice", "ca", day, 10*year)), false, ""},
+		{"bundle, 2 years left", side(Client, cert("ca", "ca", 8*year, 10*year), cert("alice", "ca", 8*year, 10*year)), false, ""},
+		{"bundle, half a year left", side(Server, cert("ca", "ca", 9*year+year/2, 10*year), cert("t", "ca", 9*year+year/2, 10*year)),
+			true, "the bundle expires soon"},
+		// warned of from its first day with a fixed year
+		{"client of a year, new", side(Client, cert("sub", "root", year, 5*year), cert("alice", "sub", day, year)), false, ""},
+		{"client of a year, 25 days left", side(Client, cert("sub", "root", year, 5*year), cert("alice", "sub", 340*day, year)),
+			true, "the client certificate expires soon"},
+		{"server of a year, 25 days left", side(Server, cert("sub", "root", year, 5*year), cert("t", "sub", 340*day, year)),
+			true, "the server certificate expires soon"},
+		{"sub CA expiring first", side(Client, cert("sub", "root", 2*year-30*day, 2*year), cert("alice", "sub", day, year)),
+			true, "the sub CA expires soon"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if soon := tc.side.ExpiresSoon(now); soon != tc.soon {
+				t.Errorf("expected expiring soon %v, got %v", tc.soon, soon)
+			}
+			if tc.soon && !strings.HasPrefix(tc.side.ExpiryWarning(), tc.warning) {
+				t.Errorf("expected a warning starting with %q, got %q", tc.warning, tc.side.ExpiryWarning())
+			}
+		})
 	}
 }

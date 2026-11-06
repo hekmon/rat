@@ -167,9 +167,8 @@ func inspectSide(out io.Writer, dir string) *mtls.Side {
 	}
 	fmt.Fprintf(out, "  CA fingerprint %s\n", mtls.Fingerprint(side.CA))
 	fmt.Fprintf(out, "  valid until %s\n", validity(side.NotAfter()))
-	if time.Until(side.NotAfter()) < mtls.ExpiryWarning {
-		fmt.Fprintln(out, "  WARNING: less than a year left: an expired bundle stops every client at once, "+
-			"generate a new one and deploy it to every side")
+	if side.ExpiresSoon(time.Now()) {
+		fmt.Fprintln(out, "  WARNING: "+side.ExpiryWarning())
 	}
 	return side
 }

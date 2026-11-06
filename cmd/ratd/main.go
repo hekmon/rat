@@ -43,7 +43,7 @@ func printExitError(logs io.Writer, err error) {
 // fails on machines with IPv6 disabled.
 const defaultListen = ":" + connect.DefaultPort
 
-// expiryCheckInterval is how often ratd checks whether its bundle expires within a year.
+// expiryCheckInterval is how often ratd checks whether its bundle expires soon.
 const expiryCheckInterval = 24 * time.Hour
 
 // command returns the command line of ratd, logging to logs. A new one at each call: a command
@@ -175,16 +175,14 @@ func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int
 	return err
 }
 
-// warnExpiry warns now, then every day until ctx is done, if the bundle of side expires within a
-// year: an expired bundle stops every client at once, years after anyone remembers how it was
-// made. Sysadmins need reminding, often: the expiry is told to status as well.
+// warnExpiry warns now, then every day until ctx is done, if the bundle of side expires soon
+// (mtls.Side.ExpiresSoon): sysadmins need reminding, often. The expiry is told to status as well.
 func warnExpiry(ctx context.Context, logger *slog.Logger, side *mtls.Side, status *status) {
 	ticker := time.NewTicker(expiryCheckInterval)
 	defer ticker.Stop()
 	for {
-		if left := time.Until(side.NotAfter()); left < mtls.ExpiryWarning {
-			logger.Warn("the bundle expires within a year: an expired bundle stops every client at once, "+
-				"generate a new one and deploy it to every side", "expiry", side.NotAfter(), "days_left", int(left.Hours()/24))
+		if side.ExpiresSoon(time.Now()) {
+			logger.Warn(side.ExpiryWarning(), "expiry", side.NotAfter(), "days_left", int(time.Until(side.NotAfter()).Hours()/24))
 			status.expires(side.NotAfter())
 		}
 		select {

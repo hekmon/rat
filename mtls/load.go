@@ -80,10 +80,41 @@ type Side struct {
 // NotAfter returns when the side stops working: the expiry of its certificate or of the CA,
 // whichever comes first.
 func (s *Side) NotAfter() time.Time {
-	if s.CA.NotAfter.Before(s.Certificate.Leaf.NotAfter) {
-		return s.CA.NotAfter
+	return s.expiresFirst().NotAfter
+}
+
+// ExpiresSoon reports whether the side is, at now, in the last tenth of the validity of whichever
+// of its certificate or CA expires first: when its holders warn ([Side.ExpiryWarning]). An
+// expired side stops working, long after anyone remembers how it was made: sysadmins need
+// reminding, often, but not from the first day of a certificate valid for a year.
+func (s *Side) ExpiresSoon(now time.Time) bool {
+	c := s.expiresFirst()
+	return c.NotAfter.Sub(now) < c.NotAfter.Sub(c.NotBefore)/expiryWarningShare
+}
+
+// ExpiryWarning tells, for humans, what expires first, what stops with it, and what to do about
+// it, once the side expires soon ([Side.ExpiresSoon]).
+func (s *Side) ExpiryWarning() string {
+	switch {
+	// A CA signing itself is the root of a bundle, whose certificates all expire together: a sub
+	// CA of another PKI is not one.
+	case bytes.Equal(s.CA.RawIssuer, s.CA.RawSubject):
+		return "the bundle expires soon: an expired bundle stops every client at once, generate a new one and deploy it to every side"
+	case s.expiresFirst() == s.CA:
+		return "the sub CA expires soon, and every certificate it signed with it: renew it in your PKI, and deploy it to every side"
+	case s.Role == Server:
+		return "the server certificate expires soon: every client will refuse ratd, issue it again in your PKI"
+	default:
+		return "the client certificate expires soon: ratd will refuse this client, issue it again in your PKI"
 	}
-	return s.Certificate.Leaf.NotAfter
+}
+
+// expiresFirst returns whichever of the certificate of the side and its CA expires first.
+func (s *Side) expiresFirst() *x509.Certificate {
+	if s.CA.NotAfter.Before(s.Certificate.Leaf.NotAfter) {
+		return s.CA
+	}
+	return s.Certificate.Leaf
 }
 
 // Load reads the directory of a side of a bundle, and checks it, to fail when starting rather than

@@ -64,9 +64,8 @@ func run(ctx context.Context, logger *slog.Logger, target flags.Target, stdin io
 	if side.Role != mtls.Client {
 		return fmt.Errorf("bundle: %w: %s is the directory of the server, not of a client", mtls.ErrRole, target.Bundle)
 	}
-	if left := time.Until(side.NotAfter()); left < mtls.ExpiryWarning {
-		logger.Warn("the bundle expires within a year: an expired bundle stops every client at once, "+
-			"generate a new one and deploy it to every side", "expiry", side.NotAfter(), "days_left", int(left.Hours()/24))
+	if side.ExpiresSoon(time.Now()) {
+		logger.Warn(side.ExpiryWarning(), "expiry", side.NotAfter(), "days_left", int(time.Until(side.NotAfter()).Hours()/24))
 	}
 	client, err := connect.HTTPClient(side)
 	if err != nil {

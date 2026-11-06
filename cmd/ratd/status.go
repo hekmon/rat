@@ -77,7 +77,7 @@ type status struct {
 	serving string
 	// degraded holds the degradations found
 	degraded [degradations]bool
-	// expiry is when the bundle expires, once it does within a year (see warnExpiry)
+	// expiry is when the bundle expires, once it does soon (see warnExpiry)
 	expiry time.Time
 	// deaths are the times the tmux server died on its own, shown for deathWindow
 	deaths      []time.Time
@@ -130,7 +130,7 @@ func (s *status) degrade(found ...degradation) {
 	s.tell(time.Now())
 }
 
-// expires records that the bundle expires at expiry, within a year, and tells systemd at once.
+// expires records that the bundle expires at expiry, soon, and tells systemd at once.
 func (s *status) expires(expiry time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

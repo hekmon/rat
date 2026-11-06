@@ -51,8 +51,8 @@ Rejected:
   too. Its cost: a file of the server that its user must not write, a reload in ratd, a check on
   every request (connections kept alive outlive a check at the handshake), and what to do with
   the terminals of the client revoked.
-- **A short validity**: a bundle expiring stops every client at once, the warnings a year ahead
-  would start with it, and a key leaked stays valid until then, long enough to be used.
+- **A short validity**: a bundle expiring stops every client at once, a short validity makes it
+  frequent, and a key leaked stays valid until then, long enough to be used.
 
 ## A sub CA of another PKI
 
@@ -193,9 +193,17 @@ any user could create first to block the tenant.
 ## Expiry
 
 An expired bundle stops every client at once, years after anyone remembers how it was made.
-Every side warns once less than a year remains: ratd at startup and every day, rat at startup
-(on its stderr, which harnesses log), rat-tool when inspecting a bundle or checking a ratd.
-Sysadmins need reminding, often.
+Every side warns in the last tenth of the validity of whichever of its certificate and CA expires
+first: ratd at startup and every day, rat at startup (on its stderr, which harnesses log),
+rat-tool when inspecting a bundle or checking a ratd. Sysadmins need reminding, often.
+
+A tenth is a year for a bundle. A sub CA of another PKI issues certificates valid for a year or
+less, which a fixed year would warn of from their first day, until nobody reads the warning: a
+tenth still leaves weeks to act. The warning tells what expires first and what to do: a bundle
+is generated again, a certificate of another PKI issued again by it.
+
+Rejected: a fixed delay, a year or a month, too early for one kind of certificate or too late for
+the other.
 
 ## One directory per side
 

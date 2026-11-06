@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // Role is what a certificate authenticates, carried by its extended key usage: ratd, or one of its
@@ -65,9 +64,11 @@ func CertificateFiles(dir string, role Role) []string {
 	return []string{filepath.Join(dir, caFile), filepath.Join(dir, certFile(role))}
 }
 
-// ExpiryWarning is how long before a bundle expires its sides warn about it: an expired bundle
-// stops every client at once, years after anyone remembers how it was made.
-const ExpiryWarning = 365 * 24 * time.Hour
+// expiryWarningShare is the share of its validity left when a side starts warning of its expiry,
+// its inverse: a tenth is a year for the 10 years of a bundle, and still leaves time to act on a
+// certificate valid for a year or less, as another PKI issues them, without warning from its
+// first day.
+const expiryWarningShare = 10
 
 // Fingerprint returns the SHA-256 fingerprint of cert, as openssl prints it (colon separated
 // uppercase hex). The fingerprint of its CA identifies a bundle.

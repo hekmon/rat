@@ -637,8 +637,9 @@ report how they exit to that socket (`EXIT_STATUS=`, `ERRNO=`, measured with sys
 (Ubuntu), would reach systemd, which drops what is not from ratd (`NotifyAccess=main`, the default
 of `Type=notify`) with a warning in ratd's journal each time, burying ratd's own.
 
-When less than a year of validity remains on the bundle, ratd warns at startup and every 24 hours:
-sysadmins need reminding, an expired bundle stops every client at once.
+In the last tenth of the validity of the bundle (a year, for one of rat-tool; see Expiry in
+`mtls/README.md`), ratd warns at startup and every 24 hours: sysadmins need reminding, an expired
+bundle stops every client at once.
 
 ### Status
 
@@ -654,7 +655,7 @@ serving tenant prod on [::]:7281 · bracketed paste overridden, bundle expires i
 - **Degradations**: known issues of a ratd serving all the same, logged once when found, and shown
   for as long as they hold, in a fixed order, with short labels (the log tells the details):
   running as root or a bundle its user can write (see Startup), what bash startup files defeat in
-  the terminals or the check not running, the bundle expiring within a year (updated daily), the
+  the terminals or the check not running, the bundle expiring soon (updated daily), the
   deaths of the tmux server within the window of its restart budget (gone once older). At most
   five at once: some exclude others. First in the line, should a terminal cut it.
 - **Last seen**, per session, the time of its last request, whatever the method: the five most
