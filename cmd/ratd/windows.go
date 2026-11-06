@@ -108,10 +108,15 @@ func describeWindow(w tmux.Window, now time.Time, terminals tmux.TerminalsCheck)
 		description += ", no prompt recorded yet: bash still starting, or its startup files replace PROMPT_COMMAND"
 	}
 	if terminals.Statuses && !w.Prompt.Time.IsZero() && w.Prompt.Status != tmux.NoStatus {
-		description += fmt.Sprintf(", last command exited with status %d", w.Prompt.Status)
-		if failure, failed := failedPipeline(w.Prompt); terminals.Pipelines && failed {
-			description += fmt.Sprintf(", %s with %s%s (statuses: %s)", failure.commands, failure.bare, failure.note,
-				failure.all)
+		if stop := stopSignals[w.Prompt.Status]; stop != "" {
+			description += fmt.Sprintf(", last command stopped with status %d (%s: fg resumes it, kill %%%% ends it)",
+				w.Prompt.Status, stop)
+		} else {
+			description += fmt.Sprintf(", last command exited with status %d", w.Prompt.Status)
+			if failure, failed := failedPipeline(w.Prompt); terminals.Pipelines && failed {
+				description += fmt.Sprintf(", %s with %s%s (statuses: %s)", failure.commands, failure.bare, failure.note,
+					failure.all)
+			}
 		}
 		description += fmt.Sprintf(" (%s ago)", sinceText(now.Sub(w.Prompt.Time)))
 	}

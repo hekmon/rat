@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -84,6 +86,26 @@ func TestWaitWindow(t *testing.T) {
 		!strings.Contains(out, "max_seconds=1") || !strings.Contains(out, "finished=false") {
 		t.Errorf("expected the waits to be logged:\n%s", out)
 	}
+}
+
+// TestWaitWindowStopped guards that a command stopped (C-z) is told as stopped, a job of its bash,
+// with how to resume or end it, by wait_window and list_windows: bash shows its prompt, with the
+// status 128 plus the signal stopping it, and told "finished" with that status, an agent pressing
+// C-z for C-c would take its command for failed, and leave it stopped.
+func TestWaitWindowStopped(t *testing.T) {
+	session, _, _, _ := connectTools(t, "test-ratd-stopped")
+	expectTool(t, session, "wait_window", map[string]any{"window": "main"}, false, "main: bash is at its prompt, waiting for input.")
+	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": "sleep 30", "enter": true}, false)
+	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 1}, false, "sleep in the foreground")
+	expectTool(t, session, "send_keys", map[string]any{"window": "main", "keys": []string{"C-z"}}, false)
+	status := 128 + int(syscall.SIGTSTP)
+	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 5}, false,
+		"main: the command was stopped ", fmt.Sprintf(" ago, status %d (SIGTSTP, as C-z does): it waits as a job of "+
+			"this bash, fg resumes it, kill %%%% ends it.", status))
+	expectTool(t, session, "list_windows", nil, false, fmt.Sprintf(", last command stopped with status %d (SIGTSTP, "+
+		"as C-z does: fg resumes it, kill %%%% ends it) (", status))
+	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": "kill %%", "enter": true}, false)
+	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 5}, false, "exit status 0.")
 }
 
 // TestRunningText guards what wait_window tells of a command still running: the time since the

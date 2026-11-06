@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"syscall"
 	"time"
 
 	"github.com/hekmon/rat/cmd/ratd/tools"
@@ -138,6 +139,19 @@ func withAttrs(r result, attrs []any) result {
 	return r
 }
 
+// stopSignals tell the statuses of a command stopped rather than finished, by the signal stopping
+// it: bash shows its prompt again, the command being a job of its own, stopped, with the status 128
+// plus the number of that signal, which differs between systems (148 for SIGTSTP on Linux, 146 on
+// macOS). SIGTSTP is C-z, which an agent may press for C-c: told "finished" with that status, it
+// would take its command for failed, and leave it stopped. A command exiting with such a status by
+// itself would read as stopped, as it does in bash.
+var stopSignals = map[int]string{
+	128 + int(syscall.SIGTSTP): "SIGTSTP, as C-z does",
+	128 + int(syscall.SIGSTOP): "SIGSTOP",
+	128 + int(syscall.SIGTTIN): "SIGTTIN",
+	128 + int(syscall.SIGTTOU): "SIGTTOU",
+}
+
 // finishedText tells that window w, its bash back at its prompt, finished the command sent last,
 // relatively to now: how it exited, when the terminals record it right (see checkTerminals), but
 // for the first prompt of a bash, which follows no command. For a pipeline whose commands before
@@ -149,6 +163,11 @@ func (d *daemon) finishedText(window string, w tmux.Window, now time.Time) strin
 	switch {
 	case w.Prompt.Status == tmux.NoStatus:
 		return fmt.Sprintf("%s: bash is at its prompt, waiting for input.", window)
+	case d.terminals.Statuses && stopSignals[w.Prompt.Status] != "":
+		// %% is the current job of bash, the one stopped last
+		return fmt.Sprintf("%s: the command was stopped %s ago, status %d (%s): it waits as a job of this bash, fg "+
+			"resumes it, kill %%%% ends it.", window, sinceText(now.Sub(w.Prompt.Time)), w.Prompt.Status,
+			stopSignals[w.Prompt.Status])
 	case d.terminals.Pipelines && failed:
 		return fmt.Sprintf("%s: the command finished %s ago: %s exited with %s%s. The pipeline exits with the "+
 			"status of its last command, %d, as bash reports it (statuses, left to right: %s).", window,

@@ -306,6 +306,15 @@ once.
   `set -o pipefail` in the terminals, which changes what commands do, for the same reason; the
   pipeline told whenever it holds several commands, tokens saying nothing for every `ls | grep`.
 
+  A command stopped (`C-z`, which an agent may press for `C-c`) is no more finished than one run
+  in the background, but bash shows its prompt all the same, with the status 128 plus the signal
+  stopping it (148 for SIGTSTP on Linux, 146 on macOS), and no pipeline. Told "finished, exit
+  status 148", an agent takes its command for failed, and leaves it stopped. Where the terminals
+  record statuses, these four (SIGTSTP, SIGSTOP, SIGTTIN, SIGTTOU) are told as a command stopped,
+  a job of that bash, with how to resume it or end it: `build: the command was stopped 3s ago,
+  status 148 (SIGTSTP, as C-z does): it waits as a job of this bash, fg resumes it, kill %% ends
+  it.`, and `list_windows` the same in short. `%%` is the current job of bash, the one stopped last.
+  A command exiting with such a status by itself reads as stopped, as in bash.
 
   50 seconds at most: a harness cuts a tool call at a limit of its own, which ratd can not see,
   nor push back without a stream to send progress on. That limit is 60 seconds by default for
