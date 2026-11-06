@@ -42,13 +42,13 @@
 // # Checks
 //
 // ratd checks client certificates: signed by the CA of the bundle, valid, clientAuth, and not
-// revoked, on every request ([Side.CheckRevoked]). Clients check the server certificate the same
-// way with serverAuth, but not the host name they reach: it carries no address. Each side also
-// checks its own directory when loading it ([Load]: files, key permissions, key matching the
-// certificate, CA, role, validity, names, CRL distribution point), to fail at startup rather than
-// at the first connection; rat-tool runs the same checks for humans. [Parse] runs them on
-// credentials that are not in a directory (a secret store, an embedded asset), but for what only
-// files have.
+// revoked, their validity and revocation again on every request ([Side.CheckPeer]). Clients check
+// the server certificate the same way with serverAuth, but not the host name they reach: it
+// carries no address. Each side also checks its own directory when loading it ([Load]: files, key
+// permissions, key matching the certificate, CA, role, validity, names, CRL distribution point),
+// to fail at startup rather than at the first connection; rat-tool runs the same checks for
+// humans. [Parse] runs them on credentials that are not in a directory (a secret store, an
+// embedded asset), but for what only files have.
 //
 // # TLS configurations
 //

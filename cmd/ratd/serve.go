@@ -206,7 +206,7 @@ func (d *daemon) serve(ctx context.Context, listener net.Listener) error {
 		Logger:                       d.sdkLogger,
 	}))
 	server := &http.Server{
-		Handler:           d.refuseRevoked(mux),
+		Handler:           d.checkClients(mux),
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,
 		// net/http would otherwise print its errors, refused handshakes mostly, through the log
@@ -245,17 +245,20 @@ func (d *daemon) serve(ctx context.Context, listener net.Listener) error {
 	return nil
 }
 
-// refuseRevoked serves with next the requests of clients whose certificate the CRL of the CA does
-// not revoke (mtls.Side.CheckRevoked), answering 403 the others, and 503 every request while ratd
-// can have no valid CRL, the body telling why. On every request, rather than during the
-// handshake: a connection kept alive outlives a handshake, and Go refuses one with "bad
-// certificate" whatever the reason. Without a CRL named by its certificate, ratd serves them all.
-func (d *daemon) refuseRevoked(next http.Handler) http.Handler {
+// checkClients serves with next the requests of clients whose certificate is still valid, and not
+// revoked by the CRL of the CA (mtls.Side.CheckPeer), answering 403 the others, and 503 every
+// request while ratd can have no valid CRL, the body telling why. On every request, rather than
+// during the handshake alone: a connection kept alive outlives its handshake, by hours for a
+// client calling more often than the idle timeout, and Go refuses a handshake with "bad
+// certificate" whatever the reason. Without a CRL named by its certificate, revocation is not
+// checked.
+func (d *daemon) checkClients(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.TLS != nil && len(req.TLS.PeerCertificates) > 0 {
-			if err := d.source.Side().CheckRevoked(req.Context(), req.TLS.PeerCertificates[0]); err != nil {
+			if err := d.source.Side().CheckPeer(req.Context(), req.TLS.PeerCertificates[0]); err != nil {
+				// the client revoked or expired is refused, every client while ratd has no valid CRL
 				status := http.StatusForbidden
-				if !errors.Is(err, mtls.ErrRevoked) {
+				if errors.Is(err, mtls.ErrCRL) {
 					status = http.StatusServiceUnavailable
 				}
 				d.logger.Warn("request refused", "session", mtls.PeerName(*req.TLS), "remote", req.RemoteAddr, "error", err)

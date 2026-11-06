@@ -240,3 +240,42 @@ func TestHTTPClientRenewal(t *testing.T) {
 		t.Errorf("expected serial %s, then %s, got %v", first, renewed, presented)
 	}
 }
+
+// TestHTTPClientExpired guards that the client checks the certificate of ratd after every
+// response for its validity too: a ratd whose certificate expired since the handshake, on a
+// connection kept alive, is refused, the request failing with mtls.ErrValidity.
+func TestHTTPClientExpired(t *testing.T) {
+	pki := testpki.NewSubCA(t, "t", "")
+	expiry := time.Now().Add(time.Second)
+	pki.Expiring("server", expiry)
+	serverSide, err := mtls.Load(mtls.ServerDir(pki.Dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := mtls.ServerConfig(serverSide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ratd := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		// answered once the certificate its handshake accepted expired
+		time.Sleep(time.Until(expiry.Add(200 * time.Millisecond)))
+	}))
+	ratd.TLS = config
+	ratd.StartTLS()
+	defer ratd.Close()
+	alice, err := mtls.Load(mtls.ClientDir(pki.Dir, "alice"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := HTTPClient(alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Get(ratd.URL)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	if !errors.Is(err, mtls.ErrValidity) || !strings.Contains(err.Error(), "the certificate of t expired on") {
+		t.Errorf("ratd expired since the handshake: expected mtls.ErrValidity, got %v", err)
+	}
+}

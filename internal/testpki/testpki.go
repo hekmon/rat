@@ -52,7 +52,7 @@ func NewSubCA(t testing.TB, tenant, crlURL string) *PKI {
 			usage: x509.ExtKeyUsageClientAuth},
 	} {
 		pki.sides[s.name] = s
-		pki.issue(s, true)
+		pki.issue(s, true, time.Time{})
 	}
 	return pki
 }
@@ -75,12 +75,24 @@ func (p *PKI) Renew(name string, newKey bool) *big.Int {
 	if !ok {
 		p.t.Fatalf("no side %q", name)
 	}
-	return p.issue(s, newKey)
+	return p.issue(s, newKey, time.Time{})
 }
 
-// issue writes the files of s with a new certificate, and a new key if asked, returning the serial
-// of the certificate.
-func (p *PKI) issue(s *side, newKey bool) *big.Int {
+// Expiring issues the side name ("server" for the server) a new certificate, of the same key,
+// expiring at notAfter, and writes it in place of the one it holds (see Renew). It returns the
+// serial number of the new certificate.
+func (p *PKI) Expiring(name string, notAfter time.Time) *big.Int {
+	p.t.Helper()
+	s, ok := p.sides[name]
+	if !ok {
+		p.t.Fatalf("no side %q", name)
+	}
+	return p.issue(s, false, notAfter)
+}
+
+// issue writes the files of s with a new certificate, and a new key if asked, expiring at
+// notAfter, or in an hour if zero, returning the serial of the certificate.
+func (p *PKI) issue(s *side, newKey bool, notAfter time.Time) *big.Int {
 	p.t.Helper()
 	if newKey || s.key == nil {
 		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -91,8 +103,11 @@ func (p *PKI) issue(s *side, newKey bool) *big.Int {
 	}
 	p.issued++
 	now := time.Now()
+	if notAfter.IsZero() {
+		notAfter = now.Add(time.Hour)
+	}
 	template := &x509.Certificate{SerialNumber: big.NewInt(int64(p.issued + 1)), Subject: pkix.Name{CommonName: s.common},
-		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature,
+		NotBefore: now.Add(-time.Hour), NotAfter: notAfter, KeyUsage: x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{s.usage}}
 	if s.crl != "" {
 		template.CRLDistributionPoints = []string{s.crl}

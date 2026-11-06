@@ -221,3 +221,25 @@ func TestRunRenewal(t *testing.T) {
 		t.Errorf("expected the renewal with a new key logged as a warning:\n%s", logs)
 	}
 }
+
+// TestServeExpired guards that ratd refuses a client whose certificate expired since the
+// handshake of its connection, kept alive: 403 at its next request, telling why. A new handshake
+// would be refused by TLS, the 403 telling the check of the request did it.
+func TestServeExpired(t *testing.T) {
+	pki := testpki.NewSubCA(t, "t", "")
+	expiry := time.Now().Add(time.Second)
+	pki.Expiring("carol", expiry)
+	addr, logs := startRatd(t, pki.Dir, slog.LevelInfo)
+	client := httpClient(t, pki.Dir, "carol")
+	if resp, err := postBody(t, client, addr); err != nil || resp.status != http.StatusOK {
+		t.Fatalf("before the expiry: expected 200, got %+v, %v", resp, err)
+	}
+	time.Sleep(time.Until(expiry.Add(200 * time.Millisecond)))
+	resp, err := postBody(t, client, addr)
+	if err != nil || resp.status != http.StatusForbidden || !strings.Contains(resp.body, "the certificate of carol expired on") {
+		t.Errorf("after the expiry: expected 403 telling it expired, got %+v, %v", resp, err)
+	}
+	if !strings.Contains(logs.String(), `msg="request refused" session=carol`) {
+		t.Errorf("expected the refusal logged:\n%s", logs)
+	}
+}

@@ -142,7 +142,7 @@ func (c *checker) tls(ctx context.Context) bool {
 	if err == nil {
 		var resp *http.Response
 		if resp, err = http.ReadResponse(bufio.NewReader(tlsConn), nil); err == nil {
-			// ratd checks revocation on every request: it refuses a client revoked, or every client
+			// ratd checks clients on every request: it refuses a client revoked or expired, or every client
 			// while it has no valid CRL, with an answer telling why, not with an alert
 			if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusServiceUnavailable {
 				line, _ := bufio.NewReader(resp.Body).ReadString('\n')

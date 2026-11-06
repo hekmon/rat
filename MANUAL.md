@@ -364,13 +364,14 @@ a fetch failing, and at once when the CRL they hold is stale.
 #### Renewal
 
 Certificates of your PKI, valid a year or less, warn in the last tenth of their validity,
-telling what to issue again. Renewing a certificate takes no restart: replace the files of its
-directory, and ratd and rat use them from their next connection on, the terminals and the calls
-in flight untouched. The renewed certificate must be of the same sub CA and name, its key new or
-not: a new key is a warning in their logs, and in the status of ratd for a day, for you to see a
-key you did not rotate. Files refused (another CA, another name, a check failing) are a warning,
-the certificate in use kept. A new sub CA takes a restart of ratd and of the harnesses, and is
-to be deployed to every client.
+telling what to issue again, and stop at their expiry, connections kept alive included: ratd
+refuses an expired client at its next request, and rat an expired ratd. Renewing a certificate
+takes no restart: replace the files of its directory, and ratd and rat use them from their next
+connection on, the terminals and the calls in flight untouched. The renewed certificate must be
+of the same sub CA and name, its key new or not: a new key is a warning in their logs, and in
+the status of ratd for a day, for you to see a key you did not rotate. Files refused (another
+CA, another name, a check failing) are a warning, the certificate in use kept. A new sub CA
+takes a restart of ratd and of the harnesses, and is to be deployed to every client.
 
 Write the files of a renewal next to the old ones, then rename them in place (`mv`): the key
 owned by the user of ratd, mode 600, as ratd refuses a key readable by others, the certificates

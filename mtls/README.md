@@ -134,9 +134,10 @@ its status line until a fetch succeeds again.
 Each side checks the certificate of its peer, and its own, which a side revoked tells rather
 than its peers refusing it:
 
-- **ratd, on every request** (`Side.CheckRevoked`): a connection kept alive outlives a
-  handshake. It answers 403 a client revoked, and 503 every client while it has no valid CRL,
-  the body telling why: refused during the handshake, a client would only learn "bad
+- **ratd, on every request** (`Side.CheckPeer`): a connection kept alive outlives a handshake. It
+  answers 403 a client revoked, or whose certificate expired since the handshake (a PKI issuing
+  short-lived certificates relies on their expiry alone), and 503 every client while it has no
+  valid CRL, the body telling why: refused during the handshake, a client would only learn "bad
   certificate", the alert Go sends whatever the reason. The terminals of a client revoked keep
   running: revoking closes the way in, stopping the service is the kill switch.
 - **A client, during the handshake and around every request** (`ClientConfig`,
@@ -145,7 +146,8 @@ than its peers refusing it:
   clients keep theirs. Its connections are kept alive, for hours by a client calling more often
   than their idle timeout: before each request, it gets the CRL, which refreshes it; on a newer
   CRL, it closes its idle connections, for the next request to check the server during its
-  handshake; and after each response, it checks the server of the connection used.
+  handshake; and after each response, it checks the server of the connection used, still valid and
+  not revoked.
 
 A side whose certificate names no CRL refuses a peer whose certificate names one: the CA
 revokes, and the side could not check it, its certificate issued from another template than the
@@ -249,8 +251,8 @@ refused client learns it on its first read, from the alert of the server, which 
 | of the wrong role | bad certificate |
 | expired | expired certificate |
 
-A client revoked is not refused during the handshake: ratd answers its first request 403 (see
-Revocation).
+A client revoked, or expired since its handshake, is not refused by an alert: ratd answers its
+next request 403 (see Revocation).
 
 A client of another tenant presents no certificate at all: the server asks for one signed by the
 CA of its bundle, naming it, and Go's client only presents a certificate whose issuer bears that
@@ -323,11 +325,11 @@ not.
   halfway never breaks a running side, and the expiry warning keeps telling of the certificate
   in use. Files holding the side in use again, after a refusal, are told restored.
 - **From the next handshake on**: ratd picks the certificate of each handshake from the side in
-  use, connections open keeping theirs until they close. A client closes its idle connections on
-  a renewal of its certificate (`connect.HTTPClient`), as on a newer CRL: in constant use, it
-  would otherwise present the certificate replaced for hours, past its expiry, which ratd checks
-  during the handshake only. The CRL held, and what is told of it, carry over to the side renewed
-  when its certificate names the same distribution point.
+  use, connections open keeping theirs until they close. A client closes its idle connections on a
+  renewal of its certificate (`connect.HTTPClient`), as on a newer CRL: in constant use, it would
+  otherwise present the certificate replaced for hours, until its expiry, from which ratd refuses
+  its requests (see Revocation). The CRL held, and what is told of it, carry over to the side
+  renewed when its certificate names the same distribution point.
 
 Two pitfalls of Go:
 

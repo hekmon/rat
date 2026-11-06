@@ -41,8 +41,8 @@ func HTTPClient(side mtls.Source) (*http.Client, error) {
 // connection kept alive outlives the check of its handshake, and a client calling more often
 // than the idle timeout keeps it for hours. Before the request, it gets the CRL (mtls.Side.CRL),
 // which refreshes it, refusing the request without a valid one, or with the client revoked. After
-// the response, it checks the certificate of ratd on the connection used, dropping the response
-// of a ratd revoked since its handshake.
+// the response, it checks the certificate of ratd on the connection used (mtls.Side.CheckPeer),
+// dropping the response of a ratd expired or revoked since its handshake.
 type revocationTransport struct {
 	side mtls.Source
 	next *http.Transport
@@ -61,7 +61,7 @@ func (t *revocationTransport) RoundTrip(req *http.Request) (*http.Response, erro
 		return nil, err
 	}
 	if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
-		if err = t.side.Side().CheckRevoked(req.Context(), resp.TLS.PeerCertificates[0]); err != nil {
+		if err = t.side.Side().CheckPeer(req.Context(), resp.TLS.PeerCertificates[0]); err != nil {
 			_ = resp.Body.Close()
 			t.next.CloseIdleConnections()
 			return nil, err

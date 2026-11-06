@@ -13,9 +13,9 @@ import (
 // its CA, valid, clientAuth), which Go checks by itself. TLS 1.3 only. It sets nothing of the
 // protocol above TLS (ALPN), which is ratd's to choose.
 //
-// It does not check revocation: ratd checks it on every request (Side.CheckRevoked), which a
-// connection kept alive outlives a handshake for. Refused during the handshake, a client would
-// only learn "bad certificate", the alert Go sends whatever the reason.
+// It does not check revocation: ratd checks it, and validity again, on every request
+// (Side.CheckPeer), which a connection kept alive outlives a handshake for. Refused during the
+// handshake, a client would only learn "bad certificate", the alert Go sends whatever the reason.
 //
 // The certificate is the one of the side of source at each handshake: a Watcher renews it while
 // ratd runs, its CA unchanged (see Watcher).
