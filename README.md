@@ -309,6 +309,8 @@ Declare rat in each harness, as a stdio MCP server, with its client directory, h
 
 A harness configured in TOML or YAML takes the same command and arguments, in its own format. On
 Windows, give the full paths of `rat.exe` and of the client directory, backslashes doubled in JSON.
+rat reaches ratd through the proxy of its environment, if any (`HTTPS_PROXY`), as HTTPS clients do:
+add the host of ratd to `NO_PROXY` for it to be reached directly.
 
 Check it works, with the same `--server` and `--bundle` flags as rat, before the harness does:
 

@@ -84,9 +84,20 @@ func run(ctx context.Context, logger *slog.Logger, target flags.Target, stdin io
 	if crl == "" {
 		crl = "none"
 	}
+	// told when starting, and with each request failing at it: a proxy refusing ratd only says why
+	proxy, err := connect.Proxy(target.Server)
+	if err != nil {
+		return fmt.Errorf("invalid proxy in the environment: %w", err)
+	}
+	proxyText := "none"
+	if proxy != nil {
+		// its password, if any, never told
+		proxyText = proxy.Redacted()
+	}
 	logger.Info("relaying", "version", version.String(), "server", target.Server, "tenant", side.Tenant, "session", side.Name,
-		"bundle_expiry", side.NotAfter(), "crl", crl)
+		"bundle_expiry", side.NotAfter(), "crl", crl, "proxy", proxyText)
 	r := newRelay(logger, client, target, schemas, stdout)
+	r.proxy = proxy
 	reason := r.run(ctx, stdin)
 	logger.Info("stopped", "reason", reason)
 	return nil

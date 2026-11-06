@@ -57,6 +57,12 @@ not fail the startup of the harness, the first request tells.
   package `mtls`: setting it on `http.DefaultTransport` would change a global of the process,
   and a bare `http.Transport` loses the defaults (proxy from the environment, dial and handshake
   timeouts).
+- **Through the proxy of the environment**, as other HTTPS clients go (`HTTPS_PROXY`, `NO_PROXY`
+  to bypass it; never for a loopback address): the proxy is named when starting, and in the
+  failures of requests not reaching ratd, as Go reports a proxy refusing ratd (a CONNECT
+  answered 403) with a bare `Forbidden`. Its password, if any, is never told. Go reads the
+  environment once per process: the MCP SDK has it read when its packages initialize, so that a
+  program changing it afterwards changes nothing.
 - **No connection state** beyond the negotiated version and the calls in flight: a ratd restart
   only fails the requests sent meanwhile.
 - **Stopping**: at the end of stdin (the harness leaving) or on SIGTERM or SIGINT, rat ends the
@@ -101,7 +107,9 @@ The cost: rat implements the client headers of the transport, and must follow th
 - **Transport failures**: no JSON-RPC response exists, while the harness waits for one matching
   its request. rat answers with a JSON-RPC error of its own, code -32050 (in the range JSON-RPC
   leaves to implementations, apart from the codes of MCP and its SDKs), telling what failed:
-  - `ratd unreachable at HOST:PORT: connection refused` (the reason of the system);
+  - `ratd unreachable at HOST:PORT: connection refused` (the reason of the system), `ratd
+    unreachable at HOST:PORT through the proxy http://proxy:3128 (from the environment):
+    Forbidden` when a proxy is on the way;
   - `ratd at HOST:PORT refused the TLS handshake: remote error: tls: unknown certificate
     authority. Check the bundle with rat-tool check.`, or `rat refused the certificate of ratd
     at HOST:PORT: …` when the server is not of the bundle;
@@ -125,7 +133,7 @@ ratd gives a tool call, so that a connection hanging is cut rather than waited f
 ## Logs
 
 `log/slog`, text handler, on stderr, which harnesses keep: startup (version, server, tenant,
-session, bundle expiry, the address of the CRL or none), each newer CRL, a fetch of the CRL
+session, bundle expiry, the address of the CRL or none, the proxy or none), each newer CRL, a fetch of the CRL
 failing (a warning, with when the CRL held goes stale), a renewal of its certificate (a warning
 when its key changed) and files refused (see Renewal in `mtls/README.md`), relay failures (the
 method and identifier, the error), expiry warnings, the stop and its reason. At debug level, one

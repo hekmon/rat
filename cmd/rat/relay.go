@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -51,6 +52,8 @@ type relay struct {
 	client   *http.Client
 	target   flags.Target
 	endpoint string
+	// proxy is the proxy of the environment ratd is reached through, nil for none (connect.Proxy)
+	proxy *url.URL
 	// schemas are the input schemas of the tools of ratd, for the headers of annotated arguments
 	schemas map[string]*jsonschema.Schema
 	// outMu writes the answers to out one at a time
@@ -422,11 +425,17 @@ func isResponseTo(body []byte, rawID json.RawMessage) bool {
 // rat itself, or not to be had), or not answering within timeout.
 func (r *relay) failureText(ctx context.Context, err error, timeout time.Duration) string {
 	server := r.target.Server
+	// what fails on the way may be the proxy, which Go does not always tell (a CONNECT refused is a
+	// bare "Forbidden"): named when there is one
+	through := ""
+	if r.proxy != nil {
+		through = " through the proxy " + r.proxy.Redacted() + " (from the environment)"
+	}
 	var opErr *net.OpError
 	var urlErr interface{ Unwrap() error }
 	switch {
 	case errors.Is(context.Cause(ctx), context.DeadlineExceeded):
-		return fmt.Sprintf("ratd at %s did not answer within %s", server, timeout)
+		return fmt.Sprintf("ratd at %s did not answer within %s%s", server, timeout, through)
 	case errors.As(err, &opErr) && opErr.Op == "remote error":
 		return fmt.Sprintf("ratd at %s refused the TLS handshake: %s. Check the bundle with rat-tool check.", server, opErr)
 	case (errors.Is(err, mtls.ErrRevoked) || errors.Is(err, mtls.ErrCRL)) && errors.As(err, &urlErr):
@@ -436,7 +445,7 @@ func (r *relay) failureText(ctx context.Context, err error, timeout time.Duratio
 		return fmt.Sprintf("rat refused the certificate of ratd at %s: %s. Check the bundle with rat-tool check.", server,
 			urlErr.Unwrap())
 	default:
-		return fmt.Sprintf("ratd unreachable at %s: %s", server, innermost(err))
+		return fmt.Sprintf("ratd unreachable at %s%s: %s", server, through, innermost(err))
 	}
 }
 

@@ -3,6 +3,7 @@ package connect
 import (
 	"errors"
 	"net/http"
+	"net/url"
 
 	"github.com/hekmon/rat/mtls"
 
@@ -27,6 +28,8 @@ func HTTPClient(side mtls.Source) (*http.Client, error) {
 	}
 	transport := defaultTransport.Clone()
 	transport.TLSClientConfig = config
+	// the default already, set here for Proxy to tell the proxy of every request
+	transport.Proxy = http.ProxyFromEnvironment
 	// The connections kept idle were checked against the CRL held before: the next request
 	// checks ratd against the new one during its handshake, rather than after its response.
 	side.OnCRL(mtls.CRLEvents{Fetched: func(*mtls.CRL) { transport.CloseIdleConnections() }})
@@ -35,6 +38,16 @@ func HTTPClient(side mtls.Source) (*http.Client, error) {
 	// constant use keeping a connection for hours.
 	side.OnWatch(mtls.WatchEvents{Reloaded: func(*mtls.Side, bool) { transport.CloseIdleConnections() }})
 	return &http.Client{Transport: &revocationTransport{side: side, next: transport}}, nil
+}
+
+// Proxy returns the proxy the client of HTTPClient reaches the ratd at server (HOST:PORT) through,
+// nil for none: the one of the environment (HTTPS_PROXY, NO_PROXY), as http.ProxyFromEnvironment
+// tells it, which never proxies a loopback address, and reads the environment once per process. For
+// a caller to tell it: a request failing at the proxy (a CONNECT refused) only says "Forbidden".
+// Its error is the one of an address the environment holds invalid, which every request then fails
+// with.
+func Proxy(server string) (*url.URL, error) {
+	return http.ProxyFromEnvironment(&http.Request{URL: &url.URL{Scheme: "https", Host: server, Path: Path}})
 }
 
 // revocationTransport checks the CRL of the CA of side around every request, as ratd does: a
