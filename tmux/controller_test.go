@@ -88,6 +88,37 @@ func TestCommandStuckServer(t *testing.T) {
 	}
 }
 
+// TestSendTextStuckServer guards that a paste failing on a server that does not answer (here
+// stopped by SIGSTOP) returns once its context ends, its cleanup included: the buffer left by the
+// failed paste is deleted by a command of its own, which a stuck server would hold forever, and
+// with it the server lock, which StopServer waits for.
+func TestSendTextStuckServer(t *testing.T) {
+	c := startTestServer(t, "stuck-paste")
+	if err := c.NewSession(context.Background(), "s"); err != nil {
+		t.Fatal(err)
+	}
+	pid := c.server.cmd.Process.Pid
+	if err := syscall.Kill(pid, syscall.SIGSTOP); err != nil {
+		t.Fatal(err)
+	}
+	// before the server is stopped: cleanups run in reverse order
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGCONT) })
+	timeout := 200 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	sent := make(chan error, 1)
+	go func() { sent <- c.SendText(ctx, "s", FirstWindow, "echo stuck", true) }()
+	// the paste, then its cleanup, each given up on after a WaitDelay
+	select {
+	case err := <-sent:
+		if err == nil {
+			t.Error("expected an error from a stuck server")
+		}
+	case <-time.After(timeout + cleanupTimeout + 2*commandWaitDelay + 2*time.Second):
+		t.Fatal("the paste did not return once its context ended")
+	}
+}
+
 // TestCommandServerShuttingDown guards that a command whose server goes away before running it
 // fails with ErrServerNotRunning, rather than succeeding empty or failing with a message: a server
 // shutting down cleanly (SIGTERM) makes its clients exit with status 0 and no output, as if their

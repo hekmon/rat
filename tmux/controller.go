@@ -110,16 +110,24 @@ func (c *Controller) run(ctx context.Context, args ...string) (string, error) {
 	return c.runWithStdin(ctx, nil, args...)
 }
 
-// serverContext returns the context of the running server, canceled once it is stopped, or nil
-// if no server was started. Commands that must run whatever their caller context (cleanups) use
-// it: they are only pointless once the server, and what they clean up with it, is gone.
-func (c *Controller) serverContext() context.Context {
+// cleanupTimeout bounds a cleanup command (see cleanupContext): tmux answers in milliseconds.
+const cleanupTimeout = time.Second
+
+// cleanupContext returns the context of a command that must run whatever the context of its caller
+// (a cleanup): the context of the running server, canceled once it is stopped, and bounded by
+// cleanupTimeout. Not the context of the caller, which may have ended already, possibly being why
+// there is something to clean up; the cleanup is pointless once the server, and what it cleans up
+// with it, is gone. Bounded all the same: a server that does not answer (stopped, deadlocked)
+// would hold the cleanup forever, its caller with it, and the server lock, which StopServer waits
+// for. ok is false if no server was started.
+func (c *Controller) cleanupContext() (ctx context.Context, cancel context.CancelFunc, ok bool) {
 	c.serverAction.RLock()
 	defer c.serverAction.RUnlock()
 	if c.server == nil {
-		return nil
+		return nil, nil, false
 	}
-	return c.server.ctx
+	ctx, cancel = context.WithTimeout(c.server.ctx, cleanupTimeout)
+	return ctx, cancel, true
 }
 
 // runWithStdin is run, feeding stdin to the tmux client (nil for none).

@@ -123,9 +123,10 @@ func (c *Controller) sendText(ctx context.Context, session, window string, text 
 		if buffer != "" {
 			// -d only deletes the buffer once pasted: a failed paste leaves the text in tmux.
 			// Not ctx: when it is canceled (which may be why the paste failed), the cleanup would
-			// fail too. The server context lives as long as the server holding the buffer.
-			if serverCtx := c.serverContext(); serverCtx != nil {
-				_, _ = c.run(serverCtx, "delete-buffer", "-b", buffer)
+			// fail too. On a server not answering, the buffer stays until it answers again.
+			if cleanupCtx, cancel, ok := c.cleanupContext(); ok {
+				_, _ = c.run(cleanupCtx, "delete-buffer", "-b", buffer)
+				cancel()
 			}
 		}
 		return c.windowError(ctx, fmt.Errorf("failed to send text to %s:%s: %w", session, window, err), session, window)

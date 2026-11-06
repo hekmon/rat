@@ -113,6 +113,13 @@ server stopped for 3 seconds and a client killed after half a second, its output
 after 4 seconds (tmux 3.7c). Every command therefore has a `WaitDelay`: once its context has
 ended and the client is killed, waiting gives up on the pipes after a second, and closes them.
 
+A cleanup run once a command failed (deleting the buffer of a failed paste) can not take the
+context of its caller, which may have ended already, possibly being why the command failed: it
+takes the context of the server, bounded by a second of its own. Unbounded, a cleanup on a server
+stopped by SIGSTOP never returned: the input with it, past its own context, and the server lock it
+held, which `StopServer` waits for, so that stopping ratd waited for the server to be resumed
+(measured with tmux 3.3a and 3.4). `TestSendTextStuckServer` guards it.
+
 ### A server shutting down during a command
 
 A server shutting down cleanly (SIGTERM, `kill-server`) tells its clients to exit normally: a
