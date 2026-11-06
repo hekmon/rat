@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -229,4 +230,107 @@ func TestReadFileNoSize(t *testing.T) {
 	}
 	expectTool(t, session, "read_file", map[string]any{"path": "/proc/self/status", "start_line": -1}, false,
 		"[/proc/self/status: line ")
+}
+
+// procSource is a file showing no size whose content changes length at each read, as files of
+// /proc do (counters growing a digit): each ReadAt generates it again, each counter a digit longer,
+// while a sequential read from the start goes on in the content it started with, as procfs does.
+type procSource struct {
+	lines      int
+	generation int
+	// content is the one a sequential read goes through, pos where it is
+	content []byte
+	pos     int
+}
+
+func (p *procSource) generate() []byte {
+	p.generation++
+	var b strings.Builder
+	for i := 1; i <= p.lines; i++ {
+		fmt.Fprintf(&b, "counter%d:\t%s\n", i, strings.Repeat("9", p.generation))
+	}
+	return []byte(b.String())
+}
+
+func (p *procSource) ReadAt(b []byte, off int64) (int, error) {
+	content := p.generate()
+	if off >= int64(len(content)) {
+		return 0, io.EOF
+	}
+	n := copy(b, content[off:])
+	if n < len(b) {
+		return n, io.EOF
+	}
+	return n, nil
+}
+
+func (p *procSource) Read(b []byte) (int, error) {
+	if p.content == nil {
+		p.content = p.generate()
+	}
+	if p.pos >= len(p.content) {
+		return 0, io.EOF
+	}
+	n := copy(b, p.content[p.pos:])
+	p.pos += n
+	return n, nil
+}
+
+// TestReadFileNoSizeRange guards that a range of a file showing no size (/proc) comes from a single
+// read of it: its content changes length from a read to the next, and an offset found in one read
+// lands elsewhere in the next, cutting lines (an empty line 59 of /proc/self/status was read so,
+// one run out of twenty of TestReadFileNoSize). The lines asked come whole, numbered consistently.
+func TestReadFileNoSizeRange(t *testing.T) {
+	d := &daemon{readBudget: defaultReadBudget, user: "u"}
+	deadline := time.Now().Add(time.Second)
+	for _, tc := range []struct {
+		in       tools.ReadFileInput
+		expected string
+	}{
+		{tools.ReadFileInput{StartLine: -1}, "[/proc/x: line 10 of 10, "},
+		{tools.ReadFileInput{StartLine: 4, MaxLines: 2}, "[/proc/x: lines 4 to 5 of 10, "},
+	} {
+		r := d.readSource("/proc/x", &procSource{lines: 10}, 0, time.Now(), tc.in, deadline)
+		header, content, _ := strings.Cut(r.text, "\n")
+		if r.outcome != done || !strings.HasPrefix(header, tc.expected) {
+			t.Errorf("%+v: expected a header starting with %q, got %q (%v)", tc.in, tc.expected, header, r.outcome)
+		}
+		// whole lines of one content: the same counter on each line
+		lines := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+		first := max(tc.in.StartLine, 1)
+		if tc.in.StartLine < 0 {
+			first = 10 + tc.in.StartLine + 1
+		}
+		for i, line := range lines {
+			name, value, _ := strings.Cut(line, ":\t")
+			if name != fmt.Sprintf("counter%d", first+i) || value != strings.Repeat("9", len(strings.Split(lines[0], "\t")[1])) {
+				t.Errorf("%+v: line %d is not whole, or of another read: %q in\n%s", tc.in, first+i, line, content)
+			}
+		}
+	}
+}
+
+// endless is a file showing no size that never ends, as /proc/self/pagemap does not.
+type endless struct{}
+
+func (endless) Read(b []byte) (int, error) {
+	for i := range b {
+		b[i] = "x\n"[i%2]
+	}
+	return len(b), nil
+}
+
+func (endless) ReadAt(b []byte, _ int64) (int, error) {
+	return endless{}.Read(b)
+}
+
+// TestReadFileNoSizeBounded guards that the copy of a file showing no size, read by range, is
+// bounded: a file that never ends is refused once maxCopy is read, pointing to the terminal.
+func TestReadFileNoSizeBounded(t *testing.T) {
+	d := &daemon{readBudget: defaultReadBudget, user: "u"}
+	r := d.readSource("/proc/x", endless{}, 0, time.Now(), tools.ReadFileInput{StartLine: -1}, time.Now().Add(5*time.Second))
+	if expected := "/proc/x shows no size, as files of /proc do, and holds more than 64 MiB, the most read_file copies " +
+		"to read a range of it: use the terminal (sed -n, tail -n)."; r.outcome != failed || r.text != expected {
+		t.Errorf("expected %q, got %q (%v)", expected, r.text, r.outcome)
+	}
 }

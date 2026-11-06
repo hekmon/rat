@@ -428,7 +428,12 @@ What `read_file` sends is checked first, as it can not be taken back from a mode
    and opened as `write_file` does, without blocking;
 2. the read is bounded whatever the size tells: a log grows while being read, and is read up to
    its size when opened, consistently with the size told; `/proc` files show 0, and are read to
-   their end within the time of the call;
+   their end within the time of the call. A range of one is read from a copy of it, read whole,
+   once, from its start, up to 64 MiB (`/proc/kallsyms` takes 10 to 20 MB, some never end): such a
+   file is generated again at each read at an offset, its counters changing its length, and a
+   range found by offsets came cut (an offset of `/proc/self/status` landed mid-line in the next
+   read 354 times out of 2000, measured on Linux 6.6). A whole read takes one read, and is left
+   as is;
 3. the content must be text: no NUL byte (the heuristic of git and `grep -I`) and valid UTF-8,
    the line told. Otherwise the tool refuses, pointing to the terminal (`file`, `xxd`, `base64`).
    What is checked is what is sent; a file over the budget read without a range sends nothing,

@@ -71,11 +71,13 @@ func (d *daemon) readFile(ctx context.Context, in tools.ReadFileInput) result {
 type fileRead struct {
 	d    *daemon
 	path string
-	file *os.File
-	in   tools.ReadFileInput
+	// src is the file read
+	src fileSource
+	in  tools.ReadFileInput
 	// size is the size of the file when opened, which bounds the read: a file growing meanwhile
 	// (a log) is read as it was, consistently with the size told. Zero for files showing no size
-	// (/proc), read to their end within the deadline.
+	// (/proc), read to their end within the deadline: whole, or for a range, copied first (see
+	// copyWhole), the size of the copy then.
 	size int64
 	// seen is how far the file was read, the size of a file showing none
 	seen int64
@@ -113,11 +115,69 @@ func (d *daemon) readFileNow(path string, in tools.ReadFileInput, deadline time.
 		return d.fileFailure(err, "Reading "+path, read, false)
 	}
 	defer file.Close()
-	r := &fileRead{d: d, path: path, file: file, in: in, size: info.Size(), modified: info.ModTime(), deadline: deadline}
+	return d.readSource(path, file, info.Size(), info.ModTime(), in, deadline)
+}
+
+// fileSource is what a read of read_file reads: the file opened, read at offsets, and from its
+// start for a file showing no size (see readSource).
+type fileSource interface {
+	io.Reader
+	io.ReaderAt
+}
+
+// readSource reads the lines of in from src, the regular file at path opened, of size bytes and
+// modified then, scanning it until deadline at most: readFileNow once the file is opened and
+// checked, for tests to read a source of their own.
+func (d *daemon) readSource(path string, src fileSource, size int64, modified time.Time, in tools.ReadFileInput,
+	deadline time.Time) result {
+	r := &fileRead{d: d, path: path, src: src, in: in, size: size, modified: modified, deadline: deadline}
 	if in.StartLine == 0 && in.MaxLines == 0 {
 		return r.whole()
 	}
+	if r.size == 0 {
+		if refused := r.copyWhole(); refused != nil {
+			return *refused
+		}
+	}
 	return r.lines()
+}
+
+// maxCopy bounds the copy of a file showing no size read by range (see copyWhole): /proc/kallsyms
+// takes 10 to 20 MB, and some files never end (/proc/self/pagemap).
+const maxCopy = 64 << 20
+
+// copyWhole reads the file, showing no size (/proc, /sys), whole and once, from its start, and
+// makes that copy the source of the read: such a file is generated again at each read at an offset,
+// its content changing length (counters growing a digit), so that an offset found in one read lands
+// elsewhere in the next, and a range found by offsets comes cut. A read from the start goes on in
+// the content it started with, as cat reads it. Rather than scanning it as a regular file is, by
+// offsets: a range is found and read by several reads. Bounded by maxCopy and the deadline: beyond,
+// the read is refused, pointing to the terminal.
+func (r *fileRead) copyWhole() *result {
+	var data bytes.Buffer
+	buf := make([]byte, scanChunk)
+	for {
+		if time.Now().After(r.deadline) {
+			return &result{outcome: failed, err: errDeadline, text: fmt.Sprintf("%s shows no size, as files of /proc "+
+				"do, and could not be read whole in time to read a range of it: use the terminal (sed -n, tail -n).",
+				r.path)}
+		}
+		n, err := r.src.Read(buf)
+		data.Write(buf[:n])
+		if data.Len() > maxCopy {
+			return &result{outcome: failed, text: fmt.Sprintf("%s shows no size, as files of /proc do, and holds more "+
+				"than %s, the most read_file copies to read a range of it: use the terminal (sed -n, tail -n).", r.path,
+				sizeText(maxCopy))}
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			failure := r.d.fileFailure(err, "Reading "+r.path, read, false)
+			return &failure
+		}
+	}
+	r.src, r.size, r.seen = bytes.NewReader(data.Bytes()), int64(data.Len()), int64(data.Len())
+	return nil
 }
 
 // end is the offset reads stop at.
@@ -133,7 +193,7 @@ func (r *fileRead) end() int64 {
 // The start of the file is checked to be text all the same, as a range of it would be refused.
 func (r *fileRead) whole() result {
 	budget := r.d.readBudget
-	data, err := io.ReadAll(io.LimitReader(io.NewSectionReader(r.file, 0, r.end()), int64(budget)+1))
+	data, err := io.ReadAll(io.LimitReader(io.NewSectionReader(r.src, 0, r.end()), int64(budget)+1))
 	if err != nil {
 		return r.d.fileFailure(err, "Reading "+r.path, read, false)
 	}
@@ -223,7 +283,7 @@ func (r *fileRead) collect(offset int64, first, before int) result {
 	// The header is written once the lines are read: room is left for its longest form, a fixed
 	// text with numbers and sizes around the path.
 	room := budget - len(r.path) - 256
-	reader := bufio.NewReader(io.NewSectionReader(r.file, offset, r.end()-offset))
+	reader := bufio.NewReader(io.NewSectionReader(r.src, offset, r.end()-offset))
 	maxLines := int(min(r.in.MaxLines, math.MaxInt))
 	var content bytes.Buffer
 	// consumed is the size of the lines read, from offset; next is the line to continue with
@@ -391,7 +451,7 @@ func (r *fileRead) scan(from, to int64) (newLines int, scanned int64, endsWithNe
 		if time.Now().After(r.deadline) {
 			return 0, 0, false, errDeadline
 		}
-		n, err := r.file.ReadAt(buf[:min(int64(len(buf)), to-offset)], offset)
+		n, err := r.src.ReadAt(buf[:min(int64(len(buf)), to-offset)], offset)
 		newLines += bytes.Count(buf[:n], []byte{'\n'})
 		if n > 0 {
 			endsWithNewLine = buf[n-1] == '\n'
@@ -436,7 +496,7 @@ func (r *fileRead) lineFromStart(number int) (offset int64, lines int, found boo
 		if time.Now().After(r.deadline) {
 			return 0, 0, false, errDeadline
 		}
-		n, err := r.file.ReadAt(buf[:min(int64(len(buf)), r.end()-offset)], offset)
+		n, err := r.src.ReadAt(buf[:min(int64(len(buf)), r.end()-offset)], offset)
 		chunk := buf[:n]
 		for len(chunk) > 0 && newLines < number-1 {
 			i := bytes.IndexByte(chunk, '\n')
@@ -458,7 +518,7 @@ func (r *fileRead) lineFromStart(number int) (offset int64, lines int, found boo
 	}
 	// the line exists if a byte follows the new line before it
 	var probe [1]byte
-	if n, _ := r.file.ReadAt(probe[:], offset); newLines == number-1 && n == 1 {
+	if n, _ := r.src.ReadAt(probe[:], offset); newLines == number-1 && n == 1 {
 		return offset, 0, true, nil
 	}
 	lines = newLines
@@ -476,7 +536,7 @@ func (r *fileRead) lineFromEnd(count int) (offset int64, clamped bool, err error
 	end := r.size
 	// a new line ending the file ends its last line, it does not start another
 	var lastByte [1]byte
-	if _, err = r.file.ReadAt(lastByte[:], end-1); err != nil && !errors.Is(err, io.EOF) {
+	if _, err = r.src.ReadAt(lastByte[:], end-1); err != nil && !errors.Is(err, io.EOF) {
 		return 0, false, err
 	}
 	if lastByte[0] == '\n' {
@@ -488,7 +548,7 @@ func (r *fileRead) lineFromEnd(count int) (offset int64, clamped bool, err error
 			return 0, false, errDeadline
 		}
 		start := max(0, end-int64(len(buf)))
-		n, err := r.file.ReadAt(buf[:end-start], start)
+		n, err := r.src.ReadAt(buf[:end-start], start)
 		if err != nil && !errors.Is(err, io.EOF) {
 			return 0, false, err
 		}
