@@ -126,9 +126,10 @@ fetches nothing.
   the certificates revoked since. Issued at the same date, it is the same CRL.
 
 What happens to the CRL is told to its holder (`Side.OnCRL`): a newer CRL, which rat logs and on
-which it closes its idle connections (see below), and a fetch failing, logged as a warning at
-once, every fetch being an early signal, with when the CRL held goes stale. ratd shows the latter
-in its status line.
+which it closes its idle connections (see below); every fetch returning a valid CRL, newer or
+not, which clears the warning of a failure; and a fetch failing, logged as a warning at once,
+every fetch being an early signal, with when the CRL held goes stale. ratd shows the failure in
+its status line until a fetch succeeds again.
 
 Each side checks the certificate of its peer, and its own, which a side revoked tells rather
 than its peers refusing it:

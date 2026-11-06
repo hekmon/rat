@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -146,6 +147,18 @@ func TestParseCRL(t *testing.T) {
 			t.Errorf("expected an error telling no next update, got %v", err)
 		}
 	})
+
+	// critical extensions Go reads are accepted, as real PKIs mark them
+	t.Run("critical extensions Go reads", func(t *testing.T) {
+		number, err := asn1.Marshal(big.NewInt(2))
+		if err != nil {
+			t.Fatal(err)
+		}
+		crl := crlOf(t, ca, day, nil, []pkix.Extension{{Id: asn1.ObjectIdentifier{2, 5, 29, 20}, Critical: true, Value: number}}, nil)
+		if _, err = parseCRL(crl, ca.cert, time.Now()); err != nil {
+			t.Errorf("expected a critical CRL number to be accepted, got %v", err)
+		}
+	})
 }
 
 // TestCRLURL guards where the CRL of a side is fetched from: the first distribution point of its
@@ -189,6 +202,74 @@ func TestCRLURL(t *testing.T) {
 	}
 }
 
+// TestCRLTimeout guards that a fetch ends with the context of the check: a PKI that does not
+// answer fails the request rather than hanging it.
+func TestCRLTimeout(t *testing.T) {
+	ca := crlCA(t, "t")
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer server.Close()
+	defer close(release)
+	ratd := crlSide(t, ca, Server, "t", server.URL+"/t.crl")
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if err := ratd.CheckRevoked(ctx, crlSide(t, ca, Client, "alice").Certificate.Leaf); !errors.Is(err, ErrCRL) {
+		t.Errorf("expected ErrCRL, got %v", err)
+	}
+	if waited := time.Since(start); waited > 5*time.Second {
+		t.Errorf("expected the check to end with its context, waited %s", waited)
+	}
+}
+
+// TestCRLEventsReentrant guards that an event may check the side again: they are told outside the
+// locks of its CRL, so that a holder reacting to a failure, by retrying, does not deadlock.
+func TestCRLEventsReentrant(t *testing.T) {
+	ca := crlCA(t, "t")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	ratd := crlSide(t, ca, Server, "t", server.URL+"/t.crl")
+	deadline := time.After(5 * time.Second)
+	done := make(chan error, 1)
+	reentered := false
+	ratd.OnCRL(CRLEvents{Failed: func(error, *CRL) {
+		if reentered {
+			return
+		}
+		reentered = true
+		_, err := ratd.CRL(context.Background())
+		done <- err
+	}})
+	first := make(chan error, 1)
+	go func() {
+		_, err := ratd.CRL(context.Background())
+		first <- err
+	}()
+	select {
+	case err := <-first:
+		if !errors.Is(err, ErrCRL) {
+			t.Fatalf("expected ErrCRL, got %v", err)
+		}
+	case <-deadline:
+		t.Fatal("an event checking the side again deadlocked")
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrCRL) {
+			t.Errorf("reentrant check: expected ErrCRL, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the reentrant check never returned")
+	}
+}
+
 // TestSideCRL guards the CRL a side holds: none without a distribution point; fetched when first
 // needed, kept while valid, fetched again once stale; ErrRevoked when it revokes the side itself
 // or a peer (CheckRevoked); ErrCRL when it can not be had (an HTTP error, a body over the bound, a
@@ -228,7 +309,9 @@ func TestSideCRL(t *testing.T) {
 		t.Errorf("bob: expected ErrRevoked, got %v", err)
 	}
 
+	ratd.revocation.mu.Lock()
 	ratd.revocation.crl.NextUpdate = time.Now().Add(-time.Second)
+	ratd.revocation.mu.Unlock()
 	body = crlOf(t, ca, 24*time.Hour, []*big.Int{ratd.Certificate.Leaf.SerialNumber}, nil, nil)
 	if _, err := ratd.CRL(ctx); !errors.Is(err, ErrRevoked) || fetches != 2 {
 		t.Errorf("stale, then revoking the side: expected ErrRevoked after a second fetch, got %v after %d", err, fetches)
@@ -332,8 +415,8 @@ func waitRefreshed(t *testing.T, r *revocation) {
 // machine asleep for days counts them, and a clock set back fetches. While the CRL held is valid,
 // a check returns at once, fetching in the background crlRefresh after the last fetch, crlRetry
 // after a failure, keeping the CRL held; a CRL older than the one held is refused. Without a
-// valid CRL, every check fetches, and fails while it can not. Each new CRL, and each failure, is
-// told to the events of the side.
+// valid CRL, every check fetches, and fails while it can not. Each fetch succeeding, newer or
+// not, and each failure, is told to the events of the side.
 func TestCRLRefresh(t *testing.T) {
 	ca := crlCA(t, "t")
 	var mu sync.Mutex
@@ -365,10 +448,12 @@ func TestCRLRefresh(t *testing.T) {
 	ratd := crlSide(t, ca, Server, "t", server.URL)
 	bob := crlSide(t, ca, Client, "bob")
 	var news []*CRL
+	var succeeded []*CRL
 	var failures []error
 	ratd.OnCRL(CRLEvents{
-		Fetched: func(crl *CRL) { mu.Lock(); news = append(news, crl); mu.Unlock() },
-		Failed:  func(err error, _ *CRL) { mu.Lock(); failures = append(failures, err); mu.Unlock() },
+		Fetched:   func(crl *CRL) { mu.Lock(); news = append(news, crl); mu.Unlock() },
+		Succeeded: func(crl *CRL) { mu.Lock(); succeeded = append(succeeded, crl); mu.Unlock() },
+		Failed:    func(err error, _ *CRL) { mu.Lock(); failures = append(failures, err); mu.Unlock() },
 	})
 	check := func(step string, expectedFetches int, expectedErr error) {
 		t.Helper()
@@ -415,7 +500,48 @@ func TestCRLRefresh(t *testing.T) {
 	if len(news) != 2 || news[1].Len() != 1 {
 		t.Errorf("expected 2 new CRLs told, the second revoking bob, got %d", len(news))
 	}
+	if len(succeeded) != 4 {
+		t.Errorf("expected 4 successful fetches told, newer or not, got %d", len(succeeded))
+	}
 	if len(failures) != 4 || !strings.Contains(failures[0].Error(), "before the CRL held") {
 		t.Errorf("expected 4 failures told, the first refusing the older CRL, got %v", failures)
+	}
+}
+
+// TestCRLConcurrentFirstFetch guards that concurrent checks before any CRL is held fetch it once,
+// the others using what the first fetched: concurrent callers must not become concurrent fetches
+// against the PKI.
+func TestCRLConcurrentFirstFetch(t *testing.T) {
+	ca := crlCA(t, "t")
+	body := crlOf(t, ca, 24*time.Hour, nil, nil, nil)
+	var fetches atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fetches.Add(1)
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+	ratd := crlSide(t, ca, Server, "t", server.URL+"/t.crl")
+	alice := crlSide(t, ca, Client, "alice")
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	errs := make(chan error, 8)
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs <- ratd.CheckRevoked(context.Background(), alice.Certificate.Leaf)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Errorf("concurrent check: expected no error, got %v", err)
+		}
+	}
+	if n := fetches.Load(); n != 1 {
+		t.Errorf("expected the CRL fetched once, got %d fetches", n)
 	}
 }

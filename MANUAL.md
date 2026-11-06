@@ -220,7 +220,8 @@ What rat can not prevent is an agent opening a way in as its Unix user, without 
 - **What outlives the service** (crontab, user services): a Unix user of its own lets you find it
   and lock it (see What outlives the service).
 
-Stopping the service stops all of it but the last, with systemd (see The kill switch).
+Stopping the service stops all of it but what belongs to another tenant (its own service), and
+the last, with systemd (see The kill switch).
 
 ### Mutual TLS
 
@@ -344,8 +345,8 @@ names none refuses a peer whose certificate names one, the CA revoking what it c
 names none.
 
 ratd fetches it while starting, and refuses to start without a valid one; rat at its first
-request. Both fetch it again as they are used, every 15 minutes in the background, and at once
-when the CRL they hold is stale.
+request. Both fetch it again as they are used, every 15 minutes in the background, a minute after
+a fetch failing, and at once when the CRL they hold is stale.
 
 - **Reachable from every side.** The CRL is fetched by ratd, and by rat on every machine running a
   harness, through the proxy of their environment if any (`HTTPS_PROXY`, `HTTP_PROXY`): a laptop
@@ -441,7 +442,8 @@ leaves the rest to how you deploy it:
   `prod`, and the session after the client, here `alice`: the terminals of that client). Move
   between its windows with `C-b n`, `C-b p`, `C-b l` and `C-b 0` to `C-b 9`; read-only refuses
   the window list (`C-b w`), and scrolling back (`C-b [`) before tmux 3.7. The terminals are the
-  agents': what you type would reach them, and a window you resize stays so.
+  agents': read-only, what you type does not reach them (tmux refuses every key but the window
+  switches rat binds), and a window you resize stays so.
 - **Keep a trail.** The logs of ratd tell who called, from where, when, which tool on which
   window, never what was typed or read (see Logs in `cmd/ratd/README.md`): the transcripts of the
   harnesses hold that. The audit of the system records every process the user runs, with its
@@ -456,12 +458,13 @@ leaves the rest to how you deploy it:
   Then `ausearch -k rat -i` lists them. A command run through `sudo` runs as root: sudo logs it
   itself.
 - **What outlives the service.** Stopping the service stops the terminals and whatever agents
-  started, detached or not (with systemd; on macOS, end what is left with `pkill -u rat`, see
-  Deployment). What an agent set up to outlive it, as the user (crontab, user services,
-  `~/.ssh/authorized_keys`, files), a dedicated user lets you find all at once, and cut by
-  locking the account: `usermod --expiredate 1 rat`, which expires the account itself, not only
-  its password (`passwd -l`, which stops neither cron jobs nor ssh keys): cron then runs none of
-  its jobs, and sshd refuses it even without `DenyUsers` (measured with Debian 12).
+  started, detached or not (with systemd; on macOS, end what is left with `sudo pkill -KILL -u
+  rat`, which reaches every tenant of the user, see Deployment). What an agent set up to outlive
+  it, as the user (crontab, user services, `~/.ssh/authorized_keys`, files), a dedicated user lets
+  you find all at once, and cut by locking the account: `usermod --expiredate 1 rat`, which expires
+  the account itself, not only its password (`passwd -l`, which stops neither cron jobs nor ssh
+  keys): cron then runs none of its jobs, and sshd refuses it even without `DenyUsers` (measured
+  with Debian 12).
 
 ## Your shell configuration
 

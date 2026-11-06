@@ -29,11 +29,11 @@ PKI briefly down does not fail the startup of the harness, the first request tel
 
 ## Relay
 
-- **Bytes untouched.** rat reads stdin as newline delimited JSON-RPC (up to 16 MiB per message,
-  as the stdio transport of the SDK reads it), and posts each line exactly as read. It writes the
-  body ratd answers exactly as received, on a line of its own. It reads inside a message only to
-  prepare its request, never to rewrite it: not the stdio transport of the SDK, which decodes and
-  encodes messages again.
+- **JSON untouched.** rat reads stdin as newline delimited JSON-RPC (up to 16 MiB per message,
+  as the stdio transport of the SDK reads it), and posts each line as read, surrounding
+  whitespace aside. It writes the body ratd answers on a line of its own, compacted if it spans
+  lines, but not decoded and encoded again: not the stdio transport of the SDK, which does. It
+  reads inside a message only to prepare its request, never to rewrite it.
 - **HTTP side**: a client of its own for the Streamable HTTP transport, reduced to what a
   stateless ratd answering in JSON needs: one POST to `https://HOST:PORT/mcp` per message,
   answered by a JSON body (a response) or by 202 (a notification).

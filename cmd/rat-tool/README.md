@@ -43,9 +43,10 @@ scripts rely on the exit code.
 
 ## check
 
-Checks a running ratd from a client directory, with the flags of rat, declared once in package
-`internal/flags`: a harness command line is checked by copying it. Step by step, stopping at the
-first failure with a message proper to that step:
+Checks a running ratd from a client directory, with the flags naming ratd and the directory
+(`--server`, `--bundle`), shared with rat (package `internal/flags`): a harness command line is
+checked by copying those. Step by step, stopping at the first failure with a message proper to
+that step:
 
 1. **Files**: the checks of `bundle inspect`, and a client directory rather than the server's.
 2. **Network**: the address answers (TCP, 10 seconds at most), on the connection the TLS step
@@ -79,7 +80,7 @@ MCP
   instructions:
     rat gives you persistent terminals on host: …
 Tools
-  ok    8 tools
+  ok    9 tools
     list_windows: List your terminals: …
 ratd at host:7281 serves this client.
 ```

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -41,6 +42,10 @@ func TestRunCRL(t *testing.T) {
 	body = crl(false, "server")
 	if err := run(context.Background(), slog.New(slog.DiscardHandler), dir, defaultReadBudget, notListening); !errors.Is(err, mtls.ErrRevoked) {
 		t.Errorf("revoked: expected mtls.ErrRevoked, got %v", err)
+	}
+	body = crl(true)
+	if err := run(context.Background(), slog.New(slog.DiscardHandler), dir, defaultReadBudget, notListening); !errors.Is(err, mtls.ErrCRL) {
+		t.Errorf("stale CRL: expected mtls.ErrCRL, got %v", err)
 	}
 	server.Close()
 	if err := run(context.Background(), slog.New(slog.DiscardHandler), dir, defaultReadBudget, notListening); !errors.Is(err, mtls.ErrCRL) {
@@ -90,6 +95,41 @@ func TestServeRevoked(t *testing.T) {
 	body = crl(true)
 	addr, _ = startRatd(t, bundle, slog.LevelInfo)
 	expect("carol", http.StatusServiceUnavailable, "no valid CRL of the CA")
+}
+
+// TestServeRevokedLater guards that ratd checks revocation on the requests after its startup,
+// not only when it starts: the CRL it fetched then goes stale, the next request fetches a new one,
+// which revokes the client from then on. The client checks nothing of the server, so only ratd can
+// refuse it.
+func TestServeRevokedLater(t *testing.T) {
+	var mu sync.Mutex
+	var body []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+	pki := testpki.NewSubCA(t, "test-ratd-revoked-later", server.URL+"/t.crl")
+	serve := func(crl []byte) {
+		mu.Lock()
+		defer mu.Unlock()
+		body = crl
+	}
+	start := time.Now()
+	// valid for the first request only: ratd fetches it again once stale
+	serve(pki.CRLAt(start.Add(-time.Hour), start.Add(3*time.Second)))
+	addr, _ := startRatd(t, pki.Dir, slog.LevelInfo)
+	carol := uncheckingClient(t, mtls.ClientDir(pki.Dir, "carol"))
+	if resp, err := postBody(t, carol, addr); err != nil || resp.status != http.StatusOK {
+		t.Fatalf("before the revocation: expected 200, got %+v, %v", resp, err)
+	}
+	serve(pki.CRLAt(start.Add(-time.Minute), start.Add(time.Hour), "carol"))
+	time.Sleep(time.Until(start.Add(3200 * time.Millisecond)))
+	resp, err := postBody(t, carol, addr)
+	if err != nil || resp.status != http.StatusForbidden || !strings.Contains(resp.body, "certificate revoked") {
+		t.Errorf("after the revocation: expected 403 telling the certificate revoked, got %+v, %v", resp, err)
+	}
 }
 
 // response is the status and the body of a response.

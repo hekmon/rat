@@ -161,13 +161,7 @@ func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int
 	}
 	d.notifier, d.status.notifier = notifier, notifier
 	d.status.degrade(append(deployment, degraded...)...)
-	watcher.OnCRL(mtls.CRLEvents{Fetched: func(*mtls.CRL) { d.status.crlRenewed() }, Failed: func(_ error, held *mtls.CRL) {
-		d.status.crlFailed(held)
-	}})
-	watcher.OnWatch(mtls.WatchEvents{
-		Reloaded: func(_ *mtls.Side, newKey bool) { d.status.renewed(time.Now(), newKey) },
-		Refused:  func(err error) { d.status.refused(err) },
-	})
+	watchStatus(watcher, d.status)
 	listener, err := listen()
 	if err != nil {
 		return err
@@ -236,6 +230,26 @@ func logWatch(logger *slog.Logger) mtls.WatchEvents {
 			logger.Warn("bundle files changed and refused, the side in use kept", "error", err)
 		},
 	}
+}
+
+// eventSource is what watchStatus registers on: the Watcher of ratd, and a recorder in tests.
+type eventSource interface {
+	OnCRL(mtls.CRLEvents)
+	OnWatch(mtls.WatchEvents)
+}
+
+// watchStatus tells status what happens to the CRL of the CA and to the files of source: a fetch
+// failing or succeeding again, a certificate renewed, the files refused or restored. Succeeded
+// rather than Fetched: a fetch returning the CRL held clears a failure as well.
+func watchStatus(source eventSource, status *status) {
+	source.OnCRL(mtls.CRLEvents{
+		Succeeded: func(*mtls.CRL) { status.crlSucceeded() },
+		Failed:    func(_ error, held *mtls.CRL) { status.crlFailed(held) },
+	})
+	source.OnWatch(mtls.WatchEvents{
+		Reloaded: func(_ *mtls.Side, newKey bool) { status.renewed(time.Now(), newKey) },
+		Refused:  func(err error) { status.refused(err) },
+	})
 }
 
 // warnExpiry warns now, then every day until ctx is done, if the bundle of side expires soon

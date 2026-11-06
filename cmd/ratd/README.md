@@ -227,11 +227,12 @@ once.
   rather than the background, telling how the tools then follow it (see above): `wait_window`
   where the terminals record prompts, `list_windows` and `read_window`.
   An empty text only presses Enter; an empty text without Enter sends nothing, a message rather
-  than an error. A text holding a control character, tab and new lines aside, is refused, and
-  nothing is sent (see Control characters are refused in `tmux/README.md`): the error names the
-  first one and its line, and points to `send_keys` for keys and `write_file` for content, the two
-  things the agent may have meant. The `text` field tells the rule up front, the description
-  leaves it out: agents rarely send control characters, and the error teaches the one who does.
+  than an error. A text holding a control character, tab, new lines and carriage returns aside,
+  is refused, and nothing is sent (see Control characters are refused in `tmux/README.md`): the
+  error names the first one and its line, and points to `send_keys` for keys and `write_file` for
+  content, the two things the agent may have meant. The `text` field tells the rule up front, the
+  description leaves it out: agents rarely send control characters, and the error teaches the one
+  who does.
 - **`send_keys`** `{window, keys}`: presses keys in order. The description lists the names the
   controller accepts, one per key (aliases are accepted, not shown): a printable character,
   `Space`, `Enter`, `Tab`, `BTab`, `BSpace`, `Escape`, `Up`, `Down`, `Left`, `Right`, `Home`,
@@ -660,11 +661,11 @@ serving tenant prod on [::]:7281 · bracketed paste overridden, bundle expires i
 - **Degradations**: known issues of a ratd serving all the same, logged once when found, and shown
   for as long as they hold, in a fixed order, with short labels (the log tells the details):
   running as root or a bundle its user can write (see Startup), what bash startup files defeat in
-  the terminals or the check not running, the bundle expiring soon (updated daily), the CRL of the
-  CA not renewed (with when the one held goes stale) or none valid, the bundle files changed and
-  refused (a new CA pending a restart, or another reason), the server key changed by a renewal
-  (for a day), the deaths of the tmux server within the window of its restart budget (gone once
-  older). Some exclude others. First in the line, should a terminal cut it.
+  the terminals or the check not running, the bundle expiring soon (updated daily), the bundle
+  files changed and refused (a new CA pending a restart, or another reason), the server key
+  changed by a renewal (for a day), the CRL of the CA not renewed (with when the one held goes
+  stale) or none valid, the deaths of the tmux server within the window of its restart budget
+  (gone once older). Some exclude others. First in the line, should a terminal cut it.
 - **Last seen**, per session, the time of its last request, whatever the method: the five most
   recent, then a count of the others. Last seen rather than active or idle: requests are
   stateless, no connection stays open between them.

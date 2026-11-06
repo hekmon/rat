@@ -180,10 +180,11 @@ else being tmux defaults:
 
 ### Window keys, for a human watching read-only
 
-A human watches the terminals read-only (`attach -r`, as the root README recommends): what they
-type must not reach the agents' shells. tmux then refuses every key but those bound to
-`switch-client` or `detach-client`, the others answering "Client is read-only", the keys moving
-between windows included: the human could only watch the window they attached to.
+A human watches the terminals read-only (`attach -r`, see Watch, read-only in the
+[manual](../MANUAL.md)): what they type must not reach the agents' shells. tmux then refuses every
+key but those bound to `switch-client` or `detach-client`, the others answering "Client is
+read-only", the keys moving between windows included: the human could only watch the window they
+attached to.
 
 rat binds those keys to `switch-client` instead (`windowKeys`): `C-b n`, `p`, `l` and `0` to `9`
 to `switch-client -t :+`, `:-`, `:!` and `:=0` to `:=9`. Switching to a window of the current
@@ -210,8 +211,8 @@ but makes watching several windows a chore.
 Terminals run bash, checked at `StartServer` rather than failing on each new window: it is
 always available, and a single shell keeps terminals the same on every machine. tmux would
 otherwise run the login shell of the account: it changes from one machine to another, a dedicated
-user has none (`nologin`, as the root README sets it up), and each shell would need a prompt hook
-of its own (see Prompts). bash starts as a login shell: it reads `~/.bash_profile` or
+user has none (`nologin`, as the [manual](../MANUAL.md) sets it up), and each shell would need a
+prompt hook of its own (see Prompts). bash starts as a login shell: it reads `~/.bash_profile` or
 `~/.profile`, not `~/.bashrc` unless the profile sources it.
 
 bash 4.4 or later is required, and `StartServer` refuses an older one: pasted text relies on

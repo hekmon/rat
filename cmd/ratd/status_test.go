@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -71,6 +72,68 @@ func TestStatusRender(t *testing.T) {
 	s.stop("closing the door")
 	if line := s.render(now); line != "stopping: closing the door" {
 		t.Errorf("expected the step of the stop alone, got %q", line)
+	}
+}
+
+// recordingSource records the events status registers, for the test to tell them.
+type recordingSource struct {
+	crl   mtls.CRLEvents
+	watch mtls.WatchEvents
+}
+
+func (r *recordingSource) OnCRL(events mtls.CRLEvents)     { r.crl = events }
+func (r *recordingSource) OnWatch(events mtls.WatchEvents) { r.watch = events }
+
+// TestWatchStatus guards that the status follows what happens to the CRL and to the files of the
+// side in use, as ratd registers them: a fetch failing, with when the CRL held goes stale or none
+// held, and succeeding again (the CRL held or a newer one) clearing it; a renewal, the files
+// refused for a new CA pending a restart or another reason, and restored.
+func TestWatchStatus(t *testing.T) {
+	now := time.Now()
+	s := newStatus(slog.New(slog.DiscardHandler))
+	s.serving = "serving"
+	var source recordingSource
+	watchStatus(&source, s)
+	if source.crl.Succeeded == nil || source.crl.Failed == nil || source.watch.Reloaded == nil || source.watch.Refused == nil {
+		t.Fatal("expected the status to be told of the CRL and of the files")
+	}
+	line := func() string {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.render(now)
+	}
+	source.crl.Failed(errors.New("the PKI is down"), &mtls.CRL{NextUpdate: now.Add(3*time.Hour + time.Minute)})
+	if l := line(); !strings.Contains(l, "CRL not renewed, stale in 3h") {
+		t.Errorf("fetch failing: expected when the CRL held goes stale, got %q", l)
+	}
+	// the same CRL fetched again clears it: what failed was reaching the PKI
+	source.crl.Succeeded(nil)
+	if l := line(); strings.Contains(l, "CRL") {
+		t.Errorf("fetch succeeding again: expected nothing of the CRL, got %q", l)
+	}
+	source.crl.Failed(errors.New("the PKI is down"), nil)
+	if l := line(); !strings.Contains(l, "no valid CRL, every client refused") {
+		t.Errorf("no CRL held: expected every client refused, got %q", l)
+	}
+	source.crl.Succeeded(nil)
+	if l := line(); strings.Contains(l, "CRL") {
+		t.Errorf("first CRL fetched: expected nothing of the CRL, got %q", l)
+	}
+	source.watch.Reloaded(nil, true)
+	if l := line(); !strings.Contains(l, "server key changed now") {
+		t.Errorf("renewal with a new key: expected it shown, got %q", l)
+	}
+	source.watch.Refused(fmt.Errorf("%w: ca.crt holds another CA", mtls.ErrCAChanged))
+	if l := line(); !strings.Contains(l, "CA changed, restart pending") {
+		t.Errorf("new CA: expected a restart pending, got %q", l)
+	}
+	source.watch.Refused(errors.New("a file missing"))
+	if l := line(); !strings.Contains(l, "bundle files refused") {
+		t.Errorf("files refused: expected them shown, got %q", l)
+	}
+	source.watch.Refused(nil)
+	if l := line(); strings.Contains(l, "bundle files") || strings.Contains(l, "CA changed") {
+		t.Errorf("files restored: expected nothing of them, got %q", l)
 	}
 }
 
@@ -179,7 +242,7 @@ func TestStatusCalls(t *testing.T) {
 
 // TestStatusCRL guards what the status tells of the CRL of the CA: a renewal failing, with when
 // the CRL held goes stale, every client refused once it did or without one held, and nothing
-// once a newer CRL is fetched.
+// once a fetch succeeds again, the CRL held or a newer one.
 func TestStatusCRL(t *testing.T) {
 	now := time.Now()
 	s := newStatus(slog.New(slog.DiscardHandler))
@@ -191,9 +254,9 @@ func TestStatusCRL(t *testing.T) {
 	if line := s.render(now.Add(4 * time.Hour)); !strings.Contains(line, "no valid CRL, every client refused") {
 		t.Errorf("CRL stale: expected every client refused, got %q", line)
 	}
-	s.crlRenewed()
+	s.crlSucceeded()
 	if line := s.render(now); strings.Contains(line, "CRL") {
-		t.Errorf("renewed: expected nothing of the CRL, got %q", line)
+		t.Errorf("recovered: expected nothing of the CRL, got %q", line)
 	}
 	s.crlFailed(nil)
 	if line := s.render(now); !strings.Contains(line, "no valid CRL, every client refused") {

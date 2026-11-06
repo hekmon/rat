@@ -176,12 +176,16 @@ func TestWatcher(t *testing.T) {
 
 	change(ca.cert, newKey)
 	look()
-	events = nil
+	expect("files restored after another client", rekeyed, told{restored: true})
+
 	_ = os.Remove(filepath.Join(dir, "client.key"))
 	look()
 	expect("key missing", rekeyed, told{refused: ErrFiles})
 	look()
 	expect("key missing, looked at again", rekeyed)
+	change(ca.cert, newKey)
+	look()
+	expect("files restored after a missing key", rekeyed, told{restored: true})
 }
 
 // TestWatcherHandshake guards that ratd presents a certificate renewed at the next handshake,

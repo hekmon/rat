@@ -88,6 +88,9 @@ type CRLEvents struct {
 	// Fetched is told a CRL newer than the one held, or the first: a client closes its idle
 	// connections, for the next request to check the server against it.
 	Fetched func(crl *CRL)
+	// Succeeded is told every fetch returning a valid CRL, newer or not: a holder learns that a
+	// fetch failing has recovered, without closing connections as Fetched does.
+	Succeeded func(crl *CRL)
 	// Failed is told a fetch failing or a CRL refused, with the CRL kept, nil when none valid is
 	// held: every peer is then refused.
 	Failed func(err error, held *CRL)
@@ -220,34 +223,15 @@ func (r *revocation) due(now time.Time) bool {
 // refresh fetches the CRL, once the fetch in flight, if any, is done, and returns the CRL held,
 // valid now. Waiting, it fetches only when the CRL held is still not valid: another call may have
 // fetched it meanwhile. A CRL older than the one held is refused: a CRL replayed would un-revoke
-// the certificates revoked since.
+// the certificates revoked since. The events are told once the locks are released: a holder may
+// check the side again from them.
 func (r *revocation) refresh(ctx context.Context, waiting bool) (*CRL, error) {
-	r.fetch.Lock()
-	defer r.fetch.Unlock()
-	r.mu.Lock()
-	held := r.crl
-	r.mu.Unlock()
-	if waiting && held != nil && crlNow().Before(held.NextUpdate) {
+	held, fetched, events, newer, err := r.fetchAndRecord(ctx, waiting)
+	if fetched == nil && err == nil {
+		// another call held a valid CRL already
 		return held, nil
 	}
-	crl, err := FetchCRL(ctx, r.ca, r.address)
-	if err == nil && held != nil && crl.ThisUpdate.Before(held.ThisUpdate) {
-		err = fmt.Errorf("%w: fetched from %s: issued on %s, before the CRL held, issued on %s", ErrCRL, r.address,
-			crl.ThisUpdate.Format(time.RFC3339), held.ThisUpdate.Format(time.RFC3339))
-	}
-	now := crlNow()
-	r.mu.Lock()
-	r.attempted, r.failed, r.refreshing = now, err != nil, false
-	newer := err == nil && (held == nil || crl.ThisUpdate.After(held.ThisUpdate))
-	if err == nil {
-		r.crl = crl
-	}
-	events := slices.Clone(r.events)
-	r.mu.Unlock()
 	if err != nil {
-		if held != nil && !now.Before(held.NextUpdate) {
-			held = nil
-		}
 		for _, e := range events {
 			if e.Failed != nil {
 				e.Failed(err, held)
@@ -261,11 +245,53 @@ func (r *revocation) refresh(ctx context.Context, waiting bool) (*CRL, error) {
 	if newer {
 		for _, e := range events {
 			if e.Fetched != nil {
-				e.Fetched(crl)
+				e.Fetched(fetched)
 			}
 		}
 	}
-	return crl, nil
+	for _, e := range events {
+		if e.Succeeded != nil {
+			e.Succeeded(fetched)
+		}
+	}
+	return fetched, nil
+}
+
+// fetchAndRecord fetches the CRL and records its outcome, returning what refresh tells: the CRL
+// still held valid when the fetch failed, nil when none; the CRL fetched, nil when another call
+// held a valid one already; the events to tell, whether the CRL fetched is newer, and the error.
+// It tells nothing: the caller tells the events once the locks are released.
+func (r *revocation) fetchAndRecord(ctx context.Context, waiting bool) (held, fetched *CRL, events []CRLEvents, newer bool, err error) {
+	r.fetch.Lock()
+	defer r.fetch.Unlock()
+	r.mu.Lock()
+	held = r.crl
+	r.mu.Unlock()
+	if waiting && held != nil && crlNow().Before(held.NextUpdate) {
+		return held, nil, nil, false, nil
+	}
+	fetched, err = FetchCRL(ctx, r.ca, r.address)
+	if err == nil && held != nil && fetched.ThisUpdate.Before(held.ThisUpdate) {
+		err = fmt.Errorf("%w: fetched from %s: issued on %s, before the CRL held, issued on %s", ErrCRL, r.address,
+			fetched.ThisUpdate.Format(time.RFC3339), held.ThisUpdate.Format(time.RFC3339))
+	}
+	now := crlNow()
+	r.mu.Lock()
+	r.attempted, r.failed, r.refreshing = now, err != nil, false
+	newer = err == nil && (held == nil || fetched.ThisUpdate.After(held.ThisUpdate))
+	if err == nil {
+		r.crl = fetched
+	}
+	events = slices.Clone(r.events)
+	r.mu.Unlock()
+	if err != nil {
+		// a CRL that went stale meanwhile is no longer held
+		if held != nil && !now.Before(held.NextUpdate) {
+			held = nil
+		}
+		return held, nil, events, false, err
+	}
+	return held, fetched, events, newer, nil
 }
 
 // revokedError returns the error telling crl revokes cert.

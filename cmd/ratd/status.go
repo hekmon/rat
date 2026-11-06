@@ -166,8 +166,10 @@ func (s *status) crlFailed(held *mtls.CRL) {
 	s.tell(time.Now())
 }
 
-// crlRenewed records that a CRL newer than the one held was fetched, and tells systemd at once.
-func (s *status) crlRenewed() {
+// crlSucceeded records that a fetch of the CRL of the CA succeeded, clearing the warning of a
+// fetch failing, and tells systemd at once. A fetch returning the CRL held counts: what failed
+// was reaching the PKI, not the CRL changing.
+func (s *status) crlSucceeded() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.crlFailing = false
