@@ -29,7 +29,8 @@ The CA private key only lives in memory while a bundle is generated, and is neve
 - no certificate can be issued later, not even by someone controlling the server;
 - revoking is generating a new bundle: there is no CRL nor OCSP (Go does not check revocation of
   client certificates by itself anyway);
-- the CA can sign no intermediate CA (`MaxPathLen` 0): a chain is always the CA, then the leaf.
+- the CA can sign no intermediate CA (`MaxPathLen` 0): a chain is always the CA, then the leaf
+  (loading a side checks it, see below).
 
 One bundle per tenant: a client of one tenant can not reach the ratd of another, even on the
 same machine, which a CA shared between tenants would allow.
@@ -206,7 +207,11 @@ reports one line per check, the ones before a failure having passed:
    without its mode gets the one of the umask, usually readable by every user, and a client key
    grants a shell. Not checked on Windows, where harnesses may run and modes mean nothing.
 3. **Key**: the key matches the certificate.
-4. **CA**: `ca.crt` is a CA, which signed the certificate.
+4. **CA**: `ca.crt` is a CA, which signed the certificate, and signs no CA (path length limited
+   to 0). The TLS server of Go builds the chain of a client with the intermediate CAs the client
+   sends: a CA allowed to sign CAs would let into ratd the certificates of every CA under it,
+   rather than only those it signs. The CA of a bundle never is one, a directory filled by other
+   means may hold one.
 5. **Role**: the certificate authenticates the side its file names, and only it: a client must
    not run a server with its certificate, nor the other way round. Stricter than the
    verification of Go in TLS handshakes, which accepts a certificate carrying both roles.

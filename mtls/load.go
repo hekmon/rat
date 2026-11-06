@@ -27,8 +27,8 @@ var (
 	ErrKeyPermissions = errors.New("private key readable by others")
 	// ErrKeyMismatch is returned for a private key not matching the certificate.
 	ErrKeyMismatch = errors.New("private key not matching the certificate")
-	// ErrNotSignedByCA is returned for a certificate not signed by the CA of its directory, or a
-	// CA certificate that is not one.
+	// ErrNotSignedByCA is returned for a certificate not signed by the CA of its directory, a CA
+	// certificate that is not one, or a CA allowed to sign other CAs.
 	ErrNotSignedByCA = errors.New("certificate not signed by the CA")
 	// ErrRole is returned for a certificate not authenticating the side its file names, or not
 	// only it.
@@ -53,7 +53,7 @@ func Checks() []Check {
 		{"files of a side", ErrFiles},
 		{"key readable by its owner only", ErrKeyPermissions},
 		{"key matching the certificate", ErrKeyMismatch},
-		{"certificate signed by the CA", ErrNotSignedByCA},
+		{"certificate signed by the CA, which signs no CA", ErrNotSignedByCA},
 		{"certificate of its role only", ErrRole},
 		{"certificates valid now", ErrValidity},
 		{"plain names", names.ErrInvalid},
@@ -95,7 +95,8 @@ func (s *Side) NotAfter() time.Time {
 //     certificates in ca.crt would all be trusted;
 //  2. key permissions (ErrKeyPermissions): the key is readable by its owner only (not on Windows);
 //  3. key (ErrKeyMismatch): the key matches the certificate;
-//  4. CA (ErrNotSignedByCA): ca.crt is a CA, which signed the certificate;
+//  4. CA (ErrNotSignedByCA): ca.crt is a CA, which signed the certificate and signs no CA: ratd
+//     would let in the certificates of every CA under it;
 //  5. role (ErrRole): the certificate authenticates the side its file names, and only it;
 //  6. validity (ErrValidity): the certificate and the CA are valid now;
 //  7. names (names.ErrInvalid): the certificate and the CA carry plain names.
@@ -178,6 +179,13 @@ func checkSide(role Role, ca, cert *x509.Certificate, key crypto.Signer, labels 
 	// allowed to sign certificates (key usage): ca.crt needs no check of its own.
 	if err := cert.CheckSignatureFrom(ca); err != nil {
 		return nil, fmt.Errorf("%w: %s is not signed by %s: %w", ErrNotSignedByCA, labels.cert, labels.ca, err)
+	}
+	// The TLS server of Go builds the chain of a client with the intermediate CAs the client sends:
+	// a CA allowed to sign CAs would let into ratd the certificates of every CA under it, rather
+	// than only those it signs. As Go reads a certificate, a limit of 0 sets both fields.
+	if ca.MaxPathLen != 0 || !ca.MaxPathLenZero {
+		return nil, fmt.Errorf("%w: %s may sign other CAs, whose certificates ratd would let in: its path length must be limited to 0",
+			ErrNotSignedByCA, labels.ca)
 	}
 	// 5. role: exactly the one of the side, so that a client can not run a server with its
 	// certificate, nor the other way round. Stricter than the verification of Go (TLS handshakes),

@@ -2,6 +2,8 @@ package mtls
 
 import (
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
 	"io"
 	"net"
@@ -14,6 +16,27 @@ import (
 func testCA(t *testing.T, tenant string) credential {
 	t.Helper()
 	ca, err := newCA(tenant, time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ca
+}
+
+// caWithPathLen returns a CA named name, valid for the test, signed by parent (self-signed if
+// nil), and allowed to sign pathLen levels of CAs under it, as many as it wants for -1: what
+// another PKI may issue, and Generate never does.
+func caWithPathLen(t *testing.T, name string, pathLen int, parent *credential) credential {
+	t.Helper()
+	ca, err := create(&x509.Certificate{
+		Subject:               pkix.Name{Organization: []string{caOrganization}, CommonName: name},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+		MaxPathLen:            pathLen,
+		MaxPathLenZero:        pathLen == 0,
+	}, parent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,4 +212,40 @@ func TestConfigs(t *testing.T) {
 			t.Errorf("client configuration of the server: expected ErrRole, got %v", err)
 		}
 	})
+}
+
+// TestConfigsCAUnder guards why Load refuses a CA allowed to sign CAs: the server lets in a client
+// whose certificate comes from a CA under its own, sent along with it. A CA signing no CA, as the
+// CA of a bundle, refuses it, even when its key signed a CA all the same.
+func TestConfigsCAUnder(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		pathLen  int
+		accepted bool
+	}{
+		{"CA signing CAs", -1, true},
+		{"CA signing no CA", 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ca := caWithPathLen(t, "t", tc.pathLen, nil)
+			under := caWithPathLen(t, "under", 0, &ca)
+			server := testSide(t, ca, "t", Server, true)
+			mallory := testSide(t, under, "mallory", Client, true)
+			// sent with the CA it comes from, as any TLS client can, though rat never does
+			mallory.Certificate.Certificate = append(mallory.Certificate.Certificate, under.cert.Raw)
+			mallory.CA = ca.cert
+			serverConfig, err := ServerConfig(server)
+			if err != nil {
+				t.Fatal(err)
+			}
+			clientConfig, err := ClientConfig(mallory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c := connect(t, serverConfig, clientConfig)
+			if accepted := c.server == nil && c.serverSaw == "mallory"; accepted != tc.accepted {
+				t.Errorf("expected the server to accept the client: %v, got %+v", tc.accepted, c)
+			}
+		})
+	}
 }

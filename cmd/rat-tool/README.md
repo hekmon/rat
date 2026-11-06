@@ -27,9 +27,10 @@ to its side only.
 
 Offline, for each directory: the checks ratd and rat run at startup, one line per check until
 one fails (`mtls.Checks`: files of a side, key readable by its owner only, key matching the
-certificate, certificate signed by the CA, of its role only, certificates valid now, plain
-names), then which side it is (from its certificate), its name (the tenant, or the client, which
-is its session), the CA fingerprint and the remaining validity, with a warning under a year.
+certificate, certificate signed by the CA, which signs no CA, of its role only, certificates
+valid now, plain names), then which side it is (from its certificate), its name (the tenant, or
+the client, which is its session), the CA fingerprint and the remaining validity, with a warning
+under a year.
 
 Given several directories, it tells whether they belong to the same bundle (the same CA): mixing
 the files of two bundles is the likeliest mistake, and a handshake only reports it as an opaque

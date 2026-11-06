@@ -63,6 +63,22 @@ func TestLoadChecks(t *testing.T) {
 	now := time.Now()
 	other := newBundle(t, now)
 	otherAlice := filepath.Join(other, "clients", "alice")
+	// alice issued by a CA allowed to sign pathLen levels of CAs, as many as it wants for -1
+	caSigningCAs := func(pathLen int) func(t *testing.T, bundle, alice string) {
+		return func(t *testing.T, bundle, alice string) {
+			ca := caWithPathLen(t, "t", pathLen, nil)
+			client, err := issue(ca, "alice", Client, now.Add(-time.Hour), now.Add(time.Hour))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, file := range []string{"ca.crt", "client.crt", "client.key"} {
+				_ = os.Remove(filepath.Join(alice, file))
+			}
+			if err = writeSide(alice, ca.cert, client, Client); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	for _, tc := range []struct {
 		name     string
 		age      time.Duration
@@ -104,6 +120,9 @@ func TestLoadChecks(t *testing.T) {
 			copyFile(t, filepath.Join(otherAlice, "client.crt"), filepath.Join(alice, "client.crt"))
 			copyFile(t, filepath.Join(otherAlice, "client.key"), filepath.Join(alice, "client.key"))
 		}, ErrNotSignedByCA},
+		// ratd would let in the certificates of the CAs under it (TestConfigsCAUnder)
+		{"CA signing CAs", 0, caSigningCAs(-1), ErrNotSignedByCA},
+		{"CA signing a level of CAs", 0, caSigningCAs(1), ErrNotSignedByCA},
 		// the server certificate, and its key, standing for a client
 		{"server certificate", 0, func(t *testing.T, bundle, alice string) {
 			copyFile(t, filepath.Join(bundle, "server", "server.crt"), filepath.Join(alice, "client.crt"))
