@@ -236,10 +236,13 @@ func samePublicKey(a, b *Side) bool {
 	return ok && key.Equal(b.Certificate.Leaf.PublicKey)
 }
 
-// fileStamp identifies the content of a file without reading it: its size and modification time,
-// which a copy, a rename or a write changes.
+// fileStamp identifies a file without reading it: its size, mode and modification time, which a
+// copy, a rename, a write or a chmod changes. The mode matters on its own: fixing a key refused
+// for being readable by others takes a chmod, which changes neither its size nor its modification
+// time, and the files would otherwise never be looked at again.
 type fileStamp struct {
 	size    int64
+	mode    os.FileMode
 	modTime time.Time
 }
 
@@ -252,7 +255,7 @@ func stampFiles(dir string, role Role) ([]fileStamp, error) {
 		if err != nil {
 			return nil, err
 		}
-		stamps = append(stamps, fileStamp{info.Size(), info.ModTime()})
+		stamps = append(stamps, fileStamp{info.Size(), info.Mode(), info.ModTime()})
 	}
 	return stamps, nil
 }

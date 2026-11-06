@@ -188,6 +188,47 @@ func TestWatcher(t *testing.T) {
 	expect("files restored after a missing key", rekeyed, told{restored: true})
 }
 
+// TestWatcherKeyMode guards that a Watcher retries the files of a key refused for being readable
+// by others once fixed with chmod, which changes neither their size nor their modification time:
+// the side in use is kept while refused, and the files are told restored once loaded.
+func TestWatcherKeyMode(t *testing.T) {
+	ca := crlCA(t, "t")
+	dir := filepath.Join(t.TempDir(), "alice")
+	issued := renewal(t, ca, Client, "alice", nil)
+	rewrite(t, dir, ca.cert, issued, Client, time.Now().Add(-time.Hour))
+	w, err := Watch(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []error
+	w.OnWatch(WatchEvents{Refused: func(err error) { events = append(events, err) }})
+	// look now, past the interval
+	look := func() *Side {
+		w.mu.Lock()
+		w.checked = time.Time{}
+		w.mu.Unlock()
+		return w.Side()
+	}
+	key := filepath.Join(dir, keyFile(Client))
+	if err = os.Chmod(key, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	look()
+	if len(events) != 1 || !errors.Is(events[0], ErrKeyPermissions) {
+		t.Fatalf("expected the key refused, got %v", events)
+	}
+	if side := w.Side(); !side.Certificate.Leaf.Equal(issued.cert) {
+		t.Errorf("refused: expected the side in use kept, got %s", side.Certificate.Leaf.SerialNumber)
+	}
+	if err = os.Chmod(key, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	look()
+	if len(events) != 2 || events[1] != nil {
+		t.Fatalf("expected the files restored, got %v", events)
+	}
+}
+
 // TestWatcherHandshake guards that ratd presents a certificate renewed at the next handshake,
 // with the configuration it built when starting.
 func TestWatcherHandshake(t *testing.T) {
