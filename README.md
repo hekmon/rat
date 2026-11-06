@@ -3,7 +3,8 @@
 Shell access for AI agents, over MCP, as you get yours with ssh and tmux: persistent terminals on a
 remote machine, which agents drive as a human does, and which a human operator can cut at once.
 
-- **What it does:** [What it is](#what-it-is) · [Not a tmux MCP server](#not-a-tmux-mcp-server) ·
+- **What it does:** [What it is](#what-it-is) · [The name](#the-name) ·
+  [Not a tmux MCP server](#not-a-tmux-mcp-server) ·
   [Knowing when a command is done](#knowing-when-a-command-is-done) ·
   [What RAT takes on](#what-rat-takes-on) · [Tools](#tools)
 - **Trying it:** [Components](#components) ·
@@ -39,6 +40,13 @@ Mutual TLS, a service, a Unix user of its own: none of it depends on how many pe
 machine opened to the network takes the same care for one person as for a team, and more with an
 agent at the keyboard: whoever finds the port tries it, and the agent may run a mistaken command,
 or an instruction it read in a web page or a file.
+
+## The name
+
+Yes, it is a RAT: a remote shell on your machine, driven by something you do not fully control.
+But this one is yours: you install it, it listens where you tell it, admits only those you issued
+a key to, runs in plain sight, and lets go of every terminal when you stop it. The other kind does
+not ask.
 
 ## Not a tmux MCP server
 
