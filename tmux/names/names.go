@@ -41,3 +41,25 @@ func CheckWindow(name string) error {
 	}
 	return nil
 }
+
+// clientName matches the names tmux may give a client: client-<pid> for a client without a
+// terminal, and the terminals directly under /dev (tty1, ttyS0, ttys003 on macOS, console), which
+// it matches without /dev/. Terminals under a directory of /dev (pts/3) can not be plain names.
+var clientName = regexp.MustCompile(`^(?:client-[0-9]+|tty.*|console)$`)
+
+// CheckSession returns an error wrapping ErrInvalid if name is not a plain name (see Check), or may
+// be the name of a tmux client: when no session has the name a target asks for, tmux tries it as
+// the name of a client, even after '=', and reaches the session of that client. A session missing
+// (its client not called yet) would have its commands act on the windows of another session. Not
+// every name a terminal can have is refused (hvc0, on some virtual machines), only those of the
+// terminals humans attach from, and of clients without one.
+func CheckSession(name string) error {
+	if err := Check(name); err != nil {
+		return err
+	}
+	if clientName.MatchString(name) {
+		return fmt.Errorf("%w %q: a session name can not be the name tmux gives a client (client-<pid>, or a "+
+			"terminal: tty…, console), whose session tmux would reach instead", ErrInvalid, name)
+	}
+	return nil
+}

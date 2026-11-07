@@ -46,6 +46,8 @@ func TestCheckPeer(t *testing.T) {
 			names.ErrInvalid, `invalid name "alice\nSTOPPING=1"`},
 		{"display name", ratd, named("Doe, John", now.Add(-time.Hour), now.Add(time.Hour)), names.ErrInvalid,
 			`invalid name "Doe, John"`},
+		{"name of a tmux client", ratd, named("client-1", now.Add(-time.Hour), now.Add(time.Hour)), names.ErrInvalid,
+			`invalid name "client-1": a session name can not be the name tmux gives a client`},
 		{"expired", ratd, peer(now.Add(-2*time.Hour), now.Add(-time.Hour)), ErrValidity, "the certificate of alice expired on"},
 		{"not valid yet", ratd, peer(now.Add(time.Hour), now.Add(2*time.Hour)), ErrValidity,
 			"the certificate of alice is not valid before"},

@@ -10,9 +10,9 @@ import (
 )
 
 // CheckPeer checks cert, the certificate of a peer checked during the handshake of its
-// connection, again for a request on that connection: its name a plain name, it and the CA of the
-// side valid now, then not revoked (see CheckRevoked). The error wraps names.ErrInvalid,
-// ErrValidity, ErrRevoked or ErrCRL.
+// connection, again for a request on that connection: its name a plain name (of a session, for
+// the peer of ratd: see names.CheckSession), it and the CA of the side valid now, then not
+// revoked (see CheckRevoked). The error wraps names.ErrInvalid, ErrValidity, ErrRevoked or ErrCRL.
 //
 // The name first, which Load checks of the certificate of a side, not of its peers: ratd takes
 // the session from it and shows it in its status line, where a new line would start other fields
@@ -22,7 +22,12 @@ import (
 // expired since going on working on it, while a PKI issuing short-lived certificates relies on
 // their expiry alone.
 func (s *Side) CheckPeer(ctx context.Context, cert *x509.Certificate) error {
-	if err := names.Check(cert.Subject.CommonName); err != nil {
+	// the peer of ratd is a client, naming its session (names.CheckSession), the one of a client ratd
+	checkName := names.Check
+	if s.Role == Server {
+		checkName = names.CheckSession
+	}
+	if err := checkName(cert.Subject.CommonName); err != nil {
 		return fmt.Errorf("the certificate of the peer: %w", err)
 	}
 	now := time.Now()

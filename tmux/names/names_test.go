@@ -38,3 +38,22 @@ func TestCheckWindow(t *testing.T) {
 		}
 	}
 }
+
+// TestCheckSession guards the rule of session names: plain names, but not the name of a tmux client
+// (client-<pid> for a client without a terminal, a terminal under /dev: tty1, ttyS0, ttys003 on
+// macOS, console), which tmux reaches the session of when no session has the name asked, even after
+// '='. Names only looking alike (client-a, mytty, TTY1, consoles) are names.
+func TestCheckSession(t *testing.T) {
+	for _, name := range []string{"alice", "client", "client-", "client-a", "client-1a", "Client-1", "mytty", "TTY1",
+		"consoles", "con"} {
+		if err := CheckSession(name); err != nil {
+			t.Errorf("name %q: %v", name, err)
+		}
+	}
+	for _, name := range []string{"client-1", "client-4242", "tty", "tty1", "ttyS0", "ttyUSB0", "ttys003", "console", "",
+		"a:b"} {
+		if err := CheckSession(name); !errors.Is(err, ErrInvalid) {
+			t.Errorf("name %q: expected ErrInvalid, got %v", name, err)
+		}
+	}
+}

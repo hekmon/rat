@@ -69,7 +69,8 @@ func generate(dir, tenant string, clients []string, now time.Time) (bundle Bundl
 	}
 	seen := make(map[string]bool, len(clients))
 	for _, client := range clients {
-		if err = names.Check(client); err != nil {
+		// a client names its session (names.CheckSession)
+		if err = names.CheckSession(client); err != nil {
 			return bundle, fmt.Errorf("client: %w", err)
 		}
 		if seen[client] {

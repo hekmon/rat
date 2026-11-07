@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -49,6 +50,43 @@ func TestSessions(t *testing.T) {
 	}
 	if err = c.KillSession(ctx, "s1"); !errors.Is(err, ErrSessionNotFound) {
 		t.Errorf("expected ErrSessionNotFound, got %v", err)
+	}
+}
+
+// TestSessionsClientNames guards why session names are not names of tmux clients
+// (names.CheckSession): an exact target ('=') naming no session reaches the session of a client of
+// that name, whose windows a command then acts on. A client without a terminal (control mode, its
+// input a pipe) is named client-<pid>, and attached to session alice, its name reaches alice: the
+// controller refuses it, before tmux.
+func TestSessionsClientNames(t *testing.T) {
+	c := startTestServer(t, "sessionsclient")
+	ctx := context.Background()
+	if err := c.NewSession(ctx, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	client := c.cmd(ctx, []string{"-C", "attach-session", "-t", "=alice"})
+	input, err := client.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = client.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = input.Close()
+		_ = client.Wait()
+	})
+	name := "client-" + strconv.Itoa(client.Process.Pid)
+	eventually(t, "client attached", func() (bool, string) {
+		out, err := c.run(ctx, "list-clients", "-F", "#{client_name}")
+		return err == nil && strings.Contains(out, name+"\n"), out
+	})
+	// the pitfall: no session is named so, and tmux lists the windows of alice
+	if out, err := c.run(ctx, "list-windows", "-t", "="+name, "-F", "#{session_name}"); err != nil || out != "alice\n" {
+		t.Errorf("expected tmux to reach alice through its client %s, got %q, %v", name, out, err)
+	}
+	if _, err = c.ListWindows(ctx, name); !errors.Is(err, names.ErrInvalid) {
+		t.Errorf("expected %s refused as a session name, got %v", name, err)
 	}
 }
 

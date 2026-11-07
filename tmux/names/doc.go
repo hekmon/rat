@@ -8,6 +8,9 @@
 //     window and pane parts, and a leading '=' asks for an exact match: any of them in a name
 //     would change what it targets. A window name is not made of digits only either
 //     (CheckWindow): tmux reads the window part of a target as an index first, even after '='.
+//     A session name is not the name tmux gives a client either (CheckSession: client-<pid>, a
+//     terminal such as tty1 or console): when no session has the name, tmux reaches the session
+//     of that client, even after '='.
 //
 // It is a package of its own so that packages naming tenants and sessions without driving tmux
 // apply the same rule without depending on the controller: package mtls, whose certificates

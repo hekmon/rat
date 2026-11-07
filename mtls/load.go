@@ -247,8 +247,13 @@ func checkSide(role Role, ca, cert *x509.Certificate, key crypto.Signer, labels 
 			return nil, fmt.Errorf("%w: %s expired on %s", ErrValidity, c.file, c.cert.NotAfter.Format(time.RFC3339))
 		}
 	}
-	// 7. names
-	if err := names.Check(cert.Subject.CommonName); err != nil {
+	// 7. names, a client naming its session, which may not be the name of a tmux client
+	// (names.CheckSession)
+	checkName := names.Check
+	if role == Client {
+		checkName = names.CheckSession
+	}
+	if err := checkName(cert.Subject.CommonName); err != nil {
 		return nil, fmt.Errorf("%s: %w", labels.cert, err)
 	}
 	if err := names.Check(ca.Subject.CommonName); err != nil {

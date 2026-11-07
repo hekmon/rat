@@ -194,7 +194,9 @@ tmux session in the tenant: ratd keeps each client to its session, and logs its 
 call. Agents meant to share terminals share a client certificate.
 
 Names are carried in the subject common name, and are plain names, validated as tmux names are
-(package `tmux/names`: letters, digits, `_` and `-`), when generating and when loading. They are
+(package `tmux/names`: letters, digits, `_` and `-`), when generating and when loading, a client
+not named as tmux names its clients (`client-<pid>`, `tty…`, `console`), whose session a target
+would reach in place of a missing one (see Names in the README of package tmux). They are
 required: the tmux controller accepts an empty tenant for its default socket, but a tenant
 served by ratd is always named. The name of a peer is checked too, on each request
 (`Side.CheckPeer`), before ratd takes it for a session: a sub CA of another PKI names its

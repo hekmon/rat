@@ -115,6 +115,7 @@ func TestGenerateRefuses(t *testing.T) {
 		{"a:b", []string{"a"}, names.ErrInvalid},
 		{"", []string{"a"}, names.ErrInvalid},
 		{"t", []string{"a b"}, names.ErrInvalid},
+		{"t", []string{"tty1"}, names.ErrInvalid},
 		{"t", nil, nil},
 		{"t", []string{"a", "b", "a"}, nil},
 	} {

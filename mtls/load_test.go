@@ -165,6 +165,8 @@ func TestLoadNames(t *testing.T) {
 		role         Role
 	}{
 		{"t", "a:b", Client},
+		// the name tmux gives a client without a terminal, which a target would reach
+		{"t", "client-1", Client},
 		{"a b", "c", Client},
 		{"t", "u", Server},
 	} {

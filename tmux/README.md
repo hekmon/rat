@@ -327,7 +327,8 @@ at startup, and races the move of tmux 3.4 and 3.5, made from the server once th
 
 Windows are always targeted as `=session:=window`. Without `=`, tmux also accepts a prefix or a
 pattern: `sess` would reach the session `session`, and `win` the window `window`, silently
-acting on another terminal than the one named.
+acting on another terminal than the one named. `=` is not enough on its own, though: a window name
+can be read as an index, and a session name as the name of a client (see Names).
 
 tmux IDs (`$session`, `@window`, `%pane`) are never used: they are global to the server, so an
 ID would reach a window of another session. Keeping them would also be a cache, stale as soon
@@ -350,6 +351,22 @@ told of 1. Session targets have no index, and a tenant is no target: the rule is
 (`names.CheckWindow`), certificates naming tenants and clients as before. Rejected: resolving the
 name to its window ID first (`@1`), which rat never uses (see Exact targets, never IDs), and which
 would take a second invocation, the window changing in between.
+
+A session name is not the name tmux gives a client either: when no session has the name a target
+asks for, tmux looks it up as a client before giving up, even after `=` (`cmd_find_get_session`,
+3.3a to its current source), and reaches the session that client is attached to. tmux names a client
+after its terminal (`/dev/pts/3`), matched without `/dev/` as well, or `client-<pid>` without one
+(control mode, its input a pipe). Measured with a client without a terminal attached to session
+alice: `list-windows -t =client-<pid>` listed the windows of alice (tmux 3.3a and 3.4), and
+`send-keys` typed in them (3.3a). A session not created yet (its client not called yet) would have
+its commands act on the windows of another session. So `names.CheckSession` refuses `client-`
+followed by digits, names starting with `tty` (a Linux console or serial line, `ttys003` on macOS)
+and `console`, for sessions and the client certificates naming them; terminals under a directory
+(`pts/3`) are no plain names. Not every name of a terminal: `hvc0`, on some virtual machines, is
+left. Window and tenant names are not concerned: `console` makes a fine window name.
+`TestSessionsClientNames` guards it. Rejected: checking in each command that tmux resolved the
+session named (`#{session_name}`), exact whatever the names of clients, but which takes a guard in
+every input, for a name chosen by accident.
 
 Window names are unique within a session, as they are how agents find their terminals. tmux
 accepts duplicates, and an exact target then fails as if the window did not exist, so rat
