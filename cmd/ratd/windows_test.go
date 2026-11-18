@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -192,6 +193,27 @@ func TestListWindowsStatusesUntold(t *testing.T) {
 			t.Errorf("expected no exit status in the description, got %q", tool.Description)
 		}
 	}
+}
+
+// TestListWindowsNewLine guards that a window inside a directory named with a new line takes nothing
+// from the others: every tool describing windows still works, each window stays on its line, and
+// the directory is told quoted, exact.
+func TestListWindowsNewLine(t *testing.T) {
+	session, _, _, home := connectTools(t, "test-ratd-newline")
+	expectTool(t, session, "create_window", map[string]any{"name": "odd"}, false)
+	expectTool(t, session, "send_text", map[string]any{"window": "odd", "text": `d=$'new\nline'; mkdir "$d"; cd "$d"`, "enter": true}, false)
+	quoted := strconv.Quote(filepath.Join(home, "new\nline"))
+	eventually(t, "directory listed", func() bool {
+		text, isError := callTool(t, session, "list_windows", nil)
+		return !isError && strings.Contains(text, "odd: bash in "+quoted+", active ")
+	})
+	if text := expectTool(t, session, "list_windows", nil, false); strings.Count(text, "\n") != 1 {
+		t.Errorf("expected main and odd on a line each, got:\n%s", text)
+	}
+	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 5}, false, "main: ")
+	expectTool(t, session, "create_window", map[string]any{"name": "odd"}, false,
+		"Window odd already exists, not created: it runs bash in "+quoted+".")
+	expectTool(t, session, "create_window", map[string]any{"name": "other"}, false, "Window other created")
 }
 
 // TestCreateWindow guards creating windows: main in a missing session is created by creating the

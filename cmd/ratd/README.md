@@ -179,7 +179,10 @@ once.
 
 - **`list_windows`**: for each window, its name, foreground command, working directory and last
   activity, plus when they apply: how its last command exited, a full-screen program, the
-  scrollback size. Activity is relative ("12s ago"): models do not know the current time. The exit
+  scrollback size. Activity is relative ("12s ago"): models do not know the current time. A value
+  holding a control character is quoted, as Go and JSON quote a string: a directory named with a
+  new line keeps its window on a line, can not mimic another window, and stays exact for the agent
+  to give back to a tool. The exit
   status is told once bash is back at its prompt after the last input, with when ("last command
   exited with status 1 (12s ago)"): the time tells a status from an earlier command, the absence
   of a status a command running (see Prompts in `tmux/README.md`). For a pipeline whose commands

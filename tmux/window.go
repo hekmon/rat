@@ -80,42 +80,65 @@ type Prompt struct {
 // NoStatus is the Status of a Prompt following no command.
 const NoStatus = -1
 
-// windowFormat is the tmux format describing a window, parsed by parseWindow, on a line. Fields
-// are separated by spaces, which tmux can escape (see Spaces separate, tmux quotes, in README.md):
-// the numbers can not contain one, the name, the prompt, the input and the command are quoted by
-// tmux (q: escapes spaces and special characters with a backslash), and the path comes last so
-// it needs no quoting. The name is quoted although rat gives valid names only: a command typed in
-// a terminal can give any (tmux new-window -n 'my build'), which must not fail the description of
-// the other windows. The prompt, the input and the hook marker are options such a command can
-// write: they are read leniently, the marker turned into 0 or 1 by tmux (set, and not 0).
+// windowFormat is the tmux format describing a window, parsed by parseWindows. Fields are separated
+// by spaces, which tmux can escape (see Spaces separate, tmux quotes, in README.md): the numbers can
+// not contain one, and the name, the prompt, the input, the command and the path are quoted by tmux
+// (q: escapes spaces and special characters with a backslash), each ending at a space, the last one
+// included. The name is quoted although rat gives valid names only: a command typed in a terminal
+// can give any (tmux new-window -n 'my build'), which must not fail the description of the other
+// windows. The prompt, the input and the hook marker are options such a command can write: they are
+// read leniently, the marker turned into 0 or 1 by tmux (set, and not 0).
 const windowFormat = "#{q:window_name} #{window_activity} #{alternate_on} #{history_size} #{?#{" + hookedOption +
-	"},1,0} #{q:" + promptOption + "} #{q:" + inputOption + "} #{q:pane_current_command} #{pane_current_path}"
+	"},1,0} #{q:" + promptOption + "} #{q:" + inputOption + "} #{q:pane_current_command} #{q:pane_current_path} "
 
-func parseWindow(line string) (w Window, err error) {
-	name, rest, ok := cutQuoted(line)
+// parseWindows returns the windows described by out, each by windowFormat, then the new line tmux
+// prints after it. They are read value by value rather than line by line: q: does not escape a new
+// line, which a directory named with one brings into a value.
+func parseWindows(out string) (windows []Window, err error) {
+	for out != "" {
+		var w Window
+		if w, out, err = parseWindow(out); err != nil {
+			return nil, err
+		}
+		windows = append(windows, w)
+	}
+	return windows, nil
+}
+
+// parseWindow returns the window described at the start of s, and what follows its description.
+func parseWindow(s string) (w Window, after string, err error) {
+	unexpected := func() error { return fmt.Errorf("unexpected window description %q", s) }
+	name, rest, ok := cutQuoted(s)
 	if !ok {
-		return w, fmt.Errorf("unexpected window description %q", line)
+		return w, "", unexpected()
 	}
 	fields := strings.SplitN(rest, " ", 5)
 	if len(fields) != 5 {
-		return w, fmt.Errorf("unexpected window description %q", line)
+		return w, "", unexpected()
 	}
 	prompt, rest, ok := cutQuoted(fields[4])
 	if !ok {
-		return w, fmt.Errorf("unexpected window description %q", line)
+		return w, "", unexpected()
 	}
 	input, rest, ok := cutQuoted(rest)
 	if !ok {
-		return w, fmt.Errorf("unexpected window description %q", line)
+		return w, "", unexpected()
 	}
-	command, path, ok := cutQuoted(rest)
+	command, rest, ok := cutQuoted(rest)
 	if !ok {
-		return w, fmt.Errorf("unexpected window description %q", line)
+		return w, "", unexpected()
+	}
+	path, rest, ok := cutQuoted(rest)
+	if !ok {
+		return w, "", unexpected()
+	}
+	if after, ok = strings.CutPrefix(rest, "\n"); !ok {
+		return w, "", unexpected()
 	}
 	var numbers [4]int64
 	for i, field := range fields[:4] {
 		if numbers[i], err = strconv.ParseInt(field, 10, 64); err != nil {
-			return w, fmt.Errorf("unexpected window description %q: %w", line, err)
+			return w, "", fmt.Errorf("unexpected window description %q: %w", s, err)
 		}
 	}
 	return Window{
@@ -128,7 +151,7 @@ func parseWindow(line string) (w Window, err error) {
 		Prompt:     parsePrompt(prompt),
 		Input:      parseInput(input),
 		Hooked:     numbers[3] == 1,
-	}, nil
+	}, after, nil
 }
 
 // parseInput returns the time of the input recorded as value (see recordInput), or the zero Time
@@ -233,15 +256,7 @@ func (c *Controller) ListWindows(ctx context.Context, session string) ([]Window,
 	if out == "" {
 		return nil, fmt.Errorf("%w: server shut down while listing the windows of %s", ErrServerNotRunning, session)
 	}
-	var windows []Window
-	for line := range strings.Lines(out) {
-		w, err := parseWindow(strings.TrimSuffix(line, "\n"))
-		if err != nil {
-			return nil, err
-		}
-		windows = append(windows, w)
-	}
-	return windows, nil
+	return parseWindows(out)
 }
 
 // Window returns the description of window in session.

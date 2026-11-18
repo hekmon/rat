@@ -417,19 +417,20 @@ in a window name, a path, or an option a command typed in a terminal wrote.
 The window description is therefore separated by spaces, which tmux can escape:
 
 - the numbers (activity, full screen, scrollback, the hook marker) can not contain a space;
-- the name, the last prompt (see Prompts), the input and the foreground command are quoted by
-  tmux, with the `q:` format modifier escaping spaces and special characters with a backslash,
-  and unquoted by rat. The name too: rat gives valid names only, but tmux accepts any, which a
-  command typed in a terminal can give (`tmux new-window -n 'my build'`, see Names);
-- the working directory comes last, so it needs no quoting: everything after the command is
-  the path.
+- the name, the last prompt (see Prompts), the input, the foreground command and the working
+  directory are quoted by tmux, with the `q:` format modifier escaping spaces and special
+  characters with a backslash, and unquoted by rat: each ends at the first space left unescaped,
+  the last one included. The name too: rat gives valid names only, but tmux accepts any, which a
+  command typed in a terminal can give (`tmux new-window -n 'my build'`, see Names).
 
-A newline is left, which `q:` does not escape, while a window is described on a line: a window
-named with one (with tmux 3.3a to 3.5a, `new-window -n` keeps it and `rename-window` escapes it,
-3.7c and 3.8 refuse the name), a working directory or an option holding one fails the description
-of every window of its session, until the window closes, leaves the directory, or the option is
-written again. Only a command typed in a terminal can do it, a command run in such a directory
-being the likeliest. Rejected: giving each value
+`q:` does not escape a new line, so descriptions are read value by value, not line by line: a new
+line is a character like another in a value, which stays exact. It comes from a directory named
+with one, unpacked from an archive for instance, from a command or an option, or from a window
+name: with tmux 3.3a to 3.5a, `new-window -n` keeps it and `rename-window` escapes it, and 3.7c and
+3.8 refuse the name. Read by lines, a single window in such a directory failed the description of
+every window of its session until it left the directory (`TestListWindowsNewLines` guards it).
+Rejected: replacing the new line in the format (`#{s/…/…/:pane_current_path}`), which alters the
+value and takes a rule per value; giving each value
 with its length in bytes (`#{n:pane_current_path}` before `#{pane_current_path}`), which no
 content can break, but tmux looks each of them up on its own, and reads the foreground command and
 the working directory from the system at each lookup: a command starting in between would give a

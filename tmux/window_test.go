@@ -43,13 +43,21 @@ func foregroundIs(c *Controller, session, window, command string) func() (bool, 
 	}
 }
 
-// TestParseWindow guards the parsing of the window format, whose name, prompt, input and command
-// are quoted by tmux and whose path comes last unquoted, the hook marker, and the parsing of
-// prompts, with the statuses of a pipeline, and inputs: the mark of a prompt being recorded reads
-// as no prompt, and a value rat did not write, which a command typed in a terminal can, as no
-// prompt or no input, rather than failing.
+// TestParseWindow guards the parsing of the window format, whose name, prompt, input, command and
+// path are quoted by tmux, a new line being a character like another in them, the hook marker, and
+// the parsing of prompts, with the statuses of a pipeline, and inputs: the mark of a prompt being
+// recorded reads as no prompt, and a value rat did not write, which a command typed in a terminal
+// can, as no prompt or no input, rather than failing.
 func TestParseWindow(t *testing.T) {
-	w, err := parseWindow(`w 1700000000 1 42 1 0\ 1790000000 1790000100 my\ prog\|x /tmp/a dir|b`)
+	// a description, ended as tmux ends it
+	parse := func(description string) (Window, error) {
+		w, after, err := parseWindow(description + " \n")
+		if err == nil && after != "" {
+			err = fmt.Errorf("unexpected %q after the description", after)
+		}
+		return w, err
+	}
+	w, err := parse(`w 1700000000 1 42 1 0\ 1790000000 1790000100 my\ prog\|x /tmp/a\ dir\|b`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,14 +70,26 @@ func TestParseWindow(t *testing.T) {
 	// a name a command typed in a terminal gave, outside the naming rule
 	for line, name := range map[string]string{`my\ build 1700000000 0 0 0   bash /tmp`: "my build",
 		`it\'s\  1700000000 0 0 0   bash /tmp`: "it's ", ` 1700000000 0 0 0   bash /tmp`: ""} {
-		if w, err := parseWindow(line); err != nil || w.Name != name || w.Command != "bash" || w.Path != "/tmp" {
+		if w, err := parse(line); err != nil || w.Name != name || w.Command != "bash" || w.Path != "/tmp" {
 			t.Errorf("%q: expected the window %q, got %+v, %v", line, name, w, err)
+		}
+	}
+	// a new line does not end a description: the space and the new line after its last value do
+	windows, err := parseWindows("a\nb 1700000000 0 0 0   bash\nx /tmp/c\nd \ne 1700000000 0 0 0   bash /tmp \n")
+	if err != nil || len(windows) != 2 || windows[0].Name != "a\nb" || windows[0].Command != "bash\nx" ||
+		windows[0].Path != "/tmp/c\nd" || windows[1].Name != "e" || windows[1].Path != "/tmp" {
+		t.Errorf("unexpected windows %+v, %v", windows, err)
+	}
+	for _, out := range []string{"w 1700000000 0 0 0   bash /tmp", "w 1700000000 0 0 0   bash /tmp \n" + "next",
+		"w 1700000000 0 0 0   bash /tmp x\n", "w 1700000000 0 0 0   bash /tmp w 1700000000 0 0 0   bash /tmp \n"} {
+		if _, err := parseWindows(out); err == nil {
+			t.Errorf("%q: expected an error", out)
 		}
 	}
 	for _, line := range []string{"", "w", "w 1700000000 0 0 0", "w 1700000000 0 0 0 1\\ 1790000000 bash",
 		"w 1700000000 0 0 0  1790000100 bash", "w notanumber 0 0 0   bash /tmp", "w 1700000000 0 x 0   bash /tmp",
 		"w 1700000000 0 0 x   bash /tmp"} {
-		if _, err := parseWindow(line); err == nil {
+		if _, err := parse(line); err == nil {
 			t.Errorf("%q: expected an error", line)
 		}
 	}
@@ -81,7 +101,7 @@ func TestParseWindow(t *testing.T) {
 		`-5`:            {},
 		`1790000100\ 2`: {},
 	} {
-		w, err := parseWindow("w 1700000000 0 0 0  " + value + " bash /tmp")
+		w, err := parse("w 1700000000 0 0 0  " + value + " bash /tmp")
 		if err != nil || !w.Input.Equal(expected) {
 			t.Errorf("input %q: expected %v, got %v, %v", value, expected, w.Input, err)
 		}
@@ -105,7 +125,7 @@ func TestParseWindow(t *testing.T) {
 		// a prompt being recorded
 		promptMark + `\ 123.4`: {},
 	} {
-		w, err := parseWindow("w 1700000000 0 0 0 " + value + "  bash /tmp")
+		w, err := parse("w 1700000000 0 0 0 " + value + "  bash /tmp")
 		if err != nil || !reflect.DeepEqual(w.Prompt, expected) {
 			t.Errorf("prompt %q: expected %+v, got %+v, %v", value, expected, w.Prompt, err)
 		}
@@ -323,6 +343,68 @@ func TestListWindowsForeignNames(t *testing.T) {
 	}
 	if err = c.KillWindow(ctx, "s", "my build"); !errors.Is(err, names.ErrInvalid) {
 		t.Errorf("expected names.ErrInvalid, got %v", err)
+	}
+}
+
+// TestListWindowsNewLines guards that a new line in what describes a window, which tmux prints as
+// is, fails the description of no window of its session: in a working directory, kept exact, an
+// option a command typed in a terminal wrote, a foreground command, and a window name, which tmux
+// 3.7c and 3.8 refuse. New windows can still be created next to them.
+func TestListWindowsNewLines(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	c := startTestServer(t, "windowsnewlines")
+	ctx := context.Background()
+	if err = c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	if err = c.NewWindow(ctx, "s", "odd"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "first prompt", promptIs(c, "s", "odd", NoStatus))
+	if err = c.SendText(ctx, "s", "odd", `d=$'new line\nhere'; mkdir "$d"; cd "$d"`, true); err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(home, "new line\nhere")
+	eventually(t, "directory entered", func() (bool, string) {
+		w, err := c.Window(ctx, "s", "odd")
+		if err != nil {
+			return false, err.Error()
+		}
+		return w.Path == directory, w.Path
+	})
+	if w, err := c.Window(ctx, "s", FirstWindow); err != nil || w.Path != home {
+		t.Errorf("expected %s described, got %+v, %v", FirstWindow, w, err)
+	}
+	if err = c.NewWindow(ctx, "s", "other"); err != nil {
+		t.Fatalf("expected a new window, got %v", err)
+	}
+	if _, err = c.run(ctx, "set-option", "-p", "-t", target("s", FirstWindow), promptOption, "not\nrat's"); err != nil {
+		t.Fatal(err)
+	}
+	if w, err := c.Window(ctx, "s", FirstWindow); err != nil || !reflect.DeepEqual(w.Prompt, Prompt{}) {
+		t.Errorf("expected no prompt from a value rat did not write, got %+v, %v", w, err)
+	}
+	// named so on Linux, where tmux reads its arguments
+	if err = c.SendText(ctx, "s", "other", `(exec -a $'new\ncommand' sleep 30)`, true); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "command in the foreground", func() (bool, string) {
+		w, err := c.Window(ctx, "s", "other")
+		if err != nil {
+			return false, err.Error()
+		}
+		return w.Command != "bash", w.Command
+	})
+	const name = "new\nname"
+	if _, err = c.run(ctx, "new-window", "-d", "-t", "=s:", "-n", name); err == nil {
+		windows, err := c.ListWindows(ctx, "s")
+		if err != nil || !slices.ContainsFunc(windows, func(w Window) bool { return w.Name == name }) {
+			t.Errorf("expected a window named %q, got %+v, %v", name, windows, err)
+		}
 	}
 }
 

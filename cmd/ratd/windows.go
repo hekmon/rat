@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/hekmon/rat/cmd/ratd/tools"
 	"github.com/hekmon/rat/tmux"
@@ -120,9 +122,11 @@ func (d *daemon) listWindows(ctx context.Context, session string) result {
 // record prompts, a window whose bash has not run rat's hook yet is told (see notHookedText): bash
 // still starting, or startup files changed since ratd started, which its check did not see. The
 // history is only told when a capture can include it, not under a full-screen program. Paths are
-// absolute, for the file tools.
+// absolute, for the file tools. A window takes one line, whatever its directory is named (see
+// oneLine).
 func describeWindow(w tmux.Window, now time.Time, terminals tmux.TerminalsCheck) string {
-	description := fmt.Sprintf("%s: %s in %s, active %s ago", w.Name, w.Command, w.Path, sinceText(now.Sub(w.Activity)))
+	description := fmt.Sprintf("%s: %s in %s, active %s ago", oneLine(w.Name), oneLine(w.Command), oneLine(w.Path),
+		sinceText(now.Sub(w.Activity)))
 	if terminals.Prompts && !w.Hooked {
 		description += ", no prompt recorded yet: bash still starting, or its startup files replace PROMPT_COMMAND"
 	}
@@ -146,6 +150,17 @@ func describeWindow(w tmux.Window, now time.Time, terminals tmux.TerminalsCheck)
 		description += fmt.Sprintf(", %d rows of history", w.Scrollback)
 	}
 	return description
+}
+
+// oneLine returns value as a result tells it on a line: as is, or quoted, as Go and JSON quote a
+// string, when it holds a control character. A directory unpacked from an archive may be named with
+// a new line, which would otherwise split the description of a window, and could mimic the
+// description of another one. Quoted, the value stays exact for the agent to give back to a tool.
+func oneLine(value string) string {
+	if strings.ContainsFunc(value, unicode.IsControl) {
+		return strconv.Quote(value)
+	}
+	return value
 }
 
 // sinceText tells a duration in its largest unit: 12s, 5m, 3h, then days beyond two days.
@@ -186,7 +201,7 @@ func (d *daemon) createWindow(ctx context.Context, session, name string) result 
 			return failure(ctx, err, name)
 		}
 		return result{outcome: message, text: fmt.Sprintf("Window %s already exists, not created: it runs %s in %s.",
-			name, w.Command, w.Path)}
+			name, oneLine(w.Command), oneLine(w.Path))}
 	case err != nil:
 		return failure(ctx, err, name)
 	}

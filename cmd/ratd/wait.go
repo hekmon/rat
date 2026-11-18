@@ -217,7 +217,7 @@ func runningText(window string, w tmux.Window, waited time.Duration, now time.Ti
 		running = fmt.Sprintf("still running, %s since your last input", since)
 		finished, noPromptSince = fmt.Sprintf("nothing finished since your last input, %s ago", since), "since"
 	}
-	text := fmt.Sprintf("%s: %s, %s in the foreground.", window, running, w.Command)
+	text := fmt.Sprintf("%s: %s, %s in the foreground.", window, running, oneLine(w.Command))
 	if w.Command == "bash" {
 		text = fmt.Sprintf("%s: %s: bash has shown no prompt %s. A bash script or builtin (read) may still be "+
 			"running, or a text may wait on the command line (sent without Enter): read_window shows which.", window,
