@@ -4,7 +4,7 @@ Operating RAT: running ratd as a service, its security, and the shell configurat
 terminals rely on. What RAT is, and how to try it, are in the [README](README.md).
 
 - [Deployment](#deployment): [Linux, with systemd](#linux-with-systemd) ·
-  [macOS, with launchd](#macos-with-launchd)
+  [macOS, with launchd](#macos-with-launchd) · [Upgrading](#upgrading)
 - [Security](#security): [No way in for an agent to open](#no-way-in-for-an-agent-to-open) ·
   [Mutual TLS](#mutual-tls) · [A bundle of rat-tool](#a-bundle-of-rat-tool) ·
   [A sub CA of your PKI](#a-sub-ca-of-your-pki) · [Deploying safely](#deploying-safely)
@@ -176,6 +176,37 @@ tail -f /Library/Logs/rat/ratd-prod.log
   `O_APPEND`) and from measures of others on recent macOS, not measured with RAT.
 - **No `KeepAlive`, on purpose**, as there is no `Restart=` on Linux.
 - **One plist per tenant**, each with its label, bundle and port.
+
+### Upgrading
+
+Upgrading ratd costs every terminal: the terminals belong to the service and stop with it, which
+is what makes stopping it a kill switch. The windows, their history and the commands running in
+them are lost, with systemd the commands detached from their terminals as well. Files stay, and so
+does what agents set up outside the service (see What outlives the service). Plan it as you would
+the reboot of a machine people work on:
+
+```sh
+systemctl status ratd-prod
+sudo -u rat tmux -L rat-prod list-windows -a -F '#{session_name} #{window_name}: #{pane_current_command}'
+install -m 755 ratd /usr/local/bin/ratd
+systemctl restart ratd-prod
+```
+
+- **Who would be cut.** The status tells when each client last called, and the calls waiting for a
+  command. `list-windows` tells what runs in the windows of each client, `bash` being a terminal at
+  its prompt, or running a script.
+- **The binary is replaced while ratd runs.** `install` puts a new file in its place, and the
+  running ratd keeps the old one until it stops. `cp` onto a running binary fails (`Text file busy`,
+  measured on Debian 12).
+- **Agents find out by themselves.** While ratd restarts, rat answers each call that ratd is
+  unreachable, and keeps running: harnesses need no restart. The next call tells the agent its
+  terminals did not exist, and finds a fresh `main`. What ran has to be started again.
+- **rat and rat-tool go with ratd.** They are released together: install them on the machines of
+  the harnesses as well, where a harness runs the new rat when it next starts it. A rat of another
+  version keeps relaying, but only the same version is sure to agree with ratd on its tools.
+- **On macOS**, `launchctl bootout` then `bootstrap` take the place of the restart, and commands
+  detached from their terminals outlive it (see macOS, with launchd).
+- **Renewing a certificate takes no restart** (see Renewal).
 
 ## Security
 

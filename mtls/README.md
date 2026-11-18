@@ -58,6 +58,12 @@ Rejected:
 
 ## A sub CA of another PKI
 
+Closed bundles alone left rat in a narrow middle: more to set up than a casual user wants, and
+turned down by experts and enterprises, whose certificates come from a PKI they run. A sub CA of
+that PKI opens rat to them without changing what it asks of a deployment. Rejected: softening the
+deployment to reach casual users instead: rat hands out a shell, and infrastructure is set up right
+or not at all.
+
 A side is its directory and the checks of loading, not the tool that wrote it: a sub CA of
 another PKI (an organization's) can take the place of the CA of a bundle, filling the same
 directories with certificates following the same rules. That PKI issues the clients of the
