@@ -53,7 +53,12 @@ func TestWarnDeploymentWritable(t *testing.T) {
 // the directories above it as well, but never the key, which ratd owns.
 func TestWritableBundle(t *testing.T) {
 	requireNotRoot(t)
-	root := t.TempDir()
+	// symbolic links resolved: the temporary directory of macOS is behind one, and the paths found
+	// through a link are those of its target, resolved
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	dir := filepath.Join(root, "a", "b", "server")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)

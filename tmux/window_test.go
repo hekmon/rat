@@ -282,8 +282,8 @@ func TestListWindows(t *testing.T) {
 
 // TestListWindowsForeignNames guards that a window a command typed in a terminal named outside the
 // naming rule, as tmux accepts (tmux new-window -n 'my build'), does not fail the description of
-// the windows of its session: it is listed under its name, the other windows still described.
-// No command reaches it until renamed, its name being refused before reaching tmux.
+// the windows of its session: it is listed under the name tmux holds, the other windows still
+// described. No command reaches it until renamed, its name being refused before reaching tmux.
 func TestListWindowsForeignNames(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	c := startTestServer(t, "windowsforeign")
@@ -305,7 +305,17 @@ func TestListWindowsForeignNames(t *testing.T) {
 	for _, w := range windows {
 		listed = append(listed, w.Name)
 	}
-	if expected := append([]string{FirstWindow}, foreign...); !slices.Equal(listed, expected) {
+	// The names tmux holds, unquoted, one per line: tmux 3.7c and 3.8 double the backslash of a new
+	// window, which 3.3a to 3.5a keep as given.
+	out, err := c.run(ctx, "list-windows", "-t", "=s", "-F", "#{window_name}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	if len(expected) != len(foreign)+1 {
+		t.Fatalf("expected %d windows, tmux holds %q", len(foreign)+1, expected)
+	}
+	if !slices.Equal(listed, expected) {
 		t.Errorf("expected the windows %q, got %q", expected, listed)
 	}
 	if _, err = c.Window(ctx, "s", FirstWindow); err != nil {

@@ -425,10 +425,11 @@ The window description is therefore separated by spaces, which tmux can escape:
   the path.
 
 A newline is left, which `q:` does not escape, while a window is described on a line: a window
-named with one (`new-window -n` keeps it, `rename-window` escapes it), a working directory or an
-option holding one fails the description of every window of its session, until the window
-closes, leaves the directory, or the option is written again. Only a command typed in a terminal
-can do it, a command run in such a directory being the likeliest. Rejected: giving each value
+named with one (with tmux 3.3a to 3.5a, `new-window -n` keeps it and `rename-window` escapes it,
+3.7c and 3.8 refuse the name), a working directory or an option holding one fails the description
+of every window of its session, until the window closes, leaves the directory, or the option is
+written again. Only a command typed in a terminal can do it, a command run in such a directory
+being the likeliest. Rejected: giving each value
 with its length in bytes (`#{n:pane_current_path}` before `#{pane_current_path}`), which no
 content can break, but tmux looks each of them up on its own, and reads the foreground command and
 the working directory from the system at each lookup: a command starting in between would give a

@@ -22,7 +22,14 @@ import (
 // dropped, or "" if none comes within wait.
 func listenNotify(t *testing.T) func(wait time.Duration, part string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "notify")
+	// Not t.TempDir, named after the test: macOS limits the path of a socket to 104 bytes, which its
+	// temporary directory and the name of a subtest go over.
+	dir, err := os.MkdirTemp("", "rat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	path := filepath.Join(dir, "notify")
 	conn, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: path, Net: "unixgram"})
 	if err != nil {
 		t.Fatal(err)
