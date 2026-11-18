@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -195,9 +196,9 @@ func TestListWindowsStatusesUntold(t *testing.T) {
 
 // TestCreateWindow guards creating windows: main in a missing session is created by creating the
 // session, an existing window is not recreated but described, and an invalid name, digits only
-// included, is refused with the naming rule. Its description points to wait_window to wait for the
-// prompt of a new window, and invites to close the windows an agent is done with, as the
-// instructions do: clients may not pass the instructions on.
+// included, is refused with the naming rule. Its description tells a new window is ready for input,
+// and invites to close the windows an agent is done with, as the instructions do: clients may not
+// pass the instructions on.
 func TestCreateWindow(t *testing.T) {
 	session, _, _, home := connectTools(t, "test-ratd-create")
 	tools, err := session.ListTools(context.Background(), nil)
@@ -205,13 +206,14 @@ func TestCreateWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tool := range tools.Tools {
-		if tool.Name == "create_window" && (!strings.Contains(tool.Description, "(wait_window)") ||
+		if tool.Name == "create_window" && (!strings.Contains(tool.Description, "Returns once bash shows its prompt") ||
 			!strings.Contains(tool.Description, "close the windows you are done with (close_window)")) {
-			t.Errorf("expected create_window to point to wait_window, and to closing windows, got %q", tool.Description)
+			t.Errorf("expected create_window to tell it waits for the prompt, and to point to closing windows, got %q",
+				tool.Description)
 		}
 	}
 	expectTool(t, session, "create_window", map[string]any{"name": "main"}, false,
-		"Window main created: bash is starting in "+home+".")
+		"Window main created: bash is ready in "+home+".")
 	if text := expectTool(t, session, "list_windows", nil, false); strings.Count(text, "\n") != 0 {
 		t.Errorf("expected main alone, got:\n%s", text)
 	}
@@ -221,6 +223,89 @@ func TestCreateWindow(t *testing.T) {
 	expectTool(t, session, "create_window", map[string]any{"name": "a b"}, true, `Invalid window name "a b": `+nameRule)
 	// tmux would read it as the index of another window
 	expectTool(t, session, "create_window", map[string]any{"name": "1"}, true, `Invalid window name "1": `+nameRule)
+}
+
+// setFirstPromptWait bounds how long create_window waits for a first prompt until the test ends.
+func setFirstPromptWait(t *testing.T, wait time.Duration) {
+	t.Helper()
+	previous := firstPromptWait
+	firstPromptWait = wait
+	t.Cleanup(func() { firstPromptWait = previous })
+}
+
+// TestCreateWindowReady guards that a window takes input as soon as create_window returns: a text of
+// several lines sent right after it, without Enter, waits on the command line. Sent while bash
+// starts, it would be read as typed, each new line running the line before it.
+func TestCreateWindowReady(t *testing.T) {
+	session, controller, _, home := connectTools(t, "test-ratd-ready")
+	expectTool(t, session, "list_windows", nil, false)
+	expectTool(t, session, "create_window", map[string]any{"name": "build"}, false,
+		"Window build created: bash is ready in "+home+".")
+	// echo ra''n prints what its command line, on the screen, does not show
+	expectTool(t, session, "send_text", map[string]any{"window": "build", "text": "echo ra''n-one\necho ra''n-two", "enter": false}, false)
+	eventually(t, "text on the command line", screenOf(controller, "build", "echo ra''n-two"))
+	// a moment for a line read as typed to run
+	time.Sleep(300 * time.Millisecond)
+	if snapshot, err := controller.Capture(context.Background(), toolsSession, "build", 0); err != nil ||
+		strings.Contains(snapshot.Content, "ran-one") {
+		t.Errorf("expected the text to wait on the command line, got %v:\n%s", err, snapshot.Content)
+	}
+}
+
+// TestCreateWindowHeldUp guards a bash its startup files hold up: create_window waits for its prompt
+// for a bounded time, then tells the window exists, and how to wait for the prompt.
+func TestCreateWindowHeldUp(t *testing.T) {
+	setFirstPromptWait(t, 200*time.Millisecond)
+	session, _, _, home := connectTools(t, "test-ratd-heldup")
+	if err := os.WriteFile(filepath.Join(home, ".bash_profile"), []byte("sleep 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expectTool(t, session, "create_window", map[string]any{"name": "slow"}, false,
+		"Window slow created in "+home+", but bash has shown no prompt yet: wait for it (wait_window) before sending text.")
+	expectTool(t, session, "wait_window", map[string]any{"window": "slow", "max_seconds": 5}, false,
+		"slow: bash is at its prompt, waiting for input.")
+}
+
+// TestCreateWindowExited guards a bash exiting while it starts, its window closing with it: the
+// agent is told at once, rather than told a window was created that no longer exists.
+func TestCreateWindowExited(t *testing.T) {
+	session, _, _, home := connectTools(t, "test-ratd-exited")
+	expectTool(t, session, "wait_window", map[string]any{"window": "main", "max_seconds": 5}, false, "waiting for input")
+	if err := os.WriteFile(filepath.Join(home, ".bash_profile"), []byte("exit 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expectTool(t, session, "create_window", map[string]any{"name": "gone"}, true,
+		"Window gone closed while bash was starting: its startup files may end it.")
+}
+
+// TestCreateWindowStopping guards that stopping ratd does not wait for a window to start: what
+// agents wait for never delays the stop.
+func TestCreateWindowStopping(t *testing.T) {
+	requireTmux(t)
+	home := testHome(t)
+	if err := os.WriteFile(filepath.Join(home, ".bash_profile"), []byte("sleep 3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	controller, err := tmux.New("test-ratd-createstop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = controller.StartServer(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = controller.StopServer(context.Background()) })
+	d, err := newDaemon(slog.New(slog.DiscardHandler), &mtls.Side{Tenant: "t"}, controller, terminalsHold, defaultReadBudget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopping := make(chan struct{})
+	close(stopping)
+	d.stopping = stopping
+	start := time.Now()
+	expectTool(t, connectTo(t, d), "create_window", map[string]any{"name": "w"}, false, "bash has shown no prompt yet")
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("expected create_window to return at once when ratd stops, took %s", elapsed)
+	}
 }
 
 // TestCloseWindow guards closing windows: nothing to close is a message that creates nothing, and

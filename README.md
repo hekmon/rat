@@ -180,7 +180,7 @@ terminals are on another machine, and sending a command does not wait for it.
 | Tool | Parameters | What it does |
 |---|---|---|
 | `list_windows` | none | Lists the windows: each with its foreground command, working directory and last activity, and how its last command exited once bash is back at its prompt. |
-| `create_window` | `name` | Opens a window running bash, in the home directory of the user running ratd. |
+| `create_window` | `name` | Opens a window running bash, in the home directory of the user running ratd, and returns once bash is ready for input. |
 | `close_window` | `name` | Closes a window, ending what runs in it, but for the commands detached from it (`nohup`, `setsid`…), which keep running. |
 | `send_text` | `window`, `text`, `enter` | Pastes text as a human pastes, then presses Enter if `enter` is true (required: the agent decides each time whether the text runs). |
 | `send_keys` | `window`, `keys` | Presses keys by name, in order: `C-c`, `Escape`, `Up`, `Tab`… |

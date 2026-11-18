@@ -15,6 +15,15 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// firstPromptWait bounds how long create_window waits for the first prompt of a window: beyond, the
+// bash startup files hold it up, which the agent is told. Well within the time of a tool call. A
+// variable for tests.
+var firstPromptWait = 5 * time.Second
+
+// firstPromptPoll is how often create_window asks tmux whether bash showed its first prompt, which
+// takes tens of milliseconds.
+const firstPromptPoll = 25 * time.Millisecond
+
 // addWindowTools adds the tools listing, creating and closing the windows of session. They act on
 // rat's terminals only: no open world.
 func (d *daemon) addWindowTools(server *mcp.Server, session string, logger *slog.Logger) {
@@ -28,10 +37,7 @@ func (d *daemon) addWindowTools(server *mcp.Server, session string, logger *slog
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        tools.CreateWindow,
 		InputSchema: d.inputSchemas[tools.CreateWindow],
-		Description: "Create a terminal: a window running bash, in your home directory, one per long running " +
-			"command. Windows persist across your restarts: call list_windows first, a window named main already " +
-			"exists, and close the windows you are done with (close_window). Wait for the prompt of a new window (" +
-			d.promptTool() + ") before sending text to it.",
+		Description: d.createWindowDescription(),
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(false), IdempotentHint: true, OpenWorldHint: ptr(false)},
 	}, tool(logger, tools.CreateWindow, func(in tools.NameInput) string { return in.Name },
 		func(ctx context.Context, in tools.NameInput) result { return d.createWindow(ctx, session, in.Name) }))
@@ -43,6 +49,18 @@ func (d *daemon) addWindowTools(server *mcp.Server, session string, logger *slog
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(true), IdempotentHint: true, OpenWorldHint: ptr(false)},
 	}, tool(logger, tools.CloseWindow, func(in tools.NameInput) string { return in.Name },
 		func(ctx context.Context, in tools.NameInput) result { return d.closeWindow(ctx, session, in.Name) }))
+}
+
+// createWindowDescription returns the description of create_window: a new window is ready for input
+// where the terminals record prompts (see createWindow), and is to be waited for where they do not.
+func (d *daemon) createWindowDescription() string {
+	description := "Create a terminal: a window running bash, in your home directory, one per long running " +
+		"command. Windows persist across your restarts: call list_windows first, a window named main already " +
+		"exists, and close the windows you are done with (close_window)."
+	if d.terminals.Prompts {
+		return description + " Returns once bash shows its prompt, ready for input."
+	}
+	return description + " Wait for the prompt of a new window (" + d.promptTool() + ") before sending text to it."
 }
 
 // pipelineHint returns what the descriptions of the tools telling how commands exited add for
@@ -147,6 +165,8 @@ func sinceText(d time.Duration) string {
 // createWindow creates window name in session, creating the session first if needed: asking for
 // main in a missing session is then a success, creating the session made it. An existing window is
 // not recreated: the agent is told what it runs and where, not to believe it got a fresh terminal.
+// A new window is returned ready for input, once its bash shows its first prompt (see
+// waitFirstPrompt), where the terminals record prompts.
 func (d *daemon) createWindow(ctx context.Context, session, name string) result {
 	err := d.controller.NewWindow(ctx, session, name)
 	if errors.Is(err, tmux.ErrSessionNotFound) {
@@ -175,7 +195,56 @@ func (d *daemon) createWindow(ctx context.Context, session, name string) result 
 	if err != nil {
 		return failure(ctx, err, name)
 	}
-	return result{text: fmt.Sprintf("Window %s created: bash is starting in %s.", name, home)}
+	if !d.terminals.Prompts {
+		return result{text: fmt.Sprintf("Window %s created: bash is starting in %s.", name, home)}
+	}
+	ready, err := d.waitFirstPrompt(ctx, session, name)
+	switch {
+	case errors.Is(err, tmux.ErrWindowNotFound), errors.Is(err, tmux.ErrSessionNotFound):
+		return result{outcome: failed, err: err, text: fmt.Sprintf(
+			"Window %s closed while bash was starting: its startup files may end it.", name)}
+	case err != nil:
+		return failure(ctx, err, name)
+	case !ready:
+		return result{attrs: []any{"ready", false}, text: fmt.Sprintf("Window %s created in %s, but bash has shown no "+
+			"prompt yet: wait for it (%s) before sending text.", name, home, tools.WaitWindow)}
+	}
+	return result{attrs: []any{"ready", true}, text: fmt.Sprintf("Window %s created: bash is ready in %s.", name, home)}
+}
+
+// waitFirstPrompt waits for the bash of window name of session, just created, to show its first
+// prompt, and tells whether it did: a text pasted before that is read as typed, each new line running
+// the line before it, whether the agent pressed Enter or not. It gives up, telling it did not, after
+// firstPromptWait, once an input reached the window, which drops the prompt being recorded, and as
+// soon as ratd stops: what agents wait for never delays the stop. The error is the one of asking
+// tmux about the window, which is gone when bash exited while starting.
+func (d *daemon) waitFirstPrompt(ctx context.Context, session, name string) (ready bool, err error) {
+	deadline := time.NewTimer(firstPromptWait)
+	defer deadline.Stop()
+	ticker := time.NewTicker(firstPromptPoll)
+	defer ticker.Stop()
+	for {
+		w, err := d.controller.Window(ctx, session, name)
+		switch {
+		case err != nil:
+			return false, err
+		case !w.Prompt.Time.IsZero():
+			// the prompt recorded rather than w.Hooked, which the hook sets before readline asks for
+			// bracketed paste (see create_window in the README)
+			return true, nil
+		case !w.Input.IsZero():
+			return false, nil
+		}
+		select {
+		case <-d.stopping:
+			return false, nil
+		case <-ctx.Done():
+			return false, nil
+		case <-deadline.C:
+			return false, nil
+		case <-ticker.C:
+		}
+	}
 }
 
 // closeWindow closes window name of session, terminating what runs in it, but for what was detached

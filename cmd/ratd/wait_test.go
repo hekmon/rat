@@ -153,7 +153,8 @@ func TestWaitWindowMissingSession(t *testing.T) {
 // TestWaitWindowWithoutPrompts guards that where the terminals record no prompt (bash startup
 // files replacing PROMPT_COMMAND), wait_window is offered all the same, its description, its answer
 // and the instructions telling why it can not wait. The texts telling to wait for a prompt point to
-// read_window instead, and send_text does not count wait_window among the tools following a command.
+// read_window instead, send_text does not count wait_window among the tools following a command, and
+// create_window returns at once, having no prompt to wait for.
 func TestWaitWindowWithoutPrompts(t *testing.T) {
 	session, _, _, _ := connectToolsWith(t, "test-ratd-nowait", tmux.TerminalsCheck{BracketedPaste: true})
 	list, err := session.ListTools(context.Background(), nil)
@@ -185,6 +186,7 @@ func TestWaitWindowWithoutPrompts(t *testing.T) {
 	}
 	expectTool(t, session, "send_text", map[string]any{"window": "main", "text": "echo x", "enter": true}, true,
 		"Wait for its prompt (read_window)")
+	expectTool(t, session, "create_window", map[string]any{"name": "other"}, false, "Window other created: bash is starting in ")
 }
 
 // TestRunStopsWaits guards that stopping ratd does not wait for a call waiting: it returns at once,
@@ -245,6 +247,8 @@ func TestRunStopsWaits(t *testing.T) {
 // after ratd checked them, and replace PROMPT_COMMAND: list_windows tells no prompt is recorded,
 // and wait_window why, with the fix, while the windows created before keep recording prompts.
 func TestWaitWindowNotHooked(t *testing.T) {
+	// the prompt of the window created below is never recorded
+	setFirstPromptWait(t, 200*time.Millisecond)
 	session, controller, _, home := connectTools(t, "test-ratd-nothooked")
 	expectTool(t, session, "list_windows", nil, false)
 	waitPrompt(t, session, controller, tmux.FirstWindow)

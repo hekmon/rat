@@ -197,14 +197,26 @@ once.
   created afterwards show (see Hooked windows in `tmux/README.md`). When it creates the session
   (see Plumbing), a header says so: the agent learns its terminals did not exist, rather than
   finding a lone `main`.
-- **`create_window`** `{name}`: makes sure the session exists, then the window. Asking for
-  `main` in a missing session is a success: creating the session made it. An existing window is
-  not an error but a message saying it was not created, with what it runs and where: the agent
-  must not believe it got a fresh terminal. The description tells a window is one per long running
-  command, invites to list windows first (they persist, `main` exists) and to close those the
-  agent is done with (see above), and to wait for the prompt of a new window before sending text:
-  with `wait_window`, or `read_window` where it is not offered, as the result of an input sent to
-  a session just created does.
+- **`create_window`** `{name}`: makes sure the session exists, then the window, and returns once
+  its bash shows its first prompt. Asking for `main` in a missing session is a success: creating
+  the session made it. An existing window is not an error but a message saying it was not created,
+  with what it runs and where: the agent must not believe it got a fresh terminal. The description
+  tells a window is one per long running command, invites to list windows first (they persist,
+  `main` exists) and to close those the agent is done with (see above).
+
+  The wait keeps a text from running by itself: sent while bash starts, it is read as typed, each
+  new line running the line before it, whether `enter` is true or not. Sent as soon as the window
+  existed, all 240 texts of two lines ran a line on an idle machine (tmux 3.3a, 3.7c and 3.8, bash
+  5.2 and 5.3), and none of 480 once the first prompt was recorded, half of them with every CPU
+  busy. The prompt takes tens of milliseconds to come. Past 5 seconds, startup files holding bash
+  up, the answer tells the window exists, and to wait for its prompt with `wait_window`. A bash
+  exiting while it starts is told, its window closing with it. Where the terminals record no prompt
+  (see Startup), there is nothing to wait for: the answer tells bash is starting, and the
+  description to wait for its prompt with `read_window`. Rejected: a rule in the description telling
+  agents to wait, which costs a call when followed, and runs a line when forgotten; the marker of
+  the hook (`Window.Hooked`), set before readline asks for bracketed paste, after which 2 of 480
+  texts ran a line, under load; `bracket_paste_flag`, which tells it exactly, but which tmux 3.3a
+  does not have.
 - **`close_window`** `{name}`: terminates what runs in the window. A command detached from it keeps
   running (see Closing a window in `tmux/README.md`), which the description tells: an agent closing
   the window of a server it started with `nohup` would take it for stopped, its port still taken.
@@ -555,6 +567,7 @@ message tells an outcome the agent may act upon, such as nothing to close.
 | sending to a session just created | yes | `main` was just created, nothing was sent: wait for its prompt |
 | reading another window than `main` in a session just created | yes | `main` was just created, `create_window` for the other |
 | screen over the read budget | yes | its size, close the window and start over in a new one |
+| bash exiting while a new window starts | yes | the window closed, its startup files may end it |
 | invalid window name | yes | the naming rule |
 | unknown key | yes | the key names, and `send_text` to type text |
 | control character in a text | yes | the character and its line, `send_keys` for keys, `write_file` for content |
@@ -566,6 +579,7 @@ message tells an outcome the agent may act upon, such as nothing to close.
 | anything else | yes | internal error, logged, retrying may work |
 | nothing to close | no | nothing to close |
 | window already existing | no | not created, what it runs and where |
+| new window held up by its startup files | no | created, no prompt yet, `wait_window` to wait for it |
 | file over the budget, without a range | no | size, line count, modification time, how to ask a range |
 
 ## MCP instructions
@@ -727,7 +741,8 @@ would otherwise only learn when ratd exits.
 On SIGTERM or SIGINT, the door closes before the terminals: ratd stops accepting connections and
 gives the calls in flight 10 seconds, then stops the tmux server (with the controller's own
 escalation, SIGTERM then SIGKILL). The other order would answer calls arriving in between that
-the terminals are restarting. A call waiting (`wait_window`) returns at once, telling ratd stops:
+the terminals are restarting. A call waiting (`wait_window`, or `create_window` for a first prompt)
+returns at once, the first telling ratd stops:
 `http.Server` cancels no call when shutting down, it waits for them, and a wait would hold the
 door open for the whole grace, then be cut. The kill switch does not depend on what agents wait
 for.
