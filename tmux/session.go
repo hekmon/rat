@@ -62,7 +62,8 @@ func (c *Controller) NewSession(ctx context.Context, session string) error {
 	return nil
 }
 
-// KillSession destroys session, terminating the processes running in its windows.
+// KillSession destroys session, terminating what runs in its windows as KillWindow does, which
+// leaves running what was detached from them.
 // The error wraps ErrSessionNotFound if the session does not exist.
 func (c *Controller) KillSession(ctx context.Context, session string) error {
 	if err := checkNames(session); err != nil {

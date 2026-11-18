@@ -106,8 +106,9 @@ tenant.
     command returns at once: what agents wait for never delays the stop. An admin stopping the
     service is sure that no terminal and no way in is left, without hunting for tmux sockets.
   - **The service manager stops what escapes**: commands detached from their terminal (`nohup`,
-    `setsid`, daemons) survive tmux. systemd stops them with the service, killing every process
-    left in its control group (`KillMode=control-group`, the default, which must be kept), which
+    `setsid`, `disown`, daemons, what a script left in the background) survive tmux. systemd stops
+    them with the service, killing every process left in its control group
+    (`KillMode=control-group`, the default, which must be kept), which
     the terminals must therefore stay in: tmux 3.4 and later built with systemd move each pane out
     of it when their server reaches the user bus, which ratd's tmux server runs without (see
     `tmux/README.md`). Running ratd as a service is what makes the kill switch complete: started by hand, detached

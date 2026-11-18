@@ -883,3 +883,19 @@ if-shell -F -t T '#{alternate_on}' 'capture-pane -p -t T' 'capture-pane -p -t T 
 
 Rejected: describing the window, then capturing it, in two invocations: simpler, but the
 properties and the capture were a few milliseconds apart.
+
+## Closing a window
+
+`kill-window` closes the terminal of the window, which hangs it up: bash gets SIGHUP, and passes it
+on to its jobs before exiting, running or stopped, the one in the foreground included (SIGNALS in
+the manual of bash). What SIGHUP does not end keeps running, without a terminal:
+
+- **Ignoring it**: `nohup cmd`, in the foreground as well, or a command inheriting `trap '' HUP`.
+- **In a session of its own**: `setsid cmd`, a daemon.
+- **No longer a job of bash**: `cmd & disown`, and what a script or a subshell left in the
+  background once it ended (`sh -c 'cmd &'`, `(cmd &)`): the job ended with it.
+
+Measured with tmux 3.3a and bash 5.2 on Linux, tmux 3.7c and bash 5.3 on macOS (which has no
+`setsid`). The server stopping (`kill-server`) leaves the same processes running: the service
+manager stops them (see AGENTS.md). `TestKillWindowSurvivors` guards what closing a window ends and
+what it leaves.

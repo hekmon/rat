@@ -5,9 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -457,5 +461,91 @@ func TestWindows(t *testing.T) {
 	}
 	if err = c.KillWindow(ctx, "s", FirstWindow); !errors.Is(err, ErrSessionNotFound) {
 		t.Errorf("expected ErrSessionNotFound, got %v", err)
+	}
+}
+
+// processRunning tells whether the process pid runs. A zombie does not: orphaned by its terminal
+// closing, it waits for the first process of the system to reap it, which in a container may never
+// come.
+func processRunning(pid int) bool {
+	out, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+	state := strings.TrimSpace(string(out))
+	return err == nil && state != "" && !strings.HasPrefix(state, "Z")
+}
+
+// TestKillWindowSurvivors guards what closing a window terminates: the command in its foreground
+// and the jobs of its bash. What the hangup of its terminal does not end keeps running, as the
+// description of close_window tells agents: a command ignoring it (nohup), in a session of its own
+// (setsid, which macOS does not have), no longer a job of bash (disown), or left in the background
+// by a script.
+func TestKillWindowSurvivors(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// tells its PID, then sleeps under it: for a bounded time, should the test be killed before its
+	// cleanup
+	marker := filepath.Join(home, "marker")
+	if err := os.WriteFile(marker, []byte("#!/bin/sh\necho $$ > \"$1\"\nexec sleep 60\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := startTestServer(t, "killsurvivors")
+	ctx := context.Background()
+	if err := c.NewSession(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.NewWindow(ctx, "s", "w"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "first prompt", promptIs(c, "s", "w", NoStatus))
+	type process struct {
+		name, command string
+		survives      bool
+	}
+	processes := []process{
+		{"job", "%s &", false},
+		{"nohup", "nohup %s >/dev/null 2>&1 &", true},
+		{"disown", "%s & disown", true},
+		{"script", `sh -c "%s &"`, true},
+	}
+	if _, err := exec.LookPath("setsid"); err == nil {
+		processes = append(processes, process{"setsid", "setsid %s >/dev/null 2>&1 &", true})
+	}
+	// last: it holds the terminal
+	processes = append(processes, process{"foreground", "%s", false})
+	pids := make(map[string]int, len(processes))
+	for _, p := range processes {
+		pidFile := filepath.Join(home, p.name)
+		if err := c.SendText(ctx, "s", "w", fmt.Sprintf(p.command, shellQuote(marker)+" "+shellQuote(pidFile)), true); err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, p.name+" started", func() (bool, string) {
+			data, err := os.ReadFile(pidFile)
+			if err != nil {
+				return false, err.Error()
+			}
+			pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+			if err != nil {
+				return false, err.Error()
+			}
+			pids[p.name] = pid
+			return true, ""
+		})
+		t.Cleanup(func() { _ = syscall.Kill(pids[p.name], syscall.SIGKILL) })
+	}
+	if err := c.KillWindow(ctx, "s", "w"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range processes {
+		if !p.survives {
+			eventually(t, p.name+" terminated", func() (bool, string) {
+				return !processRunning(pids[p.name]), "still running"
+			})
+		}
+	}
+	// the hangup went through: a moment for a signal on its way to the others to end them
+	time.Sleep(200 * time.Millisecond)
+	for _, p := range processes {
+		if p.survives && !processRunning(pids[p.name]) {
+			t.Errorf("%s: expected it to keep running once its window is closed", p.name)
+		}
 	}
 }

@@ -224,9 +224,20 @@ func TestCreateWindow(t *testing.T) {
 }
 
 // TestCloseWindow guards closing windows: nothing to close is a message that creates nothing, and
-// closing the last window tells a fresh main comes next.
+// closing the last window tells a fresh main comes next. Its description tells what keeps running
+// once the window is closed: an agent would otherwise take a command it detached for stopped.
 func TestCloseWindow(t *testing.T) {
 	session, controller, _, _ := connectTools(t, "test-ratd-close")
+	tools, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range tools.Tools {
+		if tool.Name == "close_window" && !strings.Contains(tool.Description, "Keeps running until you kill it: a command "+
+			"detached from the window (nohup, setsid, disown), or left in the background by a script.") {
+			t.Errorf("expected close_window to tell what keeps running, got %q", tool.Description)
+		}
+	}
 	expectTool(t, session, "close_window", map[string]any{"name": "build"}, false, "No window build: nothing to close.")
 	if sessions, err := controller.ListSessions(context.Background()); err != nil || slices.Contains(sessions, toolsSession) {
 		t.Errorf("expected no session created, got %v, %v", sessions, err)

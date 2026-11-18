@@ -156,10 +156,10 @@ tells which commands still run, `wait_window` waits for one, and its screen show
 Agents run long commands in the background all the same (`&`, `nohup`), a habit of shell tools
 blocking until a command ends, then write scripts checking the jobs and their logs, which windows
 spare them. rat does not follow a background job: it looks finished at once, with the exit status
-of starting it (0), and it outlives `close_window` when it ignores SIGHUP (`nohup`), until the
-service stops. Rejected: telling, with the status of a command, how many jobs bash runs in the
-background (it counts them at each prompt), which would warn an agent that started one: it would
-present the background as a way to run commands, which windows are for.
+of starting it (0), and it outlives `close_window` once detached from its terminal (`nohup`, see
+below), until the service stops. Rejected: telling, with the status of a command, how many jobs
+bash runs in the background (it counts them at each prompt), which would warn an agent that started
+one: it would present the background as a way to run commands, which windows are for.
 
 Windows persist until closed, which lets agents find them back, and few agents close them once
 done: they pile up, `list_windows` telling each of them at every call, each keeping a bash and up
@@ -205,10 +205,13 @@ once.
   agent is done with (see above), and to wait for the prompt of a new window before sending text:
   with `wait_window`, or `read_window` where it is not offered, as the result of an input sent to
   a session just created does.
-- **`close_window`** `{name}`: terminates what runs in the window. Nothing to close (missing
-  window or session) is a message, not an error, and creates nothing. Closing the last window
-  closes the session: the result says a fresh `main` comes next, at the cost of a tmux command
-  checking it, sparing the agent the surprise.
+- **`close_window`** `{name}`: terminates what runs in the window. A command detached from it keeps
+  running (see Closing a window in `tmux/README.md`), which the description tells: an agent closing
+  the window of a server it started with `nohup` would take it for stopped, its port still taken.
+  In the description rather than the result, as ratd follows no process and can not tell whether
+  one is left. Nothing to close (missing window or session) is a message, not an error, and creates
+  nothing. Closing the last window closes the session: the result says a fresh `main` comes next,
+  at the cost of a tmux command checking it, sparing the agent the surprise.
 - **`send_text`** `{window, text, enter}`: pastes the text as a human pastes, then presses Enter
   if asked. `enter` is required, with no default: the agent decides every time whether the text
   runs, and forgetting it fails validation instead of silently leaving a command unrun. Rejected

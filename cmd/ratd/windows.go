@@ -38,7 +38,8 @@ func (d *daemon) addWindowTools(server *mcp.Server, session string, logger *slog
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        tools.CloseWindow,
 		InputSchema: d.inputSchemas[tools.CloseWindow],
-		Description: "Close a window, terminating what runs in it.",
+		Description: "Close a window, terminating what runs in it. Keeps running until you kill it: a command " +
+			"detached from the window (nohup, setsid, disown), or left in the background by a script.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(true), IdempotentHint: true, OpenWorldHint: ptr(false)},
 	}, tool(logger, tools.CloseWindow, func(in tools.NameInput) string { return in.Name },
 		func(ctx context.Context, in tools.NameInput) result { return d.closeWindow(ctx, session, in.Name) }))
@@ -177,9 +178,10 @@ func (d *daemon) createWindow(ctx context.Context, session, name string) result 
 	return result{text: fmt.Sprintf("Window %s created: bash is starting in %s.", name, home)}
 }
 
-// closeWindow closes window name of session, terminating what runs in it. Nothing to close is not
-// an error, and creates nothing. Closing the last window closes the session: the agent is told it
-// finds a fresh main on its next call.
+// closeWindow closes window name of session, terminating what runs in it, but for what was detached
+// from it (see tmux.Controller.KillWindow). Nothing to close is not an error, and creates nothing.
+// Closing the last window closes the session: the agent is told it finds a fresh main on its next
+// call.
 func (d *daemon) closeWindow(ctx context.Context, session, name string) result {
 	err := d.controller.KillWindow(ctx, session, name)
 	switch {

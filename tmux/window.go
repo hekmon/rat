@@ -296,8 +296,10 @@ func (c *Controller) NewWindow(ctx context.Context, session, window string) erro
 	return nil
 }
 
-// KillWindow destroys window in session, terminating the processes running in it. Destroying
-// the last window of a session destroys the session too.
+// KillWindow destroys window in session, hanging up its terminal: the command in its foreground and
+// the jobs of its bash are terminated. A process the hangup does not end keeps running: ignoring
+// it (nohup), in a session of its own (setsid), no longer a job of bash (disown), or left in the
+// background by a script. Destroying the last window of a session destroys the session too.
 // The error wraps ErrSessionNotFound or ErrWindowNotFound if they do not exist.
 func (c *Controller) KillWindow(ctx context.Context, session, window string) error {
 	if err := checkNames(session, window); err != nil {
