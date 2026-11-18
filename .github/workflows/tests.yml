@@ -1,0 +1,104 @@
+# The tests drive a real tmux, and what rat relies on changes from one version of tmux to the next
+# (see tmux/README.md): they run with the tmux of several systems, from the oldest rat supports to
+# the newest packaged.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # A new tmux or bash reaches Fedora, Homebrew and the runners without a commit here.
+  schedule:
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ubuntu:
+    name: Ubuntu 24.04, tmux 3.4
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Install tmux
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq tmux
+      - name: Check the formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: Vet
+        run: go vet ./...
+      - name: Build for every platform released
+        run: |
+          # as build.sh does: no ratd on Windows, as it needs tmux
+          for os in linux darwin windows; do
+            commands=(./cmd/rat ./cmd/rat-tool)
+            if [ "$os" != windows ]; then commands+=(./cmd/ratd); fi
+            for arch in amd64 arm64; do
+              CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build "${commands[@]}"
+            done
+          done
+      # Docker is there: TestMinimumTmux runs
+      - name: Test
+        run: go test -count=1 ./...
+
+  tmux:
+    name: tmux of ${{ matrix.image }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # tmux 3.3a, the oldest rat supports, 3.5a, and the newest Fedora packages
+        image: ["debian:bookworm", "debian:trixie", "fedora:latest"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Build the tests relying on tmux
+        run: |
+          CGO_ENABLED=0 go test -c -o "$RUNNER_TEMP/tests/tmux.test" ./tmux
+          CGO_ENABLED=0 go test -c -o "$RUNNER_TEMP/tests/ratd.test" ./cmd/ratd
+      - name: Test
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: docker run --rm -v "$PWD:/src:ro" -v "$RUNNER_TEMP/tests:/tests:ro" "$IMAGE" sh /src/.github/tmux-tests.sh
+
+  macos:
+    name: macOS, tmux of Homebrew
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      # macOS ships bash 3.2, which rat refuses
+      - name: Install tmux and a recent bash
+        run: |
+          brew install tmux bash
+          echo "$(brew --prefix)/bin" >>"$GITHUB_PATH"
+      # -short: no Docker on these runners, TestMinimumTmux runs on Ubuntu
+      - name: Test
+        run: go test -short -count=1 ./...
