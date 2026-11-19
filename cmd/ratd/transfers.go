@@ -437,13 +437,26 @@ var downloadOpened = func(string) {}
 // body is chunked: once sent, the file is stamped again (see package stamp), and a file that
 // changed while being read, or failed to be, is told in the Rat-Error trailer, which makes the
 // download fail. A symbolic link at the end of the path is refused, and so is what is not a
-// regular file, opened without blocking (a FIFO without a writer would block forever).
+// regular file, both looked at before opening, as opening acts on what is not a regular file: it
+// releases a command waiting to write into a FIFO, whose next write then fails once the refusal
+// closes it, and a device may act on it (a tape rewinds). The file opened is checked again, as it
+// may have been replaced meanwhile, opened without blocking (a FIFO without a writer would block
+// forever).
 func (d *daemon) download(w http.ResponseWriter, req *http.Request) result {
 	path, refused := transferPath(req)
 	if refused != nil {
 		return refuse(w, http.StatusBadRequest, *refused)
 	}
 	attrs := []any{"path", path}
+	// a failure to look at it is left to the open, which tells it
+	if info, err := os.Lstat(path); err == nil {
+		switch {
+		case info.Mode()&fs.ModeSymlink != 0:
+			return refuse(w, http.StatusConflict, withAttrs(*linkRefusal(path, download), attrs))
+		case !info.Mode().IsRegular():
+			return refuse(w, http.StatusConflict, withAttrs(*transferNotRegular(path, info, download), attrs))
+		}
+	}
 	// O_NOFOLLOW refuses a link as the last part of the path only (ELOOP), following those above
 	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if errors.Is(err, syscall.ELOOP) {

@@ -491,6 +491,50 @@ func TestDownloadRefused(t *testing.T) {
 	}
 }
 
+// TestDownloadLooksFirst guards that a download looks at its path before opening it: a FIFO is
+// refused without being opened, by GET and HEAD alike, so that a command waiting to write into it
+// (tar -cf - . > fifo) keeps waiting. Opened first, without blocking, the FIFO released the
+// command, whose next write then failed with a broken pipe, the refusal having closed it.
+func TestDownloadLooksFirst(t *testing.T) {
+	r, client, home := transferRatd(t)
+	fifo := filepath.Join(home, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	opened := make(chan error, 1)
+	go func() {
+		writer, err := os.OpenFile(fifo, os.O_WRONLY, 0)
+		if err == nil {
+			writer.Close()
+		}
+		opened <- err
+	}()
+	// time for the command to wait in open, the case guarded
+	time.Sleep(100 * time.Millisecond)
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		req := newDownload(t, r.addr, fifo)
+		req.Method = method
+		resp, _, err := sendTransfer(client, req)
+		if err != nil || resp.StatusCode != http.StatusConflict {
+			t.Errorf("%s: expected 409, got %v, %v", method, resp, err)
+		}
+	}
+	select {
+	case err := <-opened:
+		t.Errorf("the download opened the FIFO, releasing the command waiting to write into it (open: %v)", err)
+	case <-time.After(200 * time.Millisecond):
+		// a reader of our own releases it, for the goroutine to end
+		reader, err := os.OpenFile(fifo, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer reader.Close()
+		if err := <-opened; err != nil {
+			t.Error(err)
+		}
+	}
+}
+
 // TestDownloadChanged guards a file changing while it is downloaded (a log still written, a build
 // output): grown, shrunk, or rewritten in place with its size kept, the download ends with the
 // Rat-Error trailer telling it, which makes it fail, and is logged as failed. A grown file is sent

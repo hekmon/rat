@@ -661,8 +661,15 @@ refusal came once 384 KiB of the file had left.
 resolved (for a link leading nowhere, its target as written): a rename would replace the link
 itself, and following it, as `write_file` does, would surprise as much. The links among the
 directories above are followed, as any program does (`/bin` under a merged `/usr`, `/tmp` on
-macOS). A download opens its file with `O_NOFOLLOW`, which refuses a link as the last part of the
-path only; an upload looks at its target with `Lstat`, before and after its bytes come.
+macOS).
+
+**Looked at before opened.** As `read_file` and `write_file` do, a download looks at its file
+before opening it, with `Lstat`, and refuses unopened a link or what is not a regular file: opening
+acts on what is not a regular file. It releases a command waiting to write into a FIFO, whose next
+write then fails once the refusal closes it, and a device may act on it (a tape rewinds). The file
+opened is checked again, as it may have been replaced in between: opened with `O_NOFOLLOW`, which
+refuses a link as the last part of the path only, and without blocking. An upload looks at its
+target with `Lstat`, before and after its bytes come, and only opens a temporary file of its own.
 
 **The change check.** The side reading the file compares its size, modification time and change
 time when opening it and once read (package `internal/stamp`), as GNU tar does: a file still being
