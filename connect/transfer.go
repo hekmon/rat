@@ -3,9 +3,12 @@ package connect
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 // The file transfers of rat copy files by path between the machine of a harness and the one of
@@ -48,8 +51,80 @@ const (
 // interpreted nor converted.
 const OctetStream = "application/octet-stream"
 
-// ErrHeader is the error of a transfer header that can not be read.
-var ErrHeader = errors.New("invalid header")
+var (
+	// ErrHeader is the error of a transfer header that can not be read.
+	ErrHeader = errors.New("invalid header")
+	// ErrRefused is the error of a transfer ratd refused or failed, wrapped by a [Refusal] telling
+	// why.
+	ErrRefused = errors.New("transfer refused")
+	// ErrNoTransfers is the error of a transfer to a ratd older than the transfers.
+	ErrNoTransfers = errors.New("ratd serves no file transfers: it is older than them")
+	// ErrChanged is the error of an upload whose file changed while it was read: ratd wrote
+	// nothing.
+	ErrChanged = errors.New("the file changed while it was read")
+	// ErrCut is the error of a download whose body was cut before its end.
+	ErrCut = errors.New("transfer cut")
+)
+
+// Refusal is a transfer ratd refused or failed: its HTTP status, 200 for a download failed by its
+// trailer (see [HeaderError]), and the sentence ratd wrote for the agent. It wraps [ErrRefused].
+type Refusal struct {
+	Status int
+	Text   string
+}
+
+func (r *Refusal) Error() string {
+	return fmt.Sprintf("%v (%d): %s", ErrRefused, r.Status, r.Text)
+}
+
+func (r *Refusal) Unwrap() error {
+	return ErrRefused
+}
+
+// textMax bounds what is read of a text ratd answers: a sentence, never a file.
+const textMax = 64 << 10
+
+// transferURL returns the URL of the transfer endpoint path on the ratd at server, HOST:PORT.
+func transferURL(server, path string) string {
+	return (&url.URL{Scheme: "https", Host: server, Path: path}).String()
+}
+
+// refusal returns the error of resp, an answer refusing or failing a transfer: [ErrNoTransfers]
+// for a 404 without [HeaderVersion], from a ratd older than the transfers, a [Refusal] otherwise.
+// A refusal of the client checks of ratd (a client revoked, 403; no valid CRL, 503) carries no
+// version either, and is told as the others.
+func refusal(resp *http.Response) error {
+	if resp.StatusCode == http.StatusNotFound && resp.Header.Get(HeaderVersion) == "" {
+		return ErrNoTransfers
+	}
+	text := readText(resp.Body)
+	if text == "" {
+		text = resp.Status
+	}
+	return &Refusal{Status: resp.StatusCode, Text: text}
+}
+
+// readText returns the text of body, a sentence for the agent, without the spaces around it,
+// bounded by textMax.
+func readText(body io.Reader) string {
+	text, _ := io.ReadAll(io.LimitReader(body, textMax))
+	return strings.TrimSpace(string(text))
+}
+
+// readErrors reads r, keeping the error it failed with, other than its end: a transfer tells its
+// connection failing from its file failing.
+type readErrors struct {
+	r   io.Reader
+	err error
+}
+
+func (e *readErrors) Read(p []byte) (int, error) {
+	n, err := e.r.Read(p)
+	if err != nil && err != io.EOF {
+		e.err = err
+	}
+	return n, err
+}
 
 // EncodePath returns path as [HeaderPath] carries it: percent-encoded as the path of a URL,
 // slashes kept, readable in logs. Not as is: parsers strip the spaces around a header value, and

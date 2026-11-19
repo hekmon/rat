@@ -33,7 +33,7 @@ at once, and to know what they leave behind.
 - **`connect` package**: how a client reaches ratd: the defaults ratd and its clients share (path,
   port, the contract of the file transfers), the HTTP client presenting a client certificate and
   checking the CRL of its CA around every request, for rat, rat-tool and Go harnesses connecting
-  directly. The flags naming a ratd and a client directory are in `internal/flags`, shared by rat
+  directly, and the client side of the file transfers. The flags naming a ratd and a client directory are in `internal/flags`, shared by rat
   and `rat-tool check`.
 - **`cmd/ratd/tools`**: the inputs of ratd's tools (names, types, schemas), which ratd serves and
   rat reads to build the requests it relays.

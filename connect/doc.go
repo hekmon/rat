@@ -3,7 +3,8 @@
 // contract of the file transfers of rat (their paths, headers and encodings, see [UploadPath]),
 // and what a client in Go needs beyond package mtls: the endpoint of a ratd, the HTTP client
 // presenting its certificate and checking the CRL of its CA around every request ([HTTPClient]),
-// and the transport of an MCP client of the Go SDK built on it ([Transport]).
+// the transport of an MCP client of the Go SDK built on it ([Transport]), and the client side of
+// the file transfers ([Upload], [StartDownload]).
 //
 // The addresses of ratd are HOST:PORT rather than URLs: the scheme is always https and the path
 // always [Path], less to get wrong. It holds no command line: the flags of rat and rat-tool are

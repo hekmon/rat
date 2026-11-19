@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"errors"
 	"io"
@@ -557,6 +558,100 @@ func TestDownloadChanged(t *testing.T) {
 	if !strings.Contains(r.logs.String(), `error="file changed while read"`) {
 		t.Errorf("expected the change logged:\n%s", r.logs)
 	}
+}
+
+// growingFile is a file growing as it is read, as a log still written: once read to its end, a
+// line is appended to it.
+type growingFile struct {
+	*os.File
+}
+
+func (f growingFile) Read(p []byte) (int, error) {
+	n, err := f.File.Read(p)
+	if err == io.EOF {
+		appended, openErr := os.OpenFile(f.Name(), os.O_WRONLY|os.O_APPEND, 0)
+		if openErr != nil {
+			return n, openErr
+		}
+		_, _ = appended.WriteString("more\n")
+		_ = appended.Close()
+	}
+	return n, err
+}
+
+// TestTransferClient guards that the client of package connect, which rat uses, and ratd agree on
+// the contract: an upload created, with its mode and the directories created told, then refused
+// without overwrite with the sentence of ratd; a download of what was uploaded, with its mode and
+// size; a download refused; and an upload whose file changed while read, which ratd does not
+// write.
+func TestTransferClient(t *testing.T) {
+	r, client, home := transferRatd(t)
+	ctx := context.Background()
+	content := randomContent(t, 512<<10)
+	local := filepath.Join(t.TempDir(), "app.bin")
+	if err := os.WriteFile(local, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(local, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	upload := func(path string, overwrite bool) (*connect.Uploaded, error) {
+		file, err := os.Open(local)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer file.Close()
+		return connect.Upload(ctx, client, r.addr, file, path, overwrite)
+	}
+	remote := filepath.Join(home, "sub", "app.bin")
+	mode := 0o640 &^ umask()
+	up, err := upload("~/sub/app.bin", false)
+	if err != nil || *up != (connect.Uploaded{Mode: mode, Sent: int64(len(content)), Note: "Missing directories created: " +
+		filepath.Join(home, "sub") + ". Check the path if you did not mean them."}) {
+		t.Fatalf("expected the file created, got %+v, %v", up, err)
+	}
+	expectFile(t, remote, string(content), mode)
+	var refused *connect.Refusal
+	if _, err = upload("~/sub/app.bin", false); !errors.As(err, &refused) ||
+		refused.Status != http.StatusPreconditionFailed || refused.Text != remote+" exists: set overwrite to replace it." {
+		t.Errorf("without overwrite: expected the refusal of ratd, got %v", err)
+	}
+
+	download, err := connect.StartDownload(ctx, client, r.addr, "~/sub/app.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var written bytes.Buffer
+	n, err := download.WriteTo(&written)
+	_ = download.Close()
+	if err != nil || download.Mode != mode || download.Size != int64(len(content)) || n != download.Size ||
+		!bytes.Equal(written.Bytes(), content) {
+		t.Errorf("expected the file uploaded, with its mode and size, got %v, %d, %d bytes, %v", download.Mode,
+			download.Size, n, err)
+	}
+	missing := filepath.Join(home, "missing")
+	if _, err = connect.StartDownload(ctx, client, r.addr, missing); !errors.As(err, &refused) ||
+		refused.Status != http.StatusNotFound || refused.Text != "Reading "+missing+" failed: no such file or directory." {
+		t.Errorf("a missing file: expected the refusal of ratd, got %v", err)
+	}
+
+	file, err := os.Open(local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	grown := filepath.Join(home, "grown.bin")
+	if _, err = connect.Upload(ctx, client, r.addr, growingFile{file}, grown, false); !errors.Is(err, connect.ErrChanged) {
+		t.Errorf("a file growing: expected ErrChanged, got %v", err)
+	}
+	eventually(t, "the cut upload logged", func() bool {
+		return strings.Contains(r.logs.String(), "direction=upload outcome=error duration=") &&
+			strings.Contains(r.logs.String(), "path="+grown)
+	})
+	if _, err = os.Lstat(grown); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("expected nothing written for a file changing while uploaded, got %v", err)
+	}
+	expectNoTemporary(t, home)
 }
 
 // blockingBody is the body of an upload stalling: some bytes, then nothing until unblocked.
