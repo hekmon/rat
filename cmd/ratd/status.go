@@ -69,11 +69,11 @@ func (d degradation) String() string {
 // status is what ratd tells a human operator in systemctl status (STATUS=): the one line shown
 // whatever the logs did since, where one line per tool call buries what was logged earlier. First
 // what degrades ratd while it serves, then whether stopping ratd now cuts anyone: who called
-// lately, and the waits in flight, the only calls lasting long enough to be seen at a render (the
-// others take milliseconds). Of its calls, it is not tmux's state, which tmux keeps (see
-// AGENTS.md): what ratd alone knows, lost when it stops. Any local user can read the status of a
-// system unit, where the journal takes a group: session names are shown, never the addresses of
-// clients. Nothing is told before ratd serves, systemd waiting for READY=1.
+// lately, the waits and the file transfers in flight, the only requests lasting long enough to be
+// seen at a render (the others take milliseconds). Of its calls, it is not tmux's state, which
+// tmux keeps (see AGENTS.md): what ratd alone knows, lost when it stops. Any local user can read
+// the status of a system unit, where the journal takes a group: session names are shown, never
+// the addresses of clients. Nothing is told before ratd serves, systemd waiting for READY=1.
 type status struct {
 	logger *slog.Logger
 	// notifier tells systemd the line (see takeNotifySocket)
@@ -101,8 +101,8 @@ type status struct {
 	// seen is when each session sent its last request: as many as the client certificates of the
 	// bundle, which is closed
 	seen map[string]time.Time
-	// waits counts the calls of wait_window in flight
-	waits int
+	// waits counts the calls of wait_window in flight; transfers, the file transfers in flight
+	waits, transfers int
 	// stopping is the step of the stop, which replaces the line once set
 	stopping string
 	// sent is the line systemd was last told
@@ -134,6 +134,19 @@ func (s *status) waitEnded() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.waits--
+}
+
+// transferStarted records a file transfer starting; transferEnded, the same transfer ending.
+func (s *status) transferStarted() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.transfers++
+}
+
+func (s *status) transferEnded() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.transfers--
 }
 
 // degrade records degradations, and tells systemd at once: an operator must not wait for a render.
@@ -285,6 +298,12 @@ func (s *status) render(now time.Time) string {
 		parts = append(parts, "1 wait in flight")
 	case s.waits > 1:
 		parts = append(parts, fmt.Sprintf("%d waits in flight", s.waits))
+	}
+	switch {
+	case s.transfers == 1:
+		parts = append(parts, "1 transfer in flight")
+	case s.transfers > 1:
+		parts = append(parts, fmt.Sprintf("%d transfers in flight", s.transfers))
 	}
 	return strings.Join(parts, " · ")
 }

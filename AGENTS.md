@@ -23,16 +23,18 @@ at once, and to know what they leave behind.
   wait for a command, read and write files), and composing the controller primitives to serve it
   is ratd's value: the plumbing (e.g. a session created on first use) stays hidden, to avoid tool
   and context bloat. It reads and writes files itself: tmux is its terminal backend, not its file
-  backend.
+  backend. Next to MCP, it serves the file transfers of rat on two HTTP endpoints of its own, by
+  path, their bytes never reaching a model (see `cmd/ratd/README.md`).
 - **`rat` (bridge)**: a stdio MCP server relaying to ratd, for harnesses that can not present a
   client certificate (most of them). It relays messages as they are, presenting the
   certificate.
 - **`rat-tool`**: the utility. It creates and inspects bundles, and checks a running ratd end to
   end. It holds every secondary feature, so that ratd and rat keep a single mode each.
 - **`connect` package**: how a client reaches ratd: the defaults ratd and its clients share (path,
-  port), the HTTP client presenting a client certificate and checking the CRL of its CA around
-  every request, for rat, rat-tool and Go harnesses connecting directly. The flags naming a ratd
-  and a client directory are in `internal/flags`, shared by rat and `rat-tool check`.
+  port, the contract of the file transfers), the HTTP client presenting a client certificate and
+  checking the CRL of its CA around every request, for rat, rat-tool and Go harnesses connecting
+  directly. The flags naming a ratd and a client directory are in `internal/flags`, shared by rat
+  and `rat-tool check`.
 - **`cmd/ratd/tools`**: the inputs of ratd's tools (names, types, schemas), which ratd serves and
   rat reads to build the requests it relays.
 

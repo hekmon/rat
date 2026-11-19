@@ -173,10 +173,11 @@ func (h minLevel) WithGroup(name string) slog.Handler {
 	return minLevel{Handler: h.Handler.WithGroup(name), min: h.min}
 }
 
-// serve serves the MCP endpoint on listener, over mutual TLS, until ctx is done. It then closes
-// the door: no connection is accepted anymore, and the calls in flight get shutdownGrace to end
-// before being cut. A call waiting (wait_window) returns as soon as ctx is done: http.Server
-// cancels no call when shutting down, it waits for them. It returns early if serving fails.
+// serve serves the MCP endpoint and the file transfers of rat on listener, over mutual TLS, until
+// ctx is done. It then closes the door: no connection is accepted anymore, and the calls in
+// flight get shutdownGrace to end before being cut. A call waiting (wait_window) returns as soon
+// as ctx is done, and a transfer is cut then (see cutOnStop): http.Server cancels no call when
+// shutting down, it waits for them. It returns early if serving fails.
 // Started by systemd with Type=notify, it tells it ratd is ready once serving, its status while
 // serving (see status), and stopping once ctx is done.
 func (d *daemon) serve(ctx context.Context, listener net.Listener) error {
@@ -185,7 +186,8 @@ func (d *daemon) serve(ctx context.Context, listener net.Listener) error {
 	if err != nil {
 		return err
 	}
-	// HTTP/1.1 only: requests are short JSON exchanges, which HTTP/2 would not speed up
+	// HTTP/1.1 only: MCP requests are short JSON exchanges, which HTTP/2 would not speed up, and a
+	// file transfer gets a connection of its own rather than sharing one with calls
 	tlsConfig.NextProtos = []string{"http/1.1"}
 	mux := http.NewServeMux()
 	mux.Handle(connect.Path, mcp.NewStreamableHTTPHandler(d.getServer, &mcp.StreamableHTTPOptions{
@@ -205,6 +207,7 @@ func (d *daemon) serve(ctx context.Context, listener net.Listener) error {
 		PropagateRequestCancellation: true,
 		Logger:                       d.sdkLogger,
 	}))
+	d.addTransfers(mux)
 	server := &http.Server{
 		Handler:           d.checkClients(mux),
 		ReadHeaderTimeout: readHeaderTimeout,

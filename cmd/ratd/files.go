@@ -37,6 +37,12 @@ func (d *daemon) addFileTools(server *mcp.Server, logger *slog.Logger) {
 // one of its foreground process, the local one of an ssh client for instance.
 var errRelativePath = errors.New("relative path")
 
+// relativeText refuses path, relative (see errRelativePath).
+func relativeText(path string) string {
+	return fmt.Sprintf("Path %q is relative: give an absolute path, or one starting with ~/ (list_windows shows "+
+		"the directories of your windows).", path)
+}
+
 // absolutePath returns path, absolute or starting with ~/ for the home directory of ratd's user
 // (where terminals start), as an absolute clean path.
 func absolutePath(path string) (string, error) {
@@ -66,8 +72,7 @@ func (d *daemon) writeFile(ctx context.Context, in tools.WriteFileInput) result 
 	attrs := []any{"path", in.Path, "bytes", len(in.Content)}
 	path, err := absolutePath(in.Path)
 	if err != nil {
-		return result{outcome: failed, err: err, attrs: attrs, text: fmt.Sprintf("Path %q is relative: give an "+
-			"absolute path, or one starting with ~/ (list_windows shows the directories of your windows).", in.Path)}
+		return result{outcome: failed, err: err, attrs: attrs, text: relativeText(in.Path)}
 	}
 	attrs[1] = path
 	written := make(chan result, 1)
@@ -228,7 +233,6 @@ const (
 // replace, /dev/zero never ends).
 func (d *daemon) notRegular(path string, info fs.FileInfo, how access) *result {
 	mode := info.Mode()
-	var kind string
 	switch {
 	case mode.IsRegular():
 		return nil
@@ -238,21 +242,27 @@ func (d *daemon) notRegular(path string, info fs.FileInfo, how access) *result {
 			text = fmt.Sprintf("%s is a directory, not a file: list it in the terminal (ls).", path)
 		}
 		return &result{outcome: failed, err: syscall.EISDIR, text: text}
-	case mode&fs.ModeNamedPipe != 0:
-		kind = "a FIFO"
-	case mode&fs.ModeDevice != 0:
-		kind = "a device"
-	case mode&fs.ModeSocket != 0:
-		kind = "a socket"
-	default:
-		kind = "of type " + mode.Type().String()
 	}
 	tool := "write_file only writes"
 	if how == read {
 		tool = "read_file only reads"
 	}
 	return &result{outcome: failed, err: fmt.Errorf("not a regular file: %s", mode.Type()), text: fmt.Sprintf(
-		"%s is not a regular file (%s): %s regular files.", path, kind, tool)}
+		"%s is not a regular file (%s): %s regular files.", path, kindText(mode), tool)}
+}
+
+// kindText tells what a file of mode is, when not a regular file nor a directory.
+func kindText(mode fs.FileMode) string {
+	switch {
+	case mode&fs.ModeNamedPipe != 0:
+		return "a FIFO"
+	case mode&fs.ModeDevice != 0:
+		return "a device"
+	case mode&fs.ModeSocket != 0:
+		return "a socket"
+	default:
+		return "of type " + mode.Type().String()
+	}
 }
 
 // fileFailure returns the result of a file operation, what telling it ("Writing /x"), failed with

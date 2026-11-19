@@ -19,8 +19,8 @@ import (
 // TestStatusRender guards the status line: the degradations first, in their order, the bundle
 // expiry and the tmux deaths of the restart window, which age out; then the sessions most recently
 // seen first, by name for the same time, at most statusSessions of them and a count of the others,
-// in coarse times; the waits in flight; nothing for what is not there. Once stopping, the step of
-// the stop alone.
+// in coarse times; the waits, then the file transfers, in flight; nothing for what is not there.
+// Once stopping, the step of the stop alone.
 func TestStatusRender(t *testing.T) {
 	now := time.Now()
 	s := newStatus(slog.New(slog.DiscardHandler))
@@ -47,6 +47,21 @@ func TestStatusRender(t *testing.T) {
 	s.waitEnded()
 	if line := s.render(now); !strings.HasSuffix(line, "+2 more") {
 		t.Errorf("expected no wait in flight, got %q", line)
+	}
+	s.transferStarted()
+	if line := s.render(now); !strings.HasSuffix(line, "+2 more · 1 transfer in flight") {
+		t.Errorf("expected 1 transfer in flight, got %q", line)
+	}
+	s.waitStarted()
+	s.transferStarted()
+	if line := s.render(now); !strings.HasSuffix(line, "+2 more · 1 wait in flight · 2 transfers in flight") {
+		t.Errorf("expected 1 wait and 2 transfers in flight, got %q", line)
+	}
+	s.waitEnded()
+	s.transferEnded()
+	s.transferEnded()
+	if line := s.render(now); !strings.HasSuffix(line, "+2 more") {
+		t.Errorf("expected nothing in flight, got %q", line)
 	}
 
 	s.degrade(pasteOverridden, runningAsRoot)

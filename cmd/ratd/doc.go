@@ -25,6 +25,15 @@
 // nothing else to do. What they send back is checked and bounded by the read budget. Missing tmux
 // sessions are created on the fly, so an agent closing all its windows finds a fresh main.
 //
+// # File transfers
+//
+// Next to its MCP endpoint, ratd serves the file transfers behind the tools upload_file and
+// download_file of rat, which copy files by path between the machine of a harness and this one,
+// their bytes never going through MCP: an upload is the body of a POST to /upload, a download the
+// body of the answer to a GET of /download, the path and the permission bits travelling in
+// headers (package connect holds the contract). Both are all or nothing, refuse a symbolic link at
+// the end of their path, and fail a file that changed while it was read (package internal/stamp).
+//
 // # tmux server
 //
 // Ratd takes its tenant by starting the tmux server before listening, keeps it running,

@@ -404,7 +404,8 @@ writing a temporary file renamed over the target, atomic, but breaking hard link
 symbolic link into a file, possibly changing the owner, and needing to write in the directory;
 an `atomic` parameter, which small models would set "to be safe", a second way to write to test;
 renaming for new files only, which have nothing to keep, a second way as well, for programs
-watching new files only.
+watching new files only. File transfers make the other choice (see File transfers): a file
+arriving for minutes must not be left half replaced.
 
 Only a regular file is written: a FIFO would block, and a device is not a file to replace. The
 file is checked before opening (opening some devices has effects), opened without blocking (a
@@ -585,6 +586,97 @@ message tells an outcome the agent may act upon, such as nothing to close.
 | new window held up by its startup files | no | created, no prompt yet, `wait_window` to wait for it |
 | file over the budget, without a range | no | size, line count, modification time, how to ask a range |
 
+## File transfers
+
+`write_file` and `read_file` move content through the context of a model: what it writes, what
+it must read. A file an agent only moves (a binary, an archive, a build output) has no place
+there: binary content does not fit a JSON string, and a large file fills the context for nothing.
+MCP gives a server no way to reach the files of its client, so a copy by path takes a program on
+each machine: ratd here, and rat on the machine of the harness, for its tools `upload_file` and
+`download_file`. Their bytes travel over two endpoints of ratd next to `/mcp`, behind the same
+client checks, never through MCP: `/mcp` stays MCP only. The contract is declared in package
+`connect`, with both sides of it:
+
+- **`POST /upload`**: the body is the file, written at the path `Rat-Path` names. `Rat-Mode`
+  holds its permission bits, `Rat-Overwrite` whether an existing file may be replaced (false when
+  absent, the safe side). The answer is 201 (created) or 204 (replaced), with the permission bits
+  of the file written in `Rat-Mode`, for rat to tell an agent that a replaced file kept a mode
+  other than its source's; a 201 names the directories created, as `write_file` does.
+- **`GET /download`**: the body of the answer is the file at the path `Rat-Path` names, with its
+  permission bits in `Rat-Mode` and its size in `Rat-Size`. HEAD answers the headers alone.
+- The answers of both endpoints carry `Rat-Version`, the version of ratd: a 404 without it comes
+  from a ratd older than the transfers, whose mux serves `/mcp` alone, one with it from a missing
+  file. A refusal is a status (400, 403, 404, 409, 412, 415, 507) with a sentence for the agent,
+  which rat relays.
+
+HTTP as designed: the URL names the endpoint, headers describe the file, the body is the file.
+Rejected: the path as a query parameter (`?path=`), a function call dressed as HTTP; the path in
+the URL (`PUT /files/home/agent/app.tgz`), which routing rewrites: Go's mux redirects `..` and
+`//` (307), so that `/files//~/x` and `/files/~/x` meet, and escaping the whole path into one
+segment makes it a header in disguise. A header reaches ratd as sent, the path percent-encoded as
+the path of a URL: parsers strip the spaces around a header value and refuse control characters,
+both legal in a file name (measured with Go 1.27: a trailing space lost, a new line refused).
+POST rather than PUT: the target of a request is its URL, and `/upload` writes what it receives
+where a header says, which is what POST means; PUT would claim to replace `/upload` itself. The
+headers of rat are prefixed `Rat-`: `Rat-Overwrite` rather than WebDAV's `Overwrite`, whose
+absence means overwrite, the opposite of ours.
+
+**All or nothing.** An upload goes to a temporary file next to its target (`.NAME.rat-RANDOM`,
+with the permission bits sent minus the umask), put in its place once complete: an upload cut
+midway leaves the previous version whole. `write_file` makes the opposite choice (see Files), for
+content it holds whole; a file arriving for minutes, half replaced, would be worse than none.
+Without overwrite, the temporary file is linked under the name of the target, which fails if a
+file appeared meanwhile (412), where a rename would replace it; with overwrite, it takes the mode
+of the file it replaces, then is renamed over it. Permissions follow `scp`: a new file gets those
+of its source minus the umask, a replaced file keeps its own, and setuid, setgid and sticky never
+travel. The price of the rename: hard links to a replaced file are broken, its extended
+attributes lost, and its owner becomes ratd's user (rat runs as a user of its own on each side,
+as the manual recommends). On a file system without hard links (FAT, some network ones), the file
+is renamed even without overwrite, a file appearing in between then being replaced. No fsync: all
+or nothing covers a transfer cut, not a power cut, after which a file may be lost as any other
+just written; an agent wanting it on disk runs `sync`. A ratd killed during an upload leaves its
+temporary file behind.
+
+What the headers alone refuse is refused before any byte is sent: rat waits for the go-ahead of
+ratd (`Expect: 100-continue`), which Go's server gives when the handler first reads the body. That
+is an existing file without overwrite (412), a symbolic link or what is not a regular file (409),
+a relative path or a header ratd can not read (400), and a body declared other than bytes (415:
+`curl -d @file`, for one, strips the new lines of the file). Measured: without the go-ahead, a
+refusal came once 384 KiB of the file had left.
+
+**Symbolic links.** A link at the end of the path is refused, naming its target, every link
+resolved (for a link leading nowhere, its target as written): a rename would replace the link
+itself, and following it, as `write_file` does, would surprise as much. The links among the
+directories above are followed, as any program does (`/bin` under a merged `/usr`, `/tmp` on
+macOS). A download opens its file with `O_NOFOLLOW`, which refuses a link as the last part of the
+path only; an upload looks at its target with `Lstat`, before and after its bytes come.
+
+**The change check.** The side reading the file compares its size, modification time and change
+time when opening it and once read (package `internal/stamp`), as GNU tar does: a file still being
+written (a log, a build output) is not copied torn. A download sends the size the file had when
+opened, so that a file growing forever still ends, then tells a change, or a read failing, in the
+`Rat-Error` trailer of its chunked body, and rat drops what it received. A change in an upload is
+rat's to find: it ends the body with an error instead of its last chunk, and ratd, seeing the body
+cut, drops its temporary file. No digest: TLS authenticates every record, so a byte altered on the
+way cuts the connection, and the bytes go from file to socket through the standard library
+alone. A digest computed on the stream at both ends would check the same bytes again, and miss a
+file changing while read, both ends hashing the same torn bytes; one computed by a first read of
+the file would catch it, at the price of reading it twice, which the change check spares. A
+trailer only follows a chunked body in HTTP/1.1, which carries no `Content-Length` (Go silently
+drops a trailer sent next to one): the size of a download travels in `Rat-Size`.
+
+**Bytes as they are.** `application/octet-stream` both ways, never a charset nor a conversion,
+which FTP's ASCII mode taught. No compression: a content coding changes what the length and any
+digest describe, and the one that would not, a transfer coding, Go's server refuses (501). gzip is
+not the cost: it compresses Go sources at 200 to 350 MB/s on one core of a recent laptop, and
+passes incompressible data through at 2.4 GB/s. An agent compresses on the remote side, where it
+has a shell. Rejected as well: HTTP/3, which a single bulk stream gains
+nothing from, and which Go 1.27 does not offer publicly.
+
+Transfers have no size limit nor timeout: a full disk fails the transfer (507), its temporary file
+removed, and a transfer on a slow link may take hours. Stopping ratd cuts them at once (see
+Shutdown).
+
 ## MCP instructions
 
 Built at startup, sent to each client when it initializes, or discovers the server from protocol
@@ -692,7 +784,7 @@ lines are calls, burying what was logged earlier. It tells first what degrades r
 serves, then whether stopping ratd now cuts anyone:
 
 ```
-serving tenant prod on [::]:7281 · bracketed paste overridden, bundle expires in 212d · last seen: alice now, bob 25m ago, carol 3h ago · 1 wait in flight
+serving tenant prod on [::]:7281 · bracketed paste overridden, bundle expires in 212d · last seen: alice now, bob 25m ago, carol 3h ago · 1 wait in flight · 2 transfers in flight
 ```
 
 - **Degradations**: known issues of a ratd serving all the same, logged once when found, and shown
@@ -706,11 +798,12 @@ serving tenant prod on [::]:7281 · bracketed paste overridden, bundle expires i
 - **Last seen**, per session, the time of its last request, whatever the method: the five most
   recent, then a count of the others. Last seen rather than active or idle: requests are
   stateless, no connection stays open between them.
-- **Waits in flight**: the calls of `wait_window` waiting, what a stop cuts. The other calls take
-  milliseconds, too short to be seen at a render: a count of them would read 0 nearly always.
+- **Waits and transfers in flight**: the calls of `wait_window` waiting and the file transfers
+  under way, what a stop cuts. The other calls take milliseconds, too short to be seen at a
+  render: a count of them would read 0 nearly always.
 - **Stopping**: the step of the stop replaces the line, `stopping: closing the door`, then
-  `stopping: stopping the terminals`: a stop lasting shows where. No waits there: a stop makes them
-  return at once.
+  `stopping: stopping the terminals`: a stop lasting shows where. No waits nor transfers there: a
+  stop makes them end at once.
 
 This is state ratd keeps, of its calls, which tmux knows nothing of: lost when ratd stops, which is
 fine for a display. Rendered every 10 seconds, and sent only when it changed: times are coarse
@@ -747,8 +840,10 @@ escalation, SIGTERM then SIGKILL). The other order would answer calls arriving i
 the terminals are restarting. A call waiting (`wait_window`, or `create_window` for a first prompt)
 returns at once, the first telling ratd stops:
 `http.Server` cancels no call when shutting down, it waits for them, and a wait would hold the
-door open for the whole grace, then be cut. The kill switch does not depend on what agents wait
-for.
+door open for the whole grace, then be cut. A file transfer is cut at once as well, the read and
+write deadlines of its connection set to the moment ratd stops (`http.ResponseController`), as it
+may last hours: an upload cut drops its temporary file. The kill switch does not depend on what
+agents wait for, nor on what they copy.
 
 The controller terminates its server when the context it was started with ends: ratd starts it
 with a context the signal does not cancel, which would otherwise stop the terminals with the
@@ -770,13 +865,16 @@ warn about.
   answers, one per call.
 - **HTTP**: `ReadHeaderTimeout` 10 seconds, which also bounds the TLS handshake (net/http bounds
   it by the smallest of its read and write timeouts), and `IdleTimeout` 2 minutes. No
-  `ReadTimeout` nor `WriteTimeout`: a 4 MiB request on a slow link must not be cut.
+  `ReadTimeout` nor `WriteTimeout`: a 4 MiB request on a slow link must not be cut, nor a file
+  transfer lasting hours. A file system not answering blocks a transfer until it answers; a stop
+  does not wait for it beyond the grace.
 
 ## Serving
 
-- **Endpoint**: `/mcp`, anything else answers 404. The MCP specification imposes no path; `/mcp`
-  is its example, and the convention of the SDK. ratd serves nothing else: `rat-tool` checks a
-  running ratd.
+- **Endpoints**: `/mcp`, and the file transfers of rat, `/upload` and `/download` (see File
+  transfers); anything else answers 404. The MCP specification imposes no path; `/mcp` is its
+  example, and the convention of the SDK. ratd serves nothing else: `rat-tool` checks a running
+  ratd.
 - **Listen address**: all interfaces by default (`:7281`), which mutual TLS makes safe. Written
   with an empty host rather than `[::]`: Go then listens on IPv6 and IPv4 at once, where a
   literal `[::]` fails on machines with IPv6 disabled. 7281 reads "RAT!" on a phone keypad; IANA
@@ -786,8 +884,9 @@ The path and the default port are declared in package `connect`, the defaults ra
 clients share: both sides of the contract in one place.
 - **TLS**: served through a TLS listener built from the checked bundle. `http.Server.TLSConfig`
   alone would be silently ignored by `ListenAndServe`, serving plain HTTP: a test must guard that
-  a client without a certificate is refused. HTTP/1.1 only (no `h2` offered): requests are short
-  JSON exchanges.
+  a client without a certificate is refused. HTTP/1.1 only (no `h2` offered): MCP requests are
+  short JSON exchanges, which HTTP/2 would not speed up, and a file transfer gets a connection of
+  its own rather than sharing one with calls.
 - **Rejected handshakes** are logged, at most once every 10 seconds with the count of the others:
   a public port gets scanned. The standard library would otherwise print them through the `log`
   package, outside ratd's logs.
@@ -802,7 +901,8 @@ and whether Enter was pressed, the number of keys, the rows of history asked and
 size of a screen refused), the path and size of a file. Never the content: neither text, nor
 keys (they can spell a password one key at a time), not even a key name refused, told by its
 position (an agent mistaking `send_keys` for `send_text` may give a password as a key name), nor
-files. And the lifecycle: startup
+files. One line per file transfer as well: the session, the address, the direction, the outcome,
+the duration, the path, the bytes and the HTTP status, never the content. And the lifecycle: startup
 (version, tenant, address, read budget, bundle expiry, the CRL fetched), the check of the
 terminals, tmux exits and restarts, the crash budget, shutdown. A request refused (a client
 misnamed, revoked or expired, or no valid CRL) is a warning, with the session, the address and

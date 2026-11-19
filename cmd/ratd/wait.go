@@ -133,9 +133,9 @@ func (d *daemon) waitWindow(ctx context.Context, session string, in tools.WaitWi
 	}
 }
 
-// withAttrs returns r with attrs, for its log line.
+// withAttrs returns r with attrs before its own, for its log line.
 func withAttrs(r result, attrs []any) result {
-	r.attrs = attrs
+	r.attrs = append(append([]any{}, attrs...), r.attrs...)
 	return r
 }
 

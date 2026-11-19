@@ -60,12 +60,28 @@ func newBundle(t *testing.T, tenant string) string {
 // level, and returns its address and its logs.
 func startRatd(t *testing.T, bundle string, level slog.Level) (string, *logBuffer) {
 	t.Helper()
+	r := serveRatd(t, bundle, level)
+	return r.addr, r.logs
+}
+
+// servedRatd is a ratd serving in a test.
+type servedRatd struct {
+	addr string
+	logs *logBuffer
+	d    *daemon
+	// stop stops ratd, once, and returns the error of serve; the end of the test calls it otherwise
+	stop func() error
+}
+
+// serveRatd serves the tenant of bundle on a loopback port until the test ends or it is stopped,
+// logging from level. The terminals are not started: these tests call no tool.
+func serveRatd(t *testing.T, bundle string, level slog.Level) *servedRatd {
+	t.Helper()
 	side, err := mtls.Load(mtls.ServerDir(bundle))
 	if err != nil {
 		t.Fatal(err)
 	}
 	logs := &logBuffer{}
-	// the terminals are not started: these tests call no tool
 	controller, err := tmux.New(side.Tenant)
 	if err != nil {
 		t.Fatal(err)
@@ -81,13 +97,21 @@ func startRatd(t *testing.T, bundle string, level slog.Level) (string, *logBuffe
 	ctx, cancel := context.WithCancel(context.Background())
 	served := make(chan error, 1)
 	go func() { served <- d.serve(ctx, listener) }()
+	var once sync.Once
+	var serveErr error
+	stop := func() error {
+		once.Do(func() {
+			cancel()
+			serveErr = <-served
+		})
+		return serveErr
+	}
 	t.Cleanup(func() {
-		cancel()
-		if err := <-served; err != nil {
+		if err := stop(); err != nil {
 			t.Error(err)
 		}
 	})
-	return listener.Addr().String(), logs
+	return &servedRatd{addr: listener.Addr().String(), logs: logs, d: d, stop: stop}
 }
 
 // httpClient returns an HTTP client presenting the certificate of client in bundle, offering

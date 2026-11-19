@@ -47,8 +47,7 @@ func (d *daemon) readFile(ctx context.Context, in tools.ReadFileInput) result {
 	attrs := []any{"path", in.Path}
 	path, err := absolutePath(in.Path)
 	if err != nil {
-		return result{outcome: failed, err: err, attrs: attrs, text: fmt.Sprintf("Path %q is relative: give an "+
-			"absolute path, or one starting with ~/ (list_windows shows the directories of your windows).", in.Path)}
+		return result{outcome: failed, err: err, attrs: attrs, text: relativeText(in.Path)}
 	}
 	attrs[1] = path
 	scanTime := toolTimeout / 2
