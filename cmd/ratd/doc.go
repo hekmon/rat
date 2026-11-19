@@ -33,6 +33,9 @@
 // body of the answer to a GET of /download, the path and the permission bits travelling in
 // headers (package connect holds the contract). Both are all or nothing, refuse a symbolic link at
 // the end of their path, and fail a file that changed while it was read (package internal/stamp).
+// For a client handling pipes, a path naming a named pipe the agent made is streamed through
+// rather than refused, between commands of the agent with no file in between (package
+// internal/fifo), and held open after a cut until the client closes it (DELETE).
 //
 // # tmux server
 //

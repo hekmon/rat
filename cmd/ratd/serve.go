@@ -119,6 +119,8 @@ type daemon struct {
 	stopping <-chan struct{}
 	// status is what systemd shows of ratd to a human operator
 	status *status
+	// pipes are the transfers through named pipes, in flight or held (see pipeTransfers)
+	pipes *pipeTransfers
 	// notifier tells systemd the state of ratd, when started by it (see takeNotifySocket)
 	notifier notifier
 }
@@ -150,10 +152,11 @@ func newDaemon(logger *slog.Logger, source mtls.Source, controller *tmux.Control
 	if !logger.Enabled(context.Background(), slog.LevelDebug) {
 		sdkLogger = slog.New(minLevel{Handler: logger.Handler(), min: slog.LevelWarn})
 	}
+	st := newStatus(logger)
 	return &daemon{logger: logger, sdkLogger: sdkLogger, side: source.Side(), source: source, controller: controller,
 		host: host, user: username,
 		terminals: terminals, instructions: instructions, readBudget: readBudget, inputSchemas: inputSchemas,
-		schemas: mcp.NewSchemaCache(), status: newStatus(logger)}, nil
+		schemas: mcp.NewSchemaCache(), status: st, pipes: newPipeTransfers(st)}, nil
 }
 
 // minLevel passes on the records of its handler from a minimum level only.

@@ -617,10 +617,12 @@ client checks, never through MCP: `/mcp` stays MCP only. The contract is declare
   other than its source's; a 201 names the directories created, as `write_file` does.
 - **`GET /download`**: the body of the answer is the file at the path `Rat-Path` names, with its
   permission bits in `Rat-Mode` and its size in `Rat-Size`. HEAD answers the headers alone.
+- **`DELETE /upload`, `DELETE /download`**: close a named pipe a transfer holds (see Named pipes).
 - The answers of both endpoints carry `Rat-Version`, the version of ratd: a 404 without it comes
   from a ratd older than the transfers, whose mux serves `/mcp` alone, one with it from a missing
-  file. A refusal is a status (400, 403, 404, 409, 412, 415, 507) with a sentence for the agent,
-  which rat relays.
+  file. They carry `Rat-Features` as well, what ratd handles beyond files (`pipes`), for a client
+  to tell an older ratd. A refusal is a status (400, 403, 404, 409, 412, 415, 507) with a sentence
+  for the agent, which rat relays.
 
 HTTP as designed: the URL names the endpoint, headers describe the file, the body is the file.
 Rejected: the path as a query parameter (`?path=`), a function call dressed as HTTP; the path in
@@ -698,6 +700,42 @@ nothing from, and which Go 1.27 does not offer publicly.
 Transfers have no size limit nor timeout: a full disk fails the transfer (507), its temporary file
 removed, and a transfer on a slow link may take hours. Stopping ratd cuts them at once (see
 Shutdown).
+
+### Named pipes
+
+A transfer may stream between commands rather than copy a file, as a command piped into `nc`
+does, over the same endpoints: for a tree larger than the free space of its disk (`tar` on both
+sides), a database dump, a disk image. A path naming a named pipe the agent made (`mkfifo` in a
+terminal) is then streamed through: a command in a terminal writes into the pipe a download reads
+(`tar -cf - -C /data . > ~/data.pipe`), or reads from the pipe an upload writes into, with no file
+in between. ratd only opens its end of the pipe (package `internal/fifo`), never creating nor
+removing one, nor running a command: the commands stay the agent's, in its terminals, where a
+human peeking sees them and a password prompt shows. Only for a client telling it handles pipes
+(`Rat-Features: pipes`): to an older rat, a pipe stays what is not a regular file, refused
+unopened.
+
+ratd first answers 102 (Processing), then waits for the command to open the other end, as a
+command opening a pipe waits: a transfer may start before its commands, rat answering the agent at
+once. A failure before any byte is still told in a status. Then a download answers 200, without
+`Rat-Size` (a pipe has none), flushing what the command writes as it comes, and an upload sends
+its go-ahead (100), its body going into the pipe. The source ending ends the transfer: the
+command writing a download's pipe closing its end, which says nothing of its exit status (the
+agent checks it), or the body of an upload ending, after which ratd closes the pipe, its command
+seeing the end of its input (200). The command reading an upload's pipe closing its end first
+fails the upload (409): nothing takes the rest. One transfer at a time goes through a pipe (409
+otherwise): two would split what its command writes, or mix what it reads.
+
+A cut (the client gone, ratd stopping) or a source failing (a read error, the file of an upload
+changing on the client's side) leaves the pipe open, held: its command waits, rather than taking
+the end of the pipe for the end of its data (`psql` reading a dump would run half of it,
+`crontab -` would install half a table). The client closes it when the agent cancels: `DELETE`
+on the endpoint of the transfer, naming the pipe as the transfer did (204, or 404 when nothing is
+held there), which stops a transfer in flight as well. Nothing watches a held pipe for its command
+leaving: the agent closes what it opened. Rejected: closing a pipe on a cut, which tells its reader
+its input is complete; closing it once its command left, which takes watching it (on macOS, only a
+write of zero bytes tells it). A held pipe is one open descriptor: the status counts them, the log
+tells each closed with how long it was held, and ratd closes those left once its terminals stopped
+(see Shutdown). HEAD never opens a pipe, which would release a command waiting to write into it.
 
 ## MCP instructions
 
@@ -807,7 +845,7 @@ lines are calls, burying what was logged earlier. It tells first what degrades r
 serves, then whether stopping ratd now cuts anyone:
 
 ```
-serving tenant prod on [::]:7281 · bracketed paste overridden, bundle expires in 212d · last seen: alice now, bob 25m ago, carol 3h ago · 1 wait in flight · 2 transfers in flight
+serving tenant prod on [::]:7281 · bracketed paste overridden, bundle expires in 212d · last seen: alice now, bob 25m ago, carol 3h ago · 1 wait in flight · 2 transfers in flight · 1 pipe held
 ```
 
 - **Degradations**: known issues of a ratd serving all the same, logged once when found, and shown
@@ -824,6 +862,8 @@ serving tenant prod on [::]:7281 · bracketed paste overridden, bundle expires i
 - **Waits and transfers in flight**: the calls of `wait_window` waiting and the file transfers
   under way, what a stop cuts. The other calls take milliseconds, too short to be seen at a
   render: a count of them would read 0 nearly always.
+- **Pipes held**: the named pipes held after a cut (see Named pipes), which outlive their
+  request: what an agent has yet to close.
 - **Stopping**: the step of the stop replaces the line, `stopping: closing the door`, then
   `stopping: stopping the terminals`: a stop lasting shows where. No waits nor transfers there: a
   stop makes them end at once.
@@ -865,8 +905,10 @@ returns at once, the first telling ratd stops:
 `http.Server` cancels no call when shutting down, it waits for them, and a wait would hold the
 door open for the whole grace, then be cut. A file transfer is cut at once as well, the read and
 write deadlines of its connection set to the moment ratd stops (`http.ResponseController`), as it
-may last hours: an upload cut drops its temporary file. The kill switch does not depend on what
-agents wait for, nor on what they copy.
+may last hours: an upload cut drops its temporary file. A transfer through a named pipe is cut
+alike, its pipe held as on any cut, and ratd closes the pipes it holds once the terminals stopped:
+a command reading one in a terminal stops with it, rather than first seeing the end of its input.
+The kill switch does not depend on what agents wait for, nor on what they copy.
 
 The controller terminates its server when the context it was started with ends: ratd starts it
 with a context the signal does not cancel, which would otherwise stop the terminals with the

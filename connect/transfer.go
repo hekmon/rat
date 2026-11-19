@@ -36,7 +36,7 @@ const (
 	// in the answer to a download; of the file as written, in the answer to an upload.
 	HeaderMode = "Rat-Mode"
 	// HeaderSize is the size of the file a download sends, as it was opened: the body is chunked,
-	// with no Content-Length.
+	// with no Content-Length. A named pipe has none (see [FeaturePipes]).
 	HeaderSize = "Rat-Size"
 	// HeaderError is a trailer of a download, telling why the file was not sent whole as it was
 	// opened (it changed while being read, a read failed), for the agent: a download is complete
@@ -45,7 +45,31 @@ const (
 	// HeaderVersion is the version of ratd, in every answer of the transfer endpoints: a 404
 	// without it comes from a ratd older than the transfers, one with it from a missing file.
 	HeaderVersion = "Rat-Version"
+	// HeaderFeatures lists the features of the transfers a side handles beyond copying files,
+	// separated by commas: in a request, those of the client, which ratd uses only then; in every
+	// answer of the transfer endpoints, those of ratd, for a client to tell an older one.
+	HeaderFeatures = "Rat-Features"
 )
+
+// FeaturePipes is the feature of the transfers through named pipes ([HeaderFeatures]), streaming
+// between commands with no file in between: a path naming a named pipe is streamed through rather
+// than refused as not a regular file. ratd first answers 102 (Processing), then waits for the
+// command to open the other end of the pipe; then a download answers 200 without [HeaderSize], an
+// upload 100 (Continue) and, once its body ended and the pipe was closed, 200. One transfer at a
+// time goes through a pipe. A pipe the transfer was cut from is held open, its command waiting,
+// until the client closes it: DELETE on the endpoint of the transfer, naming the pipe as the
+// transfer did (204 once closed, 404 when nothing is held there).
+const FeaturePipes = "pipes"
+
+// HasFeature tells whether value, a [HeaderFeatures] list, holds feature.
+func HasFeature(value, feature string) bool {
+	for named := range strings.SplitSeq(value, ",") {
+		if strings.TrimSpace(named) == feature {
+			return true
+		}
+	}
+	return false
+}
 
 // OctetStream is the media type of the files transferred: bytes copied exactly, never
 // interpreted nor converted.

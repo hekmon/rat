@@ -147,15 +147,21 @@ func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int
 		// tmux.ErrServerSocketInUse: another ratd serves the tenant on this machine
 		return fmt.Errorf("failed to start the tmux server of tenant %s: %w", side.Tenant, err)
 	}
+	var d *daemon
 	defer func() {
 		// with the controller's own escalation: SIGTERM, then SIGKILL
 		if err := controller.StopServer(context.Background()); err != nil && !errors.Is(err, tmux.ErrServerNotRunning) {
 			logger.Warn("tmux server stopped forcibly", "error", err)
 		}
 		logger.Info("terminals stopped")
+		// Only now: a command reading a held pipe in a terminal stopped with it, rather than
+		// seeing the end of its input first.
+		if d != nil {
+			d.pipes.closeAll()
+		}
 	}()
 	checked, degraded := checkTerminals(ctx, logger, controller)
-	d, err := newDaemon(logger, watcher, controller, checked, readBudget)
+	d, err = newDaemon(logger, watcher, controller, checked, readBudget)
 	if err != nil {
 		return err
 	}

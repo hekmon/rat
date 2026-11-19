@@ -24,7 +24,8 @@ at once, and to know what they leave behind.
   is ratd's value: the plumbing (e.g. a session created on first use) stays hidden, to avoid tool
   and context bloat. It reads and writes files itself: tmux is its terminal backend, not its file
   backend. Next to MCP, it serves the file transfers of rat on two HTTP endpoints of its own, by
-  path, their bytes never reaching a model (see `cmd/ratd/README.md`).
+  path, files or named pipes the agent made, their bytes never reaching a model (see
+  `cmd/ratd/README.md`).
 - **`rat` (bridge)**: a stdio MCP server relaying to ratd, for harnesses that can not present a
   client certificate (most of them). It relays messages as they are, presenting the
   certificate, and adds what needs the machine of the harness, which ratd can not reach: with
@@ -68,7 +69,10 @@ An agent closing all its windows simply finds a fresh `main` on its next call.
   Files are read and written on ratd's machine, as its user, never inside an ssh session or a
   container running in a terminal. Copied by path, with the file transfers of rat, their bytes
   never reach a model: ratd reads and writes them on its machine, rat on the machine of the
-  harness, within its transfers directory only.
+  harness, within its transfers directory only. A transfer may also stream between commands
+  through named pipes the agent made, with no file in between, as a command piped into nc does:
+  the commands stay the agent's, in its terminals or its own shell, ratd and rat only opening the
+  pipes, never running a command.
 - **What reaches a model is bounded.** Window captures and file reads are checked (text, a
   regular file) and bounded (the read budget) before being sent: what reaches a model's context
   can not be taken back.

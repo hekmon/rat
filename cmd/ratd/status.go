@@ -101,8 +101,9 @@ type status struct {
 	// seen is when each session sent its last request: as many as the client certificates of the
 	// bundle, which is closed
 	seen map[string]time.Time
-	// waits counts the calls of wait_window in flight; transfers, the file transfers in flight
-	waits, transfers int
+	// waits counts the calls of wait_window in flight; transfers, the file transfers in flight;
+	// pipes, the named pipes held after a cut, which outlive their request (see pipeTransfers)
+	waits, transfers, pipes int
 	// stopping is the step of the stop, which replaces the line once set
 	stopping string
 	// sent is the line systemd was last told
@@ -147,6 +148,19 @@ func (s *status) transferEnded() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.transfers--
+}
+
+// pipeHeld records a named pipe held after a cut; pipeReleased, the same pipe closed.
+func (s *status) pipeHeld() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pipes++
+}
+
+func (s *status) pipeReleased() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pipes--
 }
 
 // degrade records degradations, and tells systemd at once: an operator must not wait for a render.
@@ -304,6 +318,12 @@ func (s *status) render(now time.Time) string {
 		parts = append(parts, "1 transfer in flight")
 	case s.transfers > 1:
 		parts = append(parts, fmt.Sprintf("%d transfers in flight", s.transfers))
+	}
+	switch {
+	case s.pipes == 1:
+		parts = append(parts, "1 pipe held")
+	case s.pipes > 1:
+		parts = append(parts, fmt.Sprintf("%d pipes held", s.pipes))
 	}
 	return strings.Join(parts, " · ")
 }

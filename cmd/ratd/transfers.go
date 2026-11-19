@@ -43,26 +43,42 @@ var errSymbolicLink = errors.New("symbolic link")
 var errChanged = errors.New("file changed while read")
 
 // addTransfers serves the file transfers on mux, behind the same client checks as MCP requests.
-// GET also answers HEAD, with the headers of a download and no body.
+// GET also answers HEAD, with the headers of a download and no body. DELETE closes a named pipe a
+// transfer holds (see closePipe).
 func (d *daemon) addTransfers(mux *http.ServeMux) {
 	mux.Handle(http.MethodPost+" "+connect.UploadPath, d.transferHandler(upload, d.upload))
 	mux.Handle(http.MethodGet+" "+connect.DownloadPath, d.transferHandler(download, d.download))
+	mux.Handle(http.MethodDelete+" "+connect.UploadPath, d.closePipe(upload))
+	mux.Handle(http.MethodDelete+" "+connect.DownloadPath, d.closePipe(download))
 }
 
-// transferHandler returns the handler of the transfers going way, which serve runs, writing the
-// answer itself and returning what the log line tells. It names the session by the client
-// certificate, as for an MCP request, records it in the status with the transfer in flight, tells
-// the version of ratd in every answer, cuts the transfer at once when ratd stops, and logs it in
-// one line, as a tool call: the path and the size, never the content.
-func (d *daemon) transferHandler(way direction, serve func(http.ResponseWriter, *http.Request) result) http.Handler {
+// transferSession tells the version and the features of ratd in the answer of a transfer endpoint,
+// and returns the session req comes from, named by its client certificate as for an MCP request,
+// or answers 400 without one.
+func transferSession(w http.ResponseWriter, req *http.Request) (string, bool) {
+	w.Header().Set(connect.HeaderVersion, version.Module())
+	w.Header().Set(connect.HeaderFeatures, connect.FeaturePipes)
+	var session string
+	if req.TLS != nil {
+		session = mtls.PeerName(*req.TLS)
+	}
+	if session == "" {
+		http.Error(w, "A client certificate naming the session is required.", http.StatusBadRequest)
+		return "", false
+	}
+	return session, true
+}
+
+// transferHandler returns the handler of the transfers going way, which serve runs for the
+// session of the request, writing the answer itself and returning what the log line tells. It
+// names the session (see transferSession), records it in the status with the transfer in flight,
+// cuts the transfer at once when ratd stops, and logs it in one line, as a tool call: the path and
+// the size, never the content.
+func (d *daemon) transferHandler(way direction,
+	serve func(w http.ResponseWriter, req *http.Request, session string) result) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		w.Header().Set(connect.HeaderVersion, version.Module())
-		var session string
-		if req.TLS != nil {
-			session = mtls.PeerName(*req.TLS)
-		}
-		if session == "" {
-			http.Error(w, "A client certificate naming the session is required.", http.StatusBadRequest)
+		session, ok := transferSession(w, req)
+		if !ok {
 			return
 		}
 		start := time.Now()
@@ -70,7 +86,7 @@ func (d *daemon) transferHandler(way direction, serve func(http.ResponseWriter, 
 		d.status.transferStarted()
 		defer d.status.transferEnded()
 		defer d.cutOnStop(w)()
-		r := serve(w, req)
+		r := serve(w, req, session)
 		attrs := []any{"session", session, "remote", req.RemoteAddr, "direction", way, "outcome", r.outcome.String(),
 			"duration", time.Since(start)}
 		attrs = append(attrs, r.attrs...)
@@ -231,8 +247,9 @@ func transferNotRegular(path string, info fs.FileInfo, way direction) *result {
 // ratd's go-ahead (Expect: 100-continue): a file existing without Rat-Overwrite, a symbolic link,
 // what is not a regular file, a body that is not bytes. A body cut short (the client failing it,
 // its file having changed, or the connection lost) leaves no file. Missing directories are
-// created, as write_file does, and named in the answer (201), for an agent to catch a typo.
-func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
+// created, as write_file does, and named in the answer (201), for an agent to catch a typo. A
+// named pipe is written into, for a client handling pipes (see uploadPipe).
+func (d *daemon) upload(w http.ResponseWriter, req *http.Request, session string) result {
 	// No Content-Type reads as bytes (RFC 9110). Another one is refused: a client sending a form
 	// (curl -d @file strips the new lines of the file) must find out.
 	if declared := req.Header.Get("Content-Type"); declared != "" {
@@ -257,6 +274,9 @@ func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 	// The place of the file is checked now, before any byte is sent, and again once they all came.
 	// A failure to look is found again when writing.
 	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&fs.ModeNamedPipe != 0 && handlesPipes(req) {
+			return d.uploadPipe(w, req, session, path, info, attrs)
+		}
 		if r := checkReplaced(path, info, overwrite); r != nil {
 			return refuse(w, refusalStatus(r), withAttrs(*r, attrs))
 		}
@@ -441,8 +461,8 @@ var downloadOpened = func(string) {}
 // releases a command waiting to write into a FIFO, whose next write then fails once the refusal
 // closes it, and a device may act on it (a tape rewinds). The file opened is checked again, as it
 // may have been replaced meanwhile, opened without blocking (a FIFO without a writer would block
-// forever).
-func (d *daemon) download(w http.ResponseWriter, req *http.Request) result {
+// forever). A named pipe is streamed, for a client handling pipes (see downloadPipe).
+func (d *daemon) download(w http.ResponseWriter, req *http.Request, session string) result {
 	path, refused := transferPath(req)
 	if refused != nil {
 		return refuse(w, http.StatusBadRequest, *refused)
@@ -453,6 +473,8 @@ func (d *daemon) download(w http.ResponseWriter, req *http.Request) result {
 		switch {
 		case info.Mode()&fs.ModeSymlink != 0:
 			return refuse(w, http.StatusConflict, withAttrs(*linkRefusal(path, download), attrs))
+		case info.Mode()&fs.ModeNamedPipe != 0 && handlesPipes(req):
+			return d.downloadPipe(w, req, session, path, info, attrs)
 		case !info.Mode().IsRegular():
 			return refuse(w, http.StatusConflict, withAttrs(*transferNotRegular(path, info, download), attrs))
 		}

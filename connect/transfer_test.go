@@ -67,3 +67,16 @@ func TestOverwrite(t *testing.T) {
 		}
 	}
 }
+
+// TestHasFeature guards reading a list of features: a feature named alone or among others, the
+// spaces around a name ignored, and never a name it is only a part of.
+func TestHasFeature(t *testing.T) {
+	for value, expected := range map[string]bool{
+		"pipes": true, "resume, pipes": true, "pipes ,resume": true, "": false, "pipe": false, "pipes2": false,
+		"resume": false,
+	} {
+		if got := HasFeature(value, FeaturePipes); got != expected {
+			t.Errorf("%q: expected %v, got %v", value, expected, got)
+		}
+	}
+}
