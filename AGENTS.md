@@ -27,7 +27,8 @@ at once, and to know what they leave behind.
   path, their bytes never reaching a model (see `cmd/ratd/README.md`).
 - **`rat` (bridge)**: a stdio MCP server relaying to ratd, for harnesses that can not present a
   client certificate (most of them). It relays messages as they are, presenting the
-  certificate.
+  certificate, and adds what needs the machine of the harness, which ratd can not reach: with
+  `--transfers-dir`, the file transfers `upload_file` and `download_file`, which it runs itself.
 - **`rat-tool`**: the utility. It creates and inspects bundles, and checks a running ratd end to
   end. It holds every secondary feature, so that ratd and rat keep a single mode each.
 - **`connect` package**: how a client reaches ratd: the defaults ratd and its clients share (path,
@@ -65,14 +66,17 @@ An agent closing all its windows simply finds a fresh `main` on its next call.
 - **Files, as a human copies them.** Agents also copy whole files to and from the machine,
   without a terminal: exact content, nothing on a screen, whatever the terminals are doing.
   Files are read and written on ratd's machine, as its user, never inside an ssh session or a
-  container running in a terminal.
+  container running in a terminal. Copied by path, with the file transfers of rat, their bytes
+  never reach a model: ratd reads and writes them on its machine, rat on the machine of the
+  harness, within its transfers directory only.
 - **What reaches a model is bounded.** Window captures and file reads are checked (text, a
   regular file) and bounded (the read budget) before being sent: what reaches a model's context
   can not be taken back.
 - **ratd is the entry point, and a standard MCP server.** A harness written with any MCP SDK must
   be able to use it, with a client certificate as the only addition. rat adapts ratd for the
-  harnesses that can not present one: it is never a requirement, and nothing is added to it
-  that ratd would lack.
+  harnesses that can not present one, and adds only what needs the machine of the harness,
+  which ratd can not reach (the file transfers): everything ratd can do stays in ratd, standard,
+  and rat is never a requirement for it.
 - **KISS.** Prefer what tmux already provides over rebuilding it.
 
 ## Isolation model

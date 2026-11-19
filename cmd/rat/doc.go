@@ -14,6 +14,15 @@
 // state and holds no terminal: persistence stays in ratd, and a ratd restart only fails the
 // requests sent meanwhile.
 //
+// # File transfers
+//
+// With --transfers-dir, rat also adds what needs the machine of the harness, which ratd can not
+// reach: upload_file and download_file, which copy files by path between that directory and the
+// machine of ratd, their bytes never reaching a model. Rat adds them to the tool list of ratd, and
+// answers their calls itself, over the transfer endpoints of ratd (package connect). A transfer
+// outlasting a call goes on as a job, found again by its paths. Without the directory, rat relays
+// alone.
+//
 // # Errors
 //
 // Tool and protocol errors come from ratd and are relayed untouched. When ratd can not be reached

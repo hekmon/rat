@@ -34,6 +34,11 @@ func command(stdin io.Reader, stdout, logs io.Writer) *cli.Command {
 		Usage:   "relay a harness's stdio MCP messages to ratd, over mutual TLS",
 		Version: version.String(),
 		Flags: append(flags.Flags(), &cli.StringFlag{
+			Name:     "transfers-dir",
+			OnlyOnce: true,
+			Usage: "the directory to copy files from and to, offering upload_file and download_file " +
+				"(not offered without it)",
+		}, &cli.StringFlag{
 			Name:     "log-level",
 			OnlyOnce: true,
 			Usage:    "the minimum level of the logs: debug, info, warn or error",
@@ -47,16 +52,19 @@ func command(stdin io.Reader, stdout, logs io.Writer) *cli.Command {
 			logger := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: level}))
 			ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, os.Interrupt)
 			defer stop()
-			return run(ctx, logger, flags.FromCommand(cmd), stdin, stdout)
+			return run(ctx, logger, flags.FromCommand(cmd), cmd.String("transfers-dir"), stdin, stdout)
 		},
 	}
 }
 
 // run relays the messages of stdin to the ratd of target, writing its answers to stdout, until
-// stdin ends or ctx is done. It loads and checks the client directory first, failing while the
-// harness still shows it: ratd itself is only reached by the first message, so that a ratd briefly
-// down does not fail the startup of the harness.
-func run(ctx context.Context, logger *slog.Logger, target flags.Target, stdin io.Reader, stdout io.Writer) error {
+// stdin ends or ctx is done, offering the file transfers between transfersDir and ratd unless it
+// is empty. It loads and checks the client directory and the transfers directory first, failing
+// while the harness still shows it: ratd itself is only reached by the first message, so that a
+// ratd briefly down does not fail the startup of the harness. Once stopping, it cuts the transfers
+// under way, waiting for them to remove their temporary files.
+func run(ctx context.Context, logger *slog.Logger, target flags.Target, transfersDir string, stdin io.Reader,
+	stdout io.Writer) error {
 	// reloaded when renewed: a rat may run for weeks, past the expiry of the certificate it started with
 	watcher, err := mtls.Watch(target.Bundle)
 	if err != nil {
@@ -94,10 +102,21 @@ func run(ctx context.Context, logger *slog.Logger, target flags.Target, stdin io
 		// its password, if any, never told
 		proxyText = proxy.Redacted()
 	}
-	logger.Info("relaying", "version", version.String(), "server", target.Server, "tenant", side.Tenant, "session", side.Name,
-		"bundle_expiry", side.NotAfter(), "crl", crl, "proxy", proxyText)
 	r := newRelay(logger, client, target, schemas, stdout)
 	r.proxy = proxy
+	transfersText := "none"
+	if transfersDir != "" {
+		r.transfers, err = newTransfers(logger, client, target.Server, transfersDir, func(err error) string {
+			return r.failureText(context.Background(), err, 0)
+		})
+		if err != nil {
+			return fmt.Errorf("transfers directory: %w", err)
+		}
+		defer r.transfers.close()
+		transfersText = r.transfers.dir
+	}
+	logger.Info("relaying", "version", version.String(), "server", target.Server, "tenant", side.Tenant, "session", side.Name,
+		"bundle_expiry", side.NotAfter(), "crl", crl, "proxy", proxyText, "transfers", transfersText)
 	reason := r.run(ctx, stdin)
 	logger.Info("stopped", "reason", reason)
 	return nil

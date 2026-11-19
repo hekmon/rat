@@ -46,7 +46,9 @@ const (
 var requestTimeout = 30 * time.Second
 
 // relay relays the messages of a harness to ratd, and the answers of ratd back. It reads inside
-// a message only to prepare its HTTP request, never changing what it relays.
+// a message only to prepare its HTTP request, never changing what it relays, but for the file
+// transfers when offered (see transfers): it answers their calls itself, and adds their tools to
+// the tool list of ratd.
 type relay struct {
 	logger   *slog.Logger
 	client   *http.Client
@@ -68,6 +70,8 @@ type relay struct {
 	calls   map[jsonrpc.ID]*call
 	// inFlight counts the requests in flight, waited for when stopping
 	inFlight sync.WaitGroup
+	// transfers runs the file transfers, nil without a transfers directory: rat then relays alone
+	transfers *transfers
 }
 
 // call is a call in flight.
@@ -213,13 +217,22 @@ func (r *relay) handle(ctx context.Context, l line) {
 		r.writeError(nil, jsonrpc.CodeInvalidRequest, "invalid JSON-RPC message: "+err.Error())
 		return
 	}
+	if msg.Method == "tools/call" && r.transfers != nil && r.transfers.handles(p.Name) {
+		r.callTransfer(ctx, id, msg, p)
+		return
+	}
 	timeout := requestTimeout
 	if msg.Method == "tools/call" && p.Name == tools.WaitWindow {
 		timeout += tools.Wait(p.Arguments)
 	}
-	// registered before relaying, for a cancellation read next to find it
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	c := &call{cancel: cancel, timeout: timeout}
+	r.start(id, c, func() { r.relayCall(callCtx, c, msg, data, header) })
+}
+
+// start runs do, the call c of identifier id, registered before it runs, for a cancellation read
+// next to find it, and until it ends.
+func (r *relay) start(id jsonrpc.ID, c *call, do func()) {
 	r.callsMu.Lock()
 	r.calls[id] = c
 	r.callsMu.Unlock()
@@ -227,15 +240,58 @@ func (r *relay) handle(ctx context.Context, l line) {
 	go func() {
 		defer r.inFlight.Done()
 		defer func() {
-			cancel()
+			c.cancel()
 			r.callsMu.Lock()
 			if r.calls[id] == c {
 				delete(r.calls, id)
 			}
 			r.callsMu.Unlock()
 		}()
-		r.relayCall(callCtx, c, msg, data, header)
+		do()
 	}()
+}
+
+// callTransfer runs msg, a call of a transfer tool of parameters p, which rat answers itself (see
+// transfers): never relayed to ratd, whose MCP endpoint does not know these tools. Canceling the
+// call ends its wait, not the transfer.
+func (r *relay) callTransfer(ctx context.Context, id jsonrpc.ID, msg message, p params) {
+	callCtx, cancel := context.WithCancel(ctx)
+	c := &call{cancel: cancel}
+	newProtocol := r.protocol(p) >= headersProtocol
+	r.start(id, c, func() {
+		text, isError := r.transfers.call(callCtx, p.Name, p.Arguments)
+		if c.canceled.Load() || errors.Is(context.Cause(callCtx), context.Canceled) {
+			return
+		}
+		r.writeToolResult(msg.ID, text, isError, newProtocol)
+	})
+}
+
+// writeToolResult writes the result of a tool call rat answers itself, of identifier rawID: its
+// text, and whether it is an error. From protocol 2026-07-28 on, a result tells it is complete.
+func (r *relay) writeToolResult(rawID json.RawMessage, text string, isError, newProtocol bool) {
+	type content struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	result := struct {
+		Content    []content `json:"content"`
+		IsError    bool      `json:"isError,omitempty"`
+		ResultType string    `json:"resultType,omitempty"`
+	}{Content: []content{{Type: "text", Text: text}}, IsError: isError}
+	if newProtocol {
+		result.ResultType = "complete"
+	}
+	data, err := json.Marshal(struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Result  any             `json:"result"`
+	}{"2.0", rawID, result})
+	if err != nil {
+		r.logger.Error("failed to encode a result for the harness", "error", err)
+		return
+	}
+	r.write(data)
 }
 
 // makeID returns the identifier of a request, as JSON-RPC compares them: 1 and "1" differ.
@@ -272,12 +328,7 @@ func (r *relay) header(msg message, p params) http.Header {
 	header.Set("Content-Type", "application/json")
 	// both, as the specification requires, ratd answering in JSON
 	header.Set("Accept", "application/json, text/event-stream")
-	version, _ := p.Meta[metaProtocolVersion].(string)
-	if version == "" {
-		r.versionMu.Lock()
-		version = r.version
-		r.versionMu.Unlock()
-	}
+	version := r.protocol(p)
 	if version == "" {
 		return header
 	}
@@ -302,6 +353,17 @@ func (r *relay) header(msg message, p params) http.Header {
 		}
 	}
 	return header
+}
+
+// protocol returns the protocol version of a request of parameters p: carried by the request, or
+// else negotiated by initialize, empty when neither.
+func (r *relay) protocol(p params) string {
+	if version, _ := p.Meta[metaProtocolVersion].(string); version != "" {
+		return version
+	}
+	r.versionMu.Lock()
+	defer r.versionMu.Unlock()
+	return r.version
 }
 
 // response is what ratd answered a request.
@@ -351,6 +413,9 @@ func (r *relay) relayCall(ctx context.Context, c *call, msg message, data []byte
 	case resp.status == http.StatusOK && isResponse:
 		if msg.Method == "initialize" {
 			r.keepVersion(resp.body)
+		}
+		if msg.Method == "tools/list" && r.transfers != nil {
+			resp.body = r.transfers.addTools(resp.body)
 		}
 	case resp.status >= http.StatusBadRequest && isResponse:
 		// ratd, or its SDK, refused the call itself: its error is the answer

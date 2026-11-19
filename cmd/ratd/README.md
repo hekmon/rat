@@ -40,10 +40,11 @@ Rejected alternatives, and why:
 Clients authenticate with a certificate (see Authentication), which most harnesses can not
 present when they configure an HTTP MCP server, while all of them can start a stdio one. `rat` is
 that stdio server: started by the harness, it relays every message to ratd, presenting the
-client certificate. It keeps no state and holds no terminal: persistence stays in ratd. A
-harness able to present the certificate, and to accept the server without checking its host name
-(see package `mtls`), can target ratd directly: the bridge adds no protocol of its own. How it
-relays is described in the README of `cmd/rat`.
+client certificate. It holds no terminal: persistence stays in ratd. A harness able to present
+the certificate, and to accept the server without checking its host name (see package `mtls`),
+can target ratd directly: the bridge adds nothing to MCP but what needs the machine of the
+harness, the file transfers (`upload_file` and `download_file`, with `--transfers-dir`), which a
+harness without rat goes without. How it relays is described in the README of `cmd/rat`.
 
 Hosted clients (web and cloud agents) are left out on purpose: they only reach MCP servers by
 URL, and can present no certificate. Admitting them would take a credential stored by a third

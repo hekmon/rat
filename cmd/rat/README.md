@@ -7,7 +7,7 @@ at all, and which clients are left out, is in the Topology section of the ratd R
 ## One mode
 
 ```
-rat --server HOST:PORT --bundle DIR [--log-level info]
+rat --server HOST:PORT --bundle DIR [--transfers-dir DIR] [--log-level info]
 ```
 
 - `--server` is required, with no default: which machine to reach is the whole point of the
@@ -15,6 +15,8 @@ rat --server HOST:PORT --bundle DIR [--log-level info]
   `/mcp`, less to get wrong. An IPv6 address goes between brackets.
 - `--bundle` is a client directory of a bundle (`clients/<name>`, see package `mtls`): its
   certificate names the session.
+- `--transfers-dir` offers the file transfers between this directory and ratd (see File
+  transfers): not offered without it.
 - Nothing else: no configuration file, no environment variable.
 
 These flags are declared once, in package `internal/flags`, shared with `rat-tool check`: a
@@ -35,7 +37,10 @@ not fail the startup of the harness, the first request tells.
   as the stdio transport of the SDK reads it), and posts each line as read, surrounding
   whitespace aside. It writes the body ratd answers on a line of its own, compacted if it spans
   lines, but not decoded and encoded again: not the stdio transport of the SDK, which does. It
-  reads inside a message only to prepare its request, never to rewrite it.
+  reads inside a message only to prepare its request, never to rewrite it. With a transfers
+  directory, two exceptions: rat adds its two tools to the answer of ratd to `tools/list`
+  (decoded and encoded again, the last page only), and answers their calls itself, never
+  relaying them (see File transfers).
 - **HTTP side**: a client of its own for the Streamable HTTP transport, reduced to what a
   stateless ratd answering in JSON needs: one POST to `https://HOST:PORT/mcp` per message,
   answered by a JSON body (a response) or by 202 (a notification).
@@ -66,7 +71,8 @@ not fail the startup of the harness, the first request tells.
 - **No connection state** beyond the negotiated version and the calls in flight: a ratd restart
   only fails the requests sent meanwhile.
 - **Stopping**: at the end of stdin (the harness leaving) or on SIGTERM or SIGINT, rat ends the
-  calls in flight and exits, rather than waiting for them.
+  calls in flight and exits, rather than waiting for them. It cuts the file transfers under way
+  first, and waits for them to remove their temporary files.
 
 ### Cancellation
 
@@ -99,11 +105,59 @@ Rejected:
 The cost: rat implements the client headers of the transport, and must follow their evolution.
 `rat-tool check` uses the SDK `Client`, which keeps ratd verified as a standard server.
 
+## File transfers
+
+`write_file` and `read_file` move content through the context of a model. A file an agent only
+moves (a binary, an archive, a build output) takes a program on each machine to copy by path:
+ratd on its own (see File transfers in the README of ratd, for its endpoints), rat on the machine
+of the harness. With `--transfers-dir`, rat offers `upload_file` and `download_file`, adds them
+to the tool list of ratd, and answers their calls itself, over the transfer endpoints of ratd
+(package `connect`). Without it, rat relays alone: upgrading rat never widens what agents can do
+on the machine of the harness.
+
+**The transfers directory is the boundary.** The permissions and sandbox of a harness cover its
+own tools, not what an MCP server does by itself, and a text on a remote screen could otherwise
+mislead an agent into sending `~/.ssh/id_ed25519`, or overwriting `~/.bashrc`. Local paths are
+relative to the directory, which the descriptions name, and confined to it (`os.Root`): no
+absolute path, no `..`, no link leading out. Remote paths stay free: the agent has a shell there.
+`overwrite` guards against mistakes, not against a misled agent, which can set it too: the
+directory must be one of its own, as a new `.git/hooks/pre-commit` in a project is code execution.
+
+**Jobs, found by their paths.** A transfer can outlast a call, which several harnesses cut at 60
+seconds: it runs in rat, as a job kept in memory. A call waits for it 50 seconds at most, as
+`wait_window` does at most; a longer one goes on, the call telling its progress (the bytes of
+the size, the rate over the last 30 seconds, a rounded time left, or that nothing moved), for
+the agent to wait its own way (a `sleep` in its shell) or to do something else. A job is
+identified by its destination, which one transfer at a time writes, and found by its paths, as
+terminals are by name: the same call again waits for the rest, or tells how it ended, once;
+another source to the same destination is refused while it runs. Canceling a call (the harness
+giving up on it) ends its wait, not the transfer. `cancel` with the same paths stops it, leaving
+the destination as it was, decided at one point: before the last chunk of an upload (past it,
+ratd may be writing the file, and the call tells its answer), before the rename of a download.
+Rejected: job identifiers, with tools to wait for, list and cancel jobs, which a context
+compaction loses, more tools for small models to juggle; a parameter for the wait, or a size
+choosing between waiting and a job, the speed of the link being unknown; MCP tasks (experimental
+in protocol 2025-11-25, an extension from 2026-07-28 on, unknown to the SDK), which harnesses
+would have to support, and which could only add to this, never replace it.
+
+**The local side mirrors ratd's.** A download goes to a temporary file next to its destination,
+put in place once complete: linked under its name without overwrite, which fails if a file
+appeared meanwhile, renamed over the file it replaces with overwrite, the file replaced keeping
+its mode; missing directories are created, and named. A symbolic link at the end of a local path
+is refused, telling where it leads; `os.Root` ignores `O_NOFOLLOW`, so rat looks at the file with
+`Root.Lstat`, then checks the file it opened is the one it looked at. An upload is stamped when
+opened and once read (`connect.Upload`): a file changing meanwhile fails the transfer, ratd
+writing nothing. A replaced file keeping permissions other than those of its source is told, as
+an agent setting overwrite may expect a chmod in the same call.
+
 ## Errors
 
 - **Tool and protocol errors** come from ratd, relayed untouched, whatever the HTTP status: an
   answer that is a JSON-RPC response to the call (ratd or its SDK refusing it, with a 4xx) is
   the answer.
+- **The file transfers** refused or failing are tool results marked as errors, with a sentence
+  for the agent: ratd's, relayed, or rat's (the local side, a ratd older than the transfers,
+  ratd unreachable, told as for a call).
 - **Transport failures**: no JSON-RPC response exists, while the harness waits for one matching
   its request. rat answers with a JSON-RPC error of its own, code -32050 (in the range JSON-RPC
   leaves to implementations, apart from the codes of MCP and its SDKs), telling what failed:
@@ -136,6 +190,7 @@ ratd gives a tool call, so that a connection hanging is cut rather than waited f
 session, bundle expiry, the address of the CRL or none, the proxy or none), each newer CRL, a fetch of the CRL
 failing (a warning, with when the CRL held goes stale), a renewal of its certificate (a warning
 when its key changed) and files refused (see Renewal in `mtls/README.md`), relay failures (the
-method and identifier, the error), expiry warnings, the stop and its reason. At debug level, one
-line per message (method, identifier, HTTP status, duration), and each call canceled. Never the
-content of a message.
+method and identifier, the error), expiry warnings, the stop and its reason, and one line per
+file transfer once ended (the direction, the local and remote paths, the outcome, the bytes moved,
+the duration). At debug level, one line per message (method, identifier, HTTP status, duration),
+and each call canceled. Never the content of a message, nor of a file.

@@ -156,6 +156,13 @@ type ratProcess struct {
 // logging from level, until the test ends.
 func startRat(t *testing.T, bundle, addr string, level slog.Level) *ratProcess {
 	t.Helper()
+	return startRatTransfers(t, bundle, addr, level, "")
+}
+
+// startRatTransfers is startRat offering the file transfers between transfersDir and ratd, unless
+// it is empty.
+func startRatTransfers(t *testing.T, bundle, addr string, level slog.Level, transfersDir string) *ratProcess {
+	t.Helper()
 	stdinReader, stdinWriter := io.Pipe()
 	stdoutReader, stdoutWriter := io.Pipe()
 	p := &ratProcess{stdin: stdinWriter, stdout: bufio.NewReader(stdoutReader), stdoutReader: stdoutReader,
@@ -163,7 +170,7 @@ func startRat(t *testing.T, bundle, addr string, level slog.Level) *ratProcess {
 	logger := slog.New(slog.NewTextHandler(p.logs, &slog.HandlerOptions{Level: level}))
 	target := flags.Target{Server: addr, Bundle: mtls.ClientDir(bundle, "alice")}
 	go func() {
-		p.done <- run(context.Background(), logger, target, stdinReader, stdoutWriter)
+		p.done <- run(context.Background(), logger, target, transfersDir, stdinReader, stdoutWriter)
 		_ = stdoutWriter.Close()
 	}()
 	t.Cleanup(func() {
@@ -484,7 +491,7 @@ func TestRelayEndOfInput(t *testing.T) {
 func TestRunServerDirectory(t *testing.T) {
 	bundle := newBundle(t)
 	err := run(context.Background(), slog.New(slog.DiscardHandler), flags.Target{Server: "h:1", Bundle: mtls.ServerDir(bundle)},
-		strings.NewReader(""), io.Discard)
+		"", strings.NewReader(""), io.Discard)
 	if !errors.Is(err, mtls.ErrRole) {
 		t.Errorf("expected mtls.ErrRole, got %v", err)
 	}
