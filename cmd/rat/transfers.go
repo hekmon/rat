@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -33,11 +34,23 @@ import (
 // upload_file and download_file when started with --transfers-dir, and runs them itself, over
 // the transfer endpoints of ratd (see package connect). See File transfers in the README.
 
-// Names of the tools of rat.
+// Names of the tools of rat, declared with those of ratd, which its copy hints name.
 const (
-	uploadTool   = "upload_file"
-	downloadTool = "download_file"
+	uploadTool   = tools.UploadFile
+	downloadTool = tools.DownloadFile
 )
+
+// replaceCopyHints returns body, an answer of ratd carrying its texts (the instructions, the
+// descriptions of its tools), with the sentences naming the tools of rat in place of its generic
+// copy hints (see tools.CopyHints): found as they are, none of their characters being one JSON
+// escapes, and the rest of body untouched. A ratd of another version, whose hints differ, keeps
+// its generic ones, still true.
+func replaceCopyHints(body []byte) []byte {
+	for _, hint := range tools.CopyHints() {
+		body = bytes.ReplaceAll(body, []byte(hint.Generic), []byte(hint.Direct))
+	}
+	return body
+}
 
 // transferWait is how long a call of a transfer tool waits for its transfer: the most wait_window
 // waits (tools.MaxWaitSeconds), several harnesses cutting a tool call at 60 seconds. A longer

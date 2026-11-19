@@ -1,4 +1,5 @@
-// Package tools holds the inputs of the tools of ratd: their names, types and JSON schemas. ratd
+// Package tools holds the inputs of the tools of ratd: their names, types and JSON schemas, and
+// the copy hints of its texts with the sentences rat puts in their place ([CopyHints]). ratd
 // serves these schemas, and rat reads them to build the requests it relays: from protocol
 // 2026-07-28 on, an argument whose schema carries an x-mcp-header annotation travels in an HTTP
 // header as well (SEP-2243), which [ParamHeaders] computes. A rat and a ratd of the same version

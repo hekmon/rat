@@ -414,8 +414,14 @@ func (r *relay) relayCall(ctx context.Context, c *call, msg message, data []byte
 		if msg.Method == "initialize" {
 			r.keepVersion(resp.body)
 		}
-		if msg.Method == "tools/list" && r.transfers != nil {
-			resp.body = r.transfers.addTools(resp.body)
+		// offering the transfers, rat names them in the texts of ratd, and lists them
+		if r.transfers != nil {
+			switch msg.Method {
+			case "initialize", "server/discover":
+				resp.body = replaceCopyHints(resp.body)
+			case "tools/list":
+				resp.body = r.transfers.addTools(replaceCopyHints(resp.body))
+			}
 		}
 	case resp.status >= http.StatusBadRequest && isResponse:
 		// ratd, or its SDK, refused the call itself: its error is the answer

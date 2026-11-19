@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hekmon/rat/cmd/ratd/tools"
 	"github.com/hekmon/rat/connect"
 	"github.com/hekmon/rat/internal/flags"
 	"github.com/hekmon/rat/mtls"
@@ -318,6 +319,64 @@ func TestTransferTools(t *testing.T) {
 		Bundle: mtls.ClientDir(bundle, "alice")}, filepath.Join(dir, "missing"), strings.NewReader(""), io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "transfers directory") {
 		t.Errorf("a missing transfers directory: expected the start to fail, got %v", err)
+	}
+}
+
+// newHintsServer returns an MCP server as ratd serves it, whose instructions and tools write_file
+// and read_file hold the generic copy hints of ratd.
+func newHintsServer() http.Handler {
+	server := mcp.NewServer(&mcp.Implementation{Name: "fake", Version: "1"},
+		&mcp.ServerOptions{Instructions: "Terminals. " + tools.InstructionsCopyHint})
+	for name, hint := range map[string]string{tools.WriteFile: tools.WriteFileCopyHint, tools.ReadFile: tools.ReadFileCopyHint} {
+		mcp.AddTool(server, &mcp.Tool{Name: name, Description: "A file tool. " + hint},
+			func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
+				return &mcp.CallToolResult{}, nil, nil
+			})
+	}
+	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{
+		Stateless: true, JSONResponse: true, DisableLocalhostProtection: true,
+	})
+}
+
+// TestCopyHintsReplaced guards that rat offering the transfers puts the sentences naming its tools
+// in place of the generic copy hints of ratd: in the instructions, from initialize or from
+// server/discover (protocol 2026-07-28 on), and in the descriptions of write_file and read_file;
+// and that rat without a transfers directory leaves them as they are.
+func TestCopyHintsReplaced(t *testing.T) {
+	bundle := newBundle(t)
+	addr := fakeRatd(t, bundle, newHintsServer(), nil)
+	direct := map[string]string{}
+	for _, hint := range tools.CopyHints() {
+		direct[hint.Generic] = hint.Direct
+	}
+	for _, tc := range []struct {
+		name, version, dir string
+	}{
+		{"transfers, server/discover", "", t.TempDir()},
+		{"transfers, initialize", "2025-11-25", t.TempDir()},
+		{"relay only", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := connectHarness(t, startRatTransfers(t, bundle, addr, slog.LevelInfo, tc.dir), tc.version)
+			list, err := session.ListTools(context.Background(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			texts := map[string]string{"instructions": session.InitializeResult().Instructions}
+			for _, tool := range list.Tools {
+				texts[tool.Name] = tool.Description
+			}
+			for name, generic := range map[string]string{tools.WriteFile: tools.WriteFileCopyHint,
+				tools.ReadFile: tools.ReadFileCopyHint, "instructions": tools.InstructionsCopyHint} {
+				expected, replaced := direct[generic], generic
+				if tc.dir == "" {
+					expected, replaced = generic, direct[generic]
+				}
+				if !strings.Contains(texts[name], expected) || strings.Contains(texts[name], replaced) {
+					t.Errorf("%s: expected %q, got %q", name, expected, texts[name])
+				}
+			}
+		})
 	}
 }
 

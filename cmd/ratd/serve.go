@@ -52,8 +52,9 @@ const instructionsFormat = `rat gives you persistent terminals on %s: commands r
 	`in the background (&, nohup) looks finished at once: rat follows the foreground command of a window. Each ` +
 	`terminal is a window running bash, found by name: windows persist across your restarts and context ` +
 	`compactions, so call list_windows first, and close the windows you are done with (close_window). A window ` +
-	`named main exists when you start. To copy a whole file to or from the machine, use write_file and ` +
-	`read_file rather than the terminal. For the exact output of a long command, run it as command 2>&1 | tee ` +
+	`named main exists when you start. write_file and read_file copy a whole file to or from the machine through ` +
+	`your context, rather than the terminal: for text you write or need to read. ` + tools.InstructionsCopyHint +
+	` For the exact output of a long command, run it as command 2>&1 | tee ` +
 	`/tmp/name.log: the screen still shows it, and read_file reads the file whole or a range at a time, rather ` +
 	`than reading the window over and over. If the terminals restart after a failure, every window disappears ` +
 	`and you find a fresh main.`

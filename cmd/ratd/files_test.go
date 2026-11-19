@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hekmon/rat/cmd/ratd/tools"
 	"github.com/hekmon/rat/tmux"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -52,22 +53,9 @@ func umask() fs.FileMode {
 // TestWriteFile guards writing files: created with the exact content, nothing added, and a mode
 // going through the umask; replaced in place, keeping its mode, with its former size told; missing
 // directories created and named; a symbolic link followed, writing its target; and the log line
-// telling the path and the size, never the content. Its description points to a subagent reading
-// and writing a file from the filesystem of the agent, whatever its size, for the content never to
-// enter the context of the agent.
+// telling the path and the size, never the content.
 func TestWriteFile(t *testing.T) {
 	session, logs, home := connectFiles(t)
-	list, err := session.ListTools(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, tool := range list.Tools {
-		if tool.Name == "write_file" && !strings.Contains(tool.Description, "To copy a file from your filesystem, have "+
-			"a subagent read it and write it, if you can start one: the content then never enters your context.") {
-			t.Errorf("expected write_file to point to a subagent reading and writing the file, telling why, got %q",
-				tool.Description)
-		}
-	}
 	path := filepath.Join(home, "notes.txt")
 	expectTool(t, session, "write_file", map[string]any{"path": "~/notes.txt", "content": "secret\nno end"}, false,
 		"Created "+path+" (13 B).")
@@ -107,6 +95,35 @@ func TestWriteFile(t *testing.T) {
 	}
 	if strings.Contains(out, "secret") {
 		t.Errorf("the content was logged:\n%s", out)
+	}
+}
+
+// TestCopyHints guards the texts pointing to a copy by path, which keeps a file out of the context
+// of the agent: the descriptions of write_file and read_file, telling what they do with that
+// context, and the instructions hold the generic copy hints, once each, which rat finds to put the
+// sentences naming its tools in their place.
+func TestCopyHints(t *testing.T) {
+	session, _, _ := connectFiles(t)
+	list, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	texts := map[string]string{"instructions": session.InitializeResult().Instructions}
+	for _, tool := range list.Tools {
+		texts[tool.Name] = tool.Description
+	}
+	for name, hint := range map[string]string{
+		tools.WriteFile: tools.WriteFileCopyHint, tools.ReadFile: tools.ReadFileCopyHint,
+		"instructions": tools.InstructionsCopyHint,
+	} {
+		if strings.Count(texts[name], hint) != 1 {
+			t.Errorf("%s: expected the copy hint %q once, got %q", name, hint, texts[name])
+		}
+	}
+	if !strings.Contains(texts[tools.WriteFile], "from your context") || !strings.Contains(texts[tools.ReadFile],
+		"into your context") {
+		t.Errorf("expected write_file and read_file to tell what they do with the context of the agent, got %q and %q",
+			texts[tools.WriteFile], texts[tools.ReadFile])
 	}
 }
 

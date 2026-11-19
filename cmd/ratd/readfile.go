@@ -25,10 +25,11 @@ func (d *daemon) addReadFileTool(server *mcp.Server, logger *slog.Logger) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        tools.ReadFile,
 		InputSchema: d.inputSchemas[tools.ReadFile],
-		Description: fmt.Sprintf("Read a text file on the machine of the terminals: whole lines, from start_line (1 by "+
-			"default, negative counts from the end: -100 for the last 100 lines), at most max_lines (all by default). "+
-			"The result holds at most %s: a larger file read without a range tells its size and line count, for you "+
-			"to pick a range. The path is absolute or starts with ~/.", sizeText(d.readBudget)),
+		Description: fmt.Sprintf("Read a text file on the machine of the terminals into your context: whole lines, from "+
+			"start_line (1 by default, negative counts from the end: -100 for the last 100 lines), at most max_lines (all "+
+			"by default). The result holds at most %s: a larger file read without a range tells its size and line count, "+
+			"for you to pick a range. The path is absolute or starts with ~/. %s", sizeText(d.readBudget),
+			tools.ReadFileCopyHint),
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: ptr(false)},
 	}, tool(logger, tools.ReadFile, func(tools.ReadFileInput) string { return "" },
 		func(ctx context.Context, in tools.ReadFileInput) result { return d.readFile(ctx, in) }))

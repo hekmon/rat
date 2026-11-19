@@ -38,9 +38,9 @@ not fail the startup of the harness, the first request tells.
   whitespace aside. It writes the body ratd answers on a line of its own, compacted if it spans
   lines, but not decoded and encoded again: not the stdio transport of the SDK, which does. It
   reads inside a message only to prepare its request, never to rewrite it. With a transfers
-  directory, two exceptions: rat adds its two tools to the answer of ratd to `tools/list`
-  (decoded and encoded again, the last page only), and answers their calls itself, never
-  relaying them (see File transfers).
+  directory, three exceptions: rat adds its two tools to the answer of ratd to `tools/list`
+  (decoded and encoded again, the last page only), answers their calls itself, never relaying
+  them, and names them in the copy hints of the texts of ratd (see File transfers).
 - **HTTP side**: a client of its own for the Streamable HTTP transport, reduced to what a
   stateless ratd answering in JSON needs: one POST to `https://HOST:PORT/mcp` per message,
   answered by a JSON body (a response) or by 202 (a notification).
@@ -149,6 +149,19 @@ is refused, telling where it leads; `os.Root` ignores `O_NOFOLLOW`, so rat looks
 opened and once read (`connect.Upload`): a file changing meanwhile fails the transfer, ratd
 writing nothing. A replaced file keeping permissions other than those of its source is told, as
 an agent setting overwrite may expect a chmod in the same call.
+
+**The texts of ratd name the tools.** The descriptions of `write_file` and `read_file`, and the
+instructions, point a file the agent only moves to "a tool copying files by path if you have
+one": ratd can not know whether its client offers one. rat, offering its transfers, puts in place
+of each such sentence one naming its tools ("use upload_file"), in the answers carrying them
+(`initialize`, `server/discover` from protocol 2026-07-28 on, `tools/list`): found as they are,
+none of their characters being one JSON escapes, the rest of the answer left untouched. The
+sentences are declared in package `cmd/ratd/tools` with both sides; a ratd of another version,
+whose sentences differ, keeps its generic ones, still true. Rejected: ratd naming the tools of rat
+conditionally, which a harness connected directly never has; rat rewriting the texts of ratd
+freely, which a sentence changed between versions would silently miss; a header telling ratd
+that rat offers its transfers, for ratd to write its texts accordingly, a header of rat's own on
+`/mcp`.
 
 ## Errors
 
