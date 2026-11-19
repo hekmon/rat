@@ -152,6 +152,11 @@ itself, in every session, or miss:
   from the end with a negative start, and keeps out what would flood the context: a binary file,
   a device or a FIFO is refused, a file too large is told with its size and line count, and a
   range cut to the read budget tells where to continue.
+- **Files moved by path.** With `--transfers-dir`, rat adds `upload_file` and `download_file`,
+  copying files of any size, binary included, between a directory of the machine of the harness
+  and the machine of ratd, their content never entering the context of the model. All or nothing:
+  a copy cut leaves the previous version whole, and a file still being written is refused rather
+  than copied torn. A copy longer than a call goes on, the agent told its progress.
 - **Every answer tells what happened, and what to do next.** Errors included: an agent never
   gets a bare error code nor a tmux message to decipher, but a sentence saying what was done or
   not, why, and how to go on, naming the tool or the parameter to use. An unknown key lists the
@@ -173,7 +178,8 @@ itself, in every session, or miss:
 ## Tools
 
 ratd adds nine tools to your harness, and instructions telling agents how to use them: the
-terminals are on another machine, and sending a command does not wait for it.
+terminals are on another machine, and sending a command does not wait for it. rat adds two more
+with `--transfers-dir`.
 
 **Terminals**
 
@@ -194,6 +200,18 @@ terminals are on another machine, and sending a command does not wait for it.
 | `write_file` | `path`, `content` | Creates or replaces a text file with exactly the content given, creating missing directories. |
 | `read_file` | `path`, `start_line` (optional, 1), `max_lines` (optional, all), `line_numbers` (optional, false) | Returns whole lines of a text file, from the end with a negative `start_line`. |
 
+**File transfers**, by path, added by rat with `--transfers-dir` (see [File
+transfers](MANUAL.md#file-transfers)):
+
+| Tool | Parameters | What it does |
+|---|---|---|
+| `upload_file` | `local_path`, `remote_path`, `overwrite` (optional, false), `cancel` (optional, false) | Copies a file of the transfers directory to the machine of ratd, its content never entering the context of the agent: any size, binary included. |
+| `download_file` | `remote_path`, `local_path`, `overwrite` (optional, false), `cancel` (optional, false) | Copies a file of the machine of ratd into the transfers directory, its content never entering the context of the agent. |
+
+A transfer call waits 50 seconds at most: a longer copy goes on, the call telling its progress,
+and the same call again waits for the rest; `cancel` stops it, leaving the destination as it was.
+Local paths are relative to the transfers directory, and stay within it.
+
 Paths are absolute or start with `~/`. What `read_window` and `read_file` return is bounded by
 the read budget of ratd (64 KiB by default, `--read-budget`): a longer output is read a range at
 a time. `list_windows`, `read_window`, `wait_window` and `read_file` only read; the others act on
@@ -210,7 +228,8 @@ runs in the terminals.
   [`cmd/ratd/README.md`](cmd/ratd/README.md)).
 - **rat**: an adapter for the harnesses that can not present a client certificate (most of them
   today): a stdio MCP server, started by the harness, relaying to ratd over HTTPS and presenting
-  the client certificate in its place.
+  the client certificate in its place. With `--transfers-dir`, it also adds what needs the machine
+  of the harness, which ratd can not reach: the file transfers.
 - **rat-tool**: creates and inspects certificate bundles, and checks a running ratd.
 
 A Go program can reach ratd directly with package `connect`, which builds the transport of the Go
@@ -310,7 +329,9 @@ Declare rat in each harness, as a stdio MCP server, with its client directory, h
 A harness configured in TOML or YAML takes the same command and arguments, in its own format. On
 Windows, give the full paths of `rat.exe` and of the client directory, backslashes doubled in JSON.
 rat reaches ratd through the proxy of its environment, if any (`HTTPS_PROXY`), as HTTPS clients do:
-add the host of ratd to `NO_PROXY` for it to be reached directly.
+add the host of ratd to `NO_PROXY` for it to be reached directly. To let agents copy files between
+the machine of the harness and the server, add `--transfers-dir` with a directory of their own
+(see [File transfers](MANUAL.md#file-transfers)).
 
 Check it works, with the same `--server` and `--bundle` flags as rat, before the harness does:
 
@@ -340,6 +361,9 @@ whatever the Unix user running ratd can:
   malicious agent.
 - **A kill switch.** Stopping the service stops every terminal and, with systemd, every process
   the agents started, detached ones included.
+- **A directory for the transfers.** With `--transfers-dir`, agents read and replace any file of
+  that directory of the machine of the harness, and nothing outside it: give them one of their
+  own, never your home nor a project.
 
 Running ratd as a service, and deploying it safely, are in the [manual](MANUAL.md):
 [Deployment](MANUAL.md#deployment), [Security](MANUAL.md#security), and

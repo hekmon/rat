@@ -1,13 +1,15 @@
 # RAT manual
 
-Operating RAT: running ratd as a service, its security, and the shell configuration its
-terminals rely on. What RAT is, and how to try it, are in the [README](README.md).
+Operating RAT: running ratd as a service, its security, the file transfers, and the shell
+configuration its terminals rely on. What RAT is, and how to try it, are in the
+[README](README.md).
 
 - [Deployment](#deployment): [Linux, with systemd](#linux-with-systemd) ·
   [macOS, with launchd](#macos-with-launchd) · [Upgrading](#upgrading)
 - [Security](#security): [No way in for an agent to open](#no-way-in-for-an-agent-to-open) ·
   [Mutual TLS](#mutual-tls) · [A bundle of rat-tool](#a-bundle-of-rat-tool) ·
   [A sub CA of your PKI](#a-sub-ca-of-your-pki) · [Deploying safely](#deploying-safely)
+- [File transfers](#file-transfers)
 - [Your shell configuration](#your-shell-configuration)
 
 ## Deployment
@@ -204,6 +206,9 @@ systemctl restart ratd-prod
 - **rat and rat-tool go with ratd.** They are released together: install them on the machines of
   the harnesses as well, where a harness runs the new rat when it next starts it. A rat of another
   version keeps relaying, but only the same version is sure to agree with ratd on its tools.
+- **File transfers take both.** A rat offering them needs a ratd serving them: with an older ratd,
+  rat tells the agent that ratd must be upgraded, and an older rat offers no transfers at all.
+  Upgrading ratd cuts the transfers under way, as it cuts the terminals.
 - **On macOS**, `launchctl bootout` then `bootstrap` take the place of the restart, and commands
   detached from their terminals outlive it (see macOS, with launchd).
 - **Renewing a certificate takes no restart** (see Renewal).
@@ -512,6 +517,46 @@ leaves the rest to how you deploy it:
   the account itself, not only its password (`passwd -l`, which stops neither cron jobs nor ssh
   keys): cron then runs none of its jobs, and sshd refuses it even without `DenyUsers` (measured
   with Debian 12).
+
+## File transfers
+
+With `--transfers-dir DIR`, rat offers agents `upload_file` and `download_file`: they copy files by
+path between DIR, on the machine of the harness, and the machine of ratd, of any size, binary
+included, their content never entering the context of the model. Without it, rat offers no
+transfer. In the harness, with its client directory:
+
+```json
+"args": ["--server", "host:7281", "--bundle", "/home/you/.config/rat/prod/alice",
+         "--transfers-dir", "/home/you/rat-transfers/prod"]
+```
+
+- **A directory of their own.** Agents read and replace any file of that directory, through rat,
+  as the user running the harness, and nothing outside it: their paths are relative to it, and
+  `..` or a link leading out are refused. Choose one for that use alone, created beforehand (rat
+  refuses to start without it): never your home, a project (a new `.git/hooks/pre-commit` is code
+  execution), nor a directory a program runs or loads files from. Replacing a file takes the
+  `overwrite` parameter, which guards against mistakes, not against an agent misled by what it
+  read: the directory is the boundary.
+- **On the machine of ratd**, transfers read and write wherever its user can, as `write_file` and
+  `read_file` do: the Unix user is the boundary there (see Deploying safely).
+- **All or nothing.** A transfer writes a temporary file next to its destination
+  (`.NAME.rat-XXXXXXXX`), put in its place once complete: a transfer cut, refused or canceled
+  leaves the previous version whole. A file still being written (a log, a build output) fails the
+  transfer rather than being copied torn. A symbolic link at the end of a path is refused, naming
+  where it leads. Neither side syncs to disk: after a power cut, a file just copied may be lost, as
+  any file just written; run `sync` where it matters. A rat or a ratd killed during a transfer
+  (`SIGKILL`, a crash) leaves its temporary file behind, which can be removed.
+- **Permissions, as `scp` copies them.** A new file gets the permission bits of its source, minus
+  the umask; a replaced file keeps its own, the agent told when they differ from those of the
+  source. A replaced file is a new file in its place: it belongs to the user that wrote it, and its
+  hard links and extended attributes are lost.
+- **Long transfers.** A call waits 50 seconds at most; a longer copy goes on in rat, the agent told
+  its progress, and finds it again by calling with the same paths. Stopping rat (the harness
+  quitting) or ratd cuts the transfers under way, removing their temporary files.
+- **Through the same door.** Transfers reach the port of ratd with the same client certificate,
+  through the proxy of the environment if any: nothing else to open. Both sides log one line per
+  transfer (the paths and the size, never the content), and `systemctl status` counts the
+  transfers in flight.
 
 ## Your shell configuration
 
