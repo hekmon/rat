@@ -37,6 +37,21 @@ func hangUp(t *testing.T, w http.ResponseWriter) {
 	_ = conn.Close()
 }
 
+// stopOnAnswer calls stop once the answer to its request came, before the client returns it, as a
+// stop coming right after ratd answered: the stop running its course meanwhile, in a goroutine of
+// its own (context.AfterFunc), for which it waits a little.
+type stopOnAnswer struct {
+	inner http.RoundTripper
+	stop  func()
+}
+
+func (s stopOnAnswer) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := s.inner.RoundTrip(req)
+	s.stop()
+	time.Sleep(100 * time.Millisecond)
+	return resp, err
+}
+
 // testFile is a file to upload: content, or size zero bytes without it. grows tells it grew once
 // read to its end, its stamp then changing.
 type testFile struct {
@@ -130,11 +145,13 @@ func TestUpload(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = io.WriteString(w, "Missing directories created: /x.\n")
 	})
-	up, err := Upload(context.Background(), client, server, &testFile{content: content, mode: 0o750}, "~/my dir/app.bin", false)
+	up, err := Upload(context.Background(), nil, client, server, &testFile{content: content, mode: 0o750},
+		"~/my dir/app.bin", false)
 	if err != nil || *up != (Uploaded{Mode: 0o640, Sent: int64(len(content)), Note: "Missing directories created: /x."}) {
 		t.Errorf("expected the file created, got %+v, %v", up, err)
 	}
-	up, err = Upload(context.Background(), client, server, &testFile{content: content, mode: 0o750}, "~/my dir/app.bin", true)
+	up, err = Upload(context.Background(), nil, client, server, &testFile{content: content, mode: 0o750},
+		"~/my dir/app.bin", true)
 	if err != nil || *up != (Uploaded{Replaced: true, Mode: 0o600, Sent: int64(len(content))}) {
 		t.Errorf("expected the file replaced, got %+v, %v", up, err)
 	}
@@ -157,7 +174,7 @@ func TestUploadRefused(t *testing.T) {
 		}
 	})
 	file := &testFile{content: bytes.Repeat([]byte("x"), 1<<20), mode: 0o644}
-	_, err := Upload(context.Background(), client, server, file, "/x", false)
+	_, err := Upload(context.Background(), nil, client, server, file, "/x", false)
 	var refused *Refusal
 	if !errors.As(err, &refused) || !errors.Is(err, ErrRefused) || refused.Status != http.StatusPreconditionFailed ||
 		refused.Text != "/x exists: set overwrite to replace it." {
@@ -166,10 +183,10 @@ func TestUploadRefused(t *testing.T) {
 	if taken := file.taken(); taken != 0 {
 		t.Errorf("expected the refusal before any byte was read, %d were", taken)
 	}
-	if _, err = Upload(context.Background(), client, server, file, "/old", false); !errors.Is(err, ErrNoTransfers) {
+	if _, err = Upload(context.Background(), nil, client, server, file, "/old", false); !errors.Is(err, ErrNoTransfers) {
 		t.Errorf("a 404 without the version: expected ErrNoTransfers, got %v", err)
 	}
-	if _, err = Upload(context.Background(), client, server, file, "/missing", false); !errors.As(err, &refused) ||
+	if _, err = Upload(context.Background(), nil, client, server, file, "/missing", false); !errors.As(err, &refused) ||
 		refused.Status != http.StatusNotFound {
 		t.Errorf("a 404 with the version: expected a refusal, got %v", err)
 	}
@@ -202,7 +219,7 @@ func TestUploadCut(t *testing.T) {
 		{"/whole", 1024, false},
 	} {
 		file := &testFile{size: tc.size, mode: 0o644}
-		_, err := Upload(context.Background(), client, server, file, tc.path, false)
+		_, err := Upload(context.Background(), nil, client, server, file, tc.path, false)
 		var failed *TransferError
 		switch {
 		case err == nil:
@@ -224,7 +241,7 @@ func TestUploadChanged(t *testing.T) {
 		cut <- err
 	})
 	file := &testFile{content: bytes.Repeat([]byte("x"), 64<<10), mode: 0o644, grows: true}
-	if _, err := Upload(context.Background(), client, server, file, "/x", false); !errors.Is(err, ErrChanged) {
+	if _, err := Upload(context.Background(), nil, client, server, file, "/x", false); !errors.Is(err, ErrChanged) {
 		t.Errorf("expected ErrChanged, got %v", err)
 	}
 	if err := <-cut; err == nil {
@@ -232,10 +249,13 @@ func TestUploadChanged(t *testing.T) {
 	}
 }
 
-// TestUploadCancelled guards a cancel: before the end of the file is sent, the upload is cut at
-// once, even while its connection stalls (ratd reading nothing more), and ratd sees it cut; once
-// the whole file is sent, ratd may be writing it, and Upload waits for its answer and returns it,
-// rather than leave unknown whether the file was written.
+// TestUploadCancelled guards the two signals stopping an upload. A cancel (its channel closed),
+// before the end of the file is sent, cuts the upload at once, even while its connection stalls
+// (ratd reading nothing more), and ratd sees it cut; once the whole file is sent, ratd may be
+// writing it, and Upload waits for its answer and returns it, rather than leave unknown whether
+// the file was written. Its context cuts it whatever was sent, nobody waiting for that answer, a
+// cancel having come first or not: a cancel waiting for the answer leaves the context to stop it.
+// A stop coming once ratd answered the file written is too late: that answer is returned.
 func TestUploadCancelled(t *testing.T) {
 	t.Run("before the end", func(t *testing.T) {
 		started, release, cut := make(chan struct{}), make(chan struct{}), make(chan error, 1)
@@ -251,14 +271,14 @@ func TestUploadCancelled(t *testing.T) {
 		})
 		// more than the buffers of a connection hold
 		file := &testFile{size: 256 << 20, mode: 0o644}
-		ctx, cancel := context.WithCancel(context.Background())
+		cancel := make(chan struct{})
 		done := make(chan error, 1)
 		go func() {
-			_, err := Upload(ctx, client, server, file, "/x", false)
+			_, err := Upload(context.Background(), cancel, client, server, file, "/x", false)
 			done <- err
 		}()
 		<-started
-		cancel()
+		close(cancel)
 		select {
 		case err := <-done:
 			if !errors.Is(err, context.Canceled) {
@@ -283,21 +303,87 @@ func TestUploadCancelled(t *testing.T) {
 			w.Header().Set(HeaderMode, "0644")
 			w.WriteHeader(http.StatusCreated)
 		})
-		ctx, cancel := context.WithCancel(context.Background())
+		cancel := make(chan struct{})
 		type outcome struct {
 			up  *Uploaded
 			err error
 		}
 		done := make(chan outcome, 1)
 		go func() {
-			up, err := Upload(ctx, client, server, &testFile{content: []byte("whole"), mode: 0o644}, "/x", false)
+			up, err := Upload(context.Background(), cancel, client, server, &testFile{content: []byte("whole"),
+				mode: 0o644}, "/x", false)
 			done <- outcome{up, err}
 		}()
 		<-received
-		cancel()
+		close(cancel)
 		close(answer)
 		if o := <-done; o.err != nil || o.up.Replaced || o.up.Sent != 5 {
 			t.Errorf("expected the answer of ratd once the file was sent whole, got %+v, %v", o.up, o.err)
+		}
+	})
+	for _, canceled := range []bool{false, true} {
+		name := "stopped after the end"
+		if canceled {
+			name = "canceled, then stopped, after the end"
+		}
+		t.Run(name, func(t *testing.T) {
+			received, answer := make(chan struct{}), make(chan struct{})
+			server, client := fakeRatd(t, func(w http.ResponseWriter, r *http.Request) {
+				if _, err := io.Copy(io.Discard, r.Body); err != nil {
+					t.Error(err)
+				}
+				close(received)
+				// slow to answer, as a ratd writing on a file system that does not answer
+				select {
+				case <-answer:
+				case <-r.Context().Done():
+				}
+			})
+			t.Cleanup(func() { close(answer) })
+			ctx, stop := context.WithCancelCause(context.Background())
+			cancel := make(chan struct{})
+			done := make(chan error, 1)
+			go func() {
+				_, err := Upload(ctx, cancel, client, server, &testFile{content: []byte("whole"), mode: 0o644}, "/x",
+					false)
+				done <- err
+			}()
+			<-received
+			if canceled {
+				close(cancel)
+				select {
+				case err := <-done:
+					t.Fatalf("canceled once sent whole: expected the upload to wait for the answer, got %v", err)
+				case <-time.After(200 * time.Millisecond):
+				}
+			}
+			stopping := errors.New("client stopping")
+			stop(stopping)
+			select {
+			case err := <-done:
+				if !errors.Is(err, stopping) {
+					t.Errorf("expected the upload stopped, the cause of its context, got %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("stopped once sent whole: the upload still waits for the answer of ratd")
+			}
+		})
+	}
+	t.Run("stopped once answered", func(t *testing.T) {
+		server, client := fakeRatd(t, func(w http.ResponseWriter, r *http.Request) {
+			if _, err := io.Copy(io.Discard, r.Body); err != nil {
+				t.Error(err)
+			}
+			w.Header().Set(HeaderMode, "0644")
+			w.WriteHeader(http.StatusCreated)
+		})
+		ctx, stop := context.WithCancel(context.Background())
+		defer stop()
+		client.Transport = stopOnAnswer{inner: client.Transport, stop: stop}
+		up, err := Upload(ctx, nil, client, server, &testFile{content: []byte("whole"), mode: 0o644}, "/x", false)
+		if err != nil || up.Replaced || up.Sent != 5 {
+			t.Errorf("stopped once ratd answered the file written: expected that answer, too late to stop, got %+v, %v",
+				up, err)
 		}
 	})
 }

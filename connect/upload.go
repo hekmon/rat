@@ -42,14 +42,21 @@ type Uploaded struct {
 //
 // src is stamped when opened and once read (see package stamp): a file that changed meanwhile (a
 // log still written, a build output) ends the body with an error instead of its end, and Upload
-// fails with [ErrChanged], ratd writing nothing. Cancelling ctx cuts the upload likewise, unless
-// the whole file was sent: from then on, ratd may be writing it, and Upload waits for its answer
-// and returns it, so that a cancel never leaves unknown whether the file was written. The choice
-// is made at one point, when the end of the file is about to be sent. A cancel cuts the
-// connection at once, even stalled, but net/http returns from a request only once the read of
-// its body under way returns: a read of src blocked (a file system not answering) delays it.
-func Upload(ctx context.Context, client *http.Client, server string, src fs.File, path string,
-	overwrite bool) (*Uploaded, error) {
+// fails with [ErrChanged], ratd writing nothing.
+//
+// Two signals stop an upload. Closing cancel (unless nil), as an agent cancels, cuts it, ratd
+// writing nothing, Upload returning [context.Canceled], unless the whole file was sent: from then
+// on, ratd may be writing it, and Upload waits for its answer and returns it, so that a cancel
+// never leaves unknown whether the file was written. The choice is made at one point, when the end
+// of the file is about to be sent. Cancelling ctx cuts the upload whatever was sent, a cancel
+// having come first or not, returning its cause: nobody waits for the answer any more (a client
+// stopping); once ratd answered the file written, it is too late, and Upload returns that answer.
+// One signal would not do: a context is done once, and a cancel waiting for the answer would leave
+// a stop coming next unseen. Either cuts the connection at once, even stalled, but net/http
+// returns from a request only once the read of its body under way returns: a read of src blocked
+// (a file system not answering) delays it.
+func Upload(ctx context.Context, cancel <-chan struct{}, client *http.Client, server string, src fs.File,
+	path string, overwrite bool) (*Uploaded, error) {
 	info, err := src.Stat()
 	if err != nil {
 		return nil, err
@@ -58,16 +65,23 @@ func Upload(ctx context.Context, client *http.Client, server string, src fs.File
 		return nil, fmt.Errorf("upload of %s: not a regular file", info.Name())
 	}
 	body := &uploadBody{src: src, opened: stamp.Of(info)}
-	// The request outlives ctx once the file is sent whole (see uploadBody.cancel), and is cut at
-	// once before: a write blocked on a stalled connection never sees a cancel in the body.
+	// The request is cut at once by ctx, whatever was sent, and by cancel unless the file was sent
+	// whole (see uploadBody.cancel): a write blocked on a stalled connection never sees a cancel in
+	// the body. It is cut by these alone, once they failed the body with why, rather than by ctx
+	// itself: Upload then tells why (a cancel, a stop), rather than a connection lost.
 	requestCtx, cut := context.WithCancel(context.WithoutCancel(ctx))
 	defer cut()
 	stop := context.AfterFunc(ctx, func() {
-		if body.cancel(ctx.Err()) {
+		body.cancel(context.Cause(ctx), true)
+		cut()
+	})
+	defer stop()
+	stopCancel := afterClosed(cancel, func() {
+		if body.cancel(context.Canceled, false) {
 			cut()
 		}
 	})
-	defer stop()
+	defer stopCancel()
 	// the go-ahead of ratd (100): the connection lost after it cuts the transfer ratd answered
 	var answered atomic.Bool
 	traced := httptrace.WithClientTrace(requestCtx, &httptrace.ClientTrace{
@@ -85,7 +99,10 @@ func Upload(ctx context.Context, client *http.Client, server string, src fs.File
 	req.Header.Set(HeaderMode, FormatMode(info.Mode()))
 	req.Header.Set(HeaderOverwrite, strconv.FormatBool(overwrite))
 	resp, err := client.Do(req)
-	if failure := body.failure(); failure != nil {
+	// a stop coming once ratd answered the file written is too late: that answer is returned, the
+	// stop cutting at most the read of its note
+	done := err == nil && (resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusNoContent)
+	if failure := body.failure(); failure != nil && !done {
 		if err == nil {
 			_ = resp.Body.Close()
 		}
@@ -112,10 +129,27 @@ func Upload(ctx context.Context, client *http.Client, server string, src fs.File
 		Note: readText(resp.Body)}, nil
 }
 
+// afterClosed calls f in a goroutine of its own once c is closed, unless stop is called first: a
+// nil c never closes.
+func afterClosed(c <-chan struct{}, f func()) (stop func()) {
+	if c == nil {
+		return func() {}
+	}
+	stopped := make(chan struct{})
+	go func() {
+		select {
+		case <-c:
+			f()
+		case <-stopped:
+		}
+	}()
+	return func() { close(stopped) }
+}
+
 // uploadBody is the body of an upload: src, read to its end, whose end is told only if the file
 // is as it was when opened, and the upload not cancelled. Otherwise the body ends with the error
 // telling why, and ratd, seeing it cut, writes nothing. Once its end is told, the whole file is
-// sent: nothing cuts the upload anymore.
+// sent: a cancel cuts the upload no more, its context still does (see Upload).
 type uploadBody struct {
 	src    fs.File
 	opened stamp.Stamp
@@ -157,11 +191,13 @@ func (b *uploadBody) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// cancel fails the upload with err unless the whole file was sent, and tells whether it did.
-func (b *uploadBody) cancel(err error) bool {
+// cancel fails the upload with err, and tells whether it did: unless the whole file was sent,
+// ratd then writing it, but with evenWhole: stopped by the context of the upload, nobody waiting
+// for the answer.
+func (b *uploadBody) cancel(err error, evenWhole bool) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.ended {
+	if b.ended && !evenWhole {
 		return false
 	}
 	if b.err == nil {

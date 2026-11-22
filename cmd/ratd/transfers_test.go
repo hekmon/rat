@@ -645,7 +645,7 @@ func TestTransferClient(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer file.Close()
-		return connect.Upload(ctx, client, r.addr, file, path, overwrite)
+		return connect.Upload(ctx, nil, client, r.addr, file, path, overwrite)
 	}
 	remote := filepath.Join(home, "sub", "app.bin")
 	mode := 0o640 &^ umask()
@@ -685,7 +685,7 @@ func TestTransferClient(t *testing.T) {
 	}
 	defer file.Close()
 	grown := filepath.Join(home, "grown.bin")
-	if _, err = connect.Upload(ctx, client, r.addr, growingFile{file}, grown, false); !errors.Is(err, connect.ErrChanged) {
+	if _, err = connect.Upload(ctx, nil, client, r.addr, growingFile{file}, grown, false); !errors.Is(err, connect.ErrChanged) {
 		t.Errorf("a file growing: expected ErrChanged, got %v", err)
 	}
 	eventually(t, "the cut upload logged", func() bool {

@@ -221,6 +221,19 @@ func (tt *transferTest) expect(t *testing.T, tool string, args map[string]any, i
 	return text
 }
 
+// stopRat stops rat, as a harness leaving does, and waits for it to exit.
+func (tt *transferTest) stopRat(t *testing.T) {
+	t.Helper()
+	_ = tt.rat.stdin.Close()
+	select {
+	case err := <-tt.rat.done:
+		// for the end of the test to find it too
+		tt.rat.done <- err
+	case <-time.After(5 * time.Second):
+		t.Fatal("rat did not stop")
+	}
+}
+
 // randomFile writes size random bytes to path, with mode, and returns them.
 func randomFile(t *testing.T, path string, size int, mode fs.FileMode) []byte {
 	t.Helper()
@@ -614,6 +627,37 @@ func TestTransferCallCanceled(t *testing.T) {
 	tt.expect(t, downloadTool, args, false, "Downloaded "+remote+" to big.bin (1 MiB): created. It ended ")
 }
 
+// TestTransferRatStopsUploadSent guards rat stopping while an upload whose file was sent whole
+// waits for the answer of ratd, slow to give it, the agent having canceled it meanwhile or not (a
+// cancel waits for that answer, telling the transfer still ending): rat cuts it and exits, as for
+// any transfer under way, rather than wait for an answer nobody reads any more.
+func TestTransferRatStopsUploadSent(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		name := "untouched"
+		if canceled {
+			name = "canceled"
+		}
+		t.Run(name, func(t *testing.T) {
+			shortWait(t, 300*time.Millisecond)
+			tt := startTransfers(t)
+			stall := make(chan struct{})
+			t.Cleanup(func() { close(stall) })
+			// the fake reads a first chunk, then stalls: the rest of the file in the buffers of the
+			// connection, the file sent whole
+			tt.fake.set(func(f *fakeTransfers) { f.stall = stall })
+			randomFile(t, filepath.Join(tt.local, "up.bin"), 64<<10, 0o644)
+			remote := filepath.Join(tt.remote, "up.bin")
+			args := map[string]any{"local_path": "up.bin", "remote_path": remote}
+			tt.expect(t, uploadTool, args, false, "Still copying up.bin to ")
+			if canceled {
+				args["cancel"] = true
+				tt.expect(t, uploadTool, args, true, "The transfer to "+remote+" is still ending: ")
+			}
+			tt.stopRat(t)
+		})
+	}
+}
+
 // TestTransferRatStops guards rat stopping with a transfer under way: the transfer is cut, and its
 // temporary file removed before rat exits.
 func TestTransferRatStops(t *testing.T) {
@@ -631,13 +675,6 @@ func TestTransferRatStops(t *testing.T) {
 	if len(matches) != 1 {
 		t.Fatalf("expected the temporary file of the download, got %v", matches)
 	}
-	_ = tt.rat.stdin.Close()
-	select {
-	case err := <-tt.rat.done:
-		// for the end of the test to find it too
-		tt.rat.done <- err
-	case <-time.After(5 * time.Second):
-		t.Fatal("rat did not stop")
-	}
+	tt.stopRat(t)
 	expectNoTemporary(t, tt.local)
 }

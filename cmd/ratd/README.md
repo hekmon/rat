@@ -679,9 +679,10 @@ opened, so that a file growing forever still ends, then tells a change, or a rea
 rat's to find: it ends the body with an error instead of its last chunk, and ratd, seeing the body
 cut, drops its temporary file. A cancel ends it the same way, until the last chunk is sent: past
 it, ratd may be writing the file, and the client waits for its answer rather than leave unknown
-whether it was written (`connect.Upload` holds the client side). No digest: TLS authenticates every record, so a byte altered on the
-way cuts the connection, and the bytes go from file to socket through the standard library
-alone. A digest computed on the stream at both ends would check the same bytes again, and miss a
+whether it was written, unless it stops, nobody reading that answer any more (`connect.Upload`
+holds the client side). No digest: TLS authenticates every record, so a byte altered on the way
+cuts the connection, and the bytes go from file to socket through the standard library alone. A
+digest computed on the stream at both ends would check the same bytes again, and miss a
 file changing while read, both ends hashing the same torn bytes; one computed by a first read of
 the file would catch it, at the price of reading it twice, which the change check spares. A
 trailer only follows a chunked body in HTTP/1.1, which carries no `Content-Length` (Go silently

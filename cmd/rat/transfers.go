@@ -146,7 +146,8 @@ type transfers struct {
 	// local paths
 	dir  string
 	root *os.Root
-	// ctx ends the jobs once rat stops (see close)
+	// ctx ends the jobs once rat stops (see close): an upload sent whole is cut too, canceled by
+	// the agent or not, rather than waited for, its answer read by nobody (see runUpload)
 	ctx  context.Context
 	stop context.CancelFunc
 	// jobsMu guards jobs, the transfers under way or ended and not told yet, by key
@@ -639,7 +640,9 @@ func (f countedFile) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// runUpload uploads source, the local file of j, and tells how it ended.
+// runUpload uploads source, the local file of j, and tells how it ended. ctx, which a cancel of the
+// agent ends, cancels the upload, which waits for the answer of ratd once sent whole, while rat
+// stopping cuts it whatever was sent (see connect.Upload).
 func (t *transfers) runUpload(ctx context.Context, j *job, source *os.File) (string, bool, bool) {
 	defer source.Close()
 	info, err := source.Stat()
@@ -647,8 +650,8 @@ func (t *transfers) runUpload(ctx context.Context, j *job, source *os.File) (str
 		return t.localFailure(err, "Reading", j.request.local), true, false
 	}
 	j.size.Store(info.Size())
-	up, err := connect.Upload(ctx, t.client, t.server, countedFile{File: source, job: j}, j.request.remote,
-		j.request.overwrite)
+	up, err := connect.Upload(t.ctx, ctx.Done(), t.client, t.server, countedFile{File: source, job: j},
+		j.request.remote, j.request.overwrite)
 	if err != nil {
 		return t.failureText(j, err)
 	}

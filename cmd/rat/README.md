@@ -72,7 +72,10 @@ not fail the startup of the harness, the first request tells.
   only fails the requests sent meanwhile.
 - **Stopping**: at the end of stdin (the harness leaving) or on SIGTERM or SIGINT, rat ends the
   calls in flight and exits, rather than waiting for them. It cuts the file transfers under way
-  first, and waits for them to remove their temporary files.
+  first, an upload sent whole included, whose answer a cancel waits for but nobody would read
+  then, canceled or not: the context of `connect.Upload` cuts it whatever was sent, apart from
+  the cancel of the agent, a context being done once. It waits for them to remove their
+  temporary files.
 
 ### Cancellation
 
