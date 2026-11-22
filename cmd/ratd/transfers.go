@@ -280,6 +280,14 @@ func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 			d.logger.Warn("failed to remove the temporary file of an upload", "path", tmp.Name(), "error", err)
 		}
 	}()
+	// The mode of a file created, the umask of ratd taken, which the answer tells, rather than what
+	// a look at the file once placed finds: a file moved at once (a watcher of a spool directory)
+	// would leave it untold, and one replaced meanwhile would tell the mode of another.
+	tmpInfo, err := tmp.Stat()
+	if err != nil {
+		_ = tmp.Close()
+		return writeFailure(err)
+	}
 	// Reading the body sends the go-ahead the client waits for.
 	body := &readErrors{r: req.Body}
 	n, err := io.Copy(tmp, body)
@@ -297,16 +305,18 @@ func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 	case err != nil:
 		return writeFailure(err)
 	}
-	replaced, refused, err := placeFile(tmp.Name(), path, overwrite)
+	replaced, kept, refused, err := placeFile(tmp.Name(), path, overwrite)
 	switch {
 	case refused != nil:
 		return refuse(w, refusalStatus(refused), withAttrs(*refused, attrs))
 	case err != nil:
 		return writeFailure(err)
 	}
-	if info, err := os.Lstat(path); err == nil {
-		w.Header().Set(connect.HeaderMode, connect.FormatMode(info.Mode()))
+	modeSet := tmpInfo.Mode()
+	if replaced {
+		modeSet = kept
 	}
+	w.Header().Set(connect.HeaderMode, connect.FormatMode(modeSet))
 	attrs = append(attrs, "replaced", replaced, "directories_created", len(created))
 	if replaced {
 		w.WriteHeader(http.StatusNoContent)
@@ -391,41 +401,42 @@ var linkFile = os.Link
 
 // placeFile puts tmp, a complete temporary file next to path, in its place, and tells whether it
 // replaced a file. A file found there is replaced with overwrite only, and keeps its mode, tmp
-// taking it first; checkReplaced refuses the others. Without a file there, tmp is linked under its
-// name, which fails if a file appeared since it was checked, where a rename would replace it; that
-// file is then looked at again. On a file system without hard links (FAT, some network ones), it
-// is renamed: a file appearing in between is then replaced. On success, tmp may remain as a second
-// name of the file, for the caller to remove.
-func placeFile(tmp, path string, overwrite bool) (replaced bool, refused *result, err error) {
+// taking it first, returned as kept; checkReplaced refuses the others. Without a file there, tmp
+// is linked under its name, which fails if a file appeared since it was checked, where a rename
+// would replace it; that file is then looked at again. On a file system without hard links (FAT,
+// some network ones), it is renamed: a file appearing in between is then replaced. On success, tmp
+// may remain as a second name of the file, for the caller to remove.
+func placeFile(tmp, path string, overwrite bool) (replaced bool, kept fs.FileMode, refused *result, err error) {
 	for range 2 {
 		info, err := os.Lstat(path)
 		switch {
 		case err == nil:
 			if r := checkReplaced(path, info, overwrite); r != nil {
-				return false, r, nil
+				return false, 0, r, nil
 			}
-			if err = os.Chmod(tmp, info.Mode()&(fs.ModePerm|fs.ModeSetuid|fs.ModeSetgid|fs.ModeSticky)); err != nil {
-				return false, nil, err
+			kept = info.Mode() & (fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky)
+			if err = os.Chmod(tmp, kept); err != nil {
+				return false, 0, nil, err
 			}
-			return true, nil, os.Rename(tmp, path)
+			return true, kept, nil, os.Rename(tmp, path)
 		case !errors.Is(err, fs.ErrNotExist):
-			return false, nil, err
+			return false, 0, nil, err
 		}
 		err = linkFile(tmp, path)
 		switch {
 		case err == nil:
-			return false, nil, nil
+			return false, 0, nil, nil
 		case errors.Is(err, fs.ErrExist):
 			continue
 		case errors.Is(err, syscall.EPERM), errors.Is(err, syscall.ENOTSUP), errors.Is(err, syscall.EOPNOTSUPP),
 			errors.Is(err, syscall.EMLINK):
-			return false, nil, os.Rename(tmp, path)
+			return false, 0, nil, os.Rename(tmp, path)
 		default:
-			return false, nil, err
+			return false, 0, nil, err
 		}
 	}
 	r := existsRefusal(path)
-	return false, &r, nil
+	return false, 0, &r, nil
 }
 
 // downloadOpened is called with the path of a download once its file is opened and checked: a

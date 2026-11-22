@@ -369,6 +369,30 @@ func TestUploadWithoutHardLinks(t *testing.T) {
 	expectNoTemporary(t, home)
 }
 
+// TestUploadMovedAtOnce guards an upload whose file is moved as soon as it is placed, as a watcher
+// of a spool directory does: ratd still answers 201 with the mode it wrote the file with
+// (Rat-Mode), which it set, rather than look at the path again, where the file is gone.
+func TestUploadMovedAtOnce(t *testing.T) {
+	// set before ratd serves, and restored once it stopped (cleanups run in reverse order)
+	link := linkFile
+	linkFile = func(oldname, newname string) error {
+		if err := os.Link(oldname, newname); err != nil {
+			return err
+		}
+		return os.Rename(newname, newname+".spooled")
+	}
+	t.Cleanup(func() { linkFile = link })
+	r, client, home := transferRatd(t)
+	path := filepath.Join(home, "app.bin")
+	resp, _, err := sendTransfer(client, newUpload(t, r.addr, path, &fileBody{content: []byte("spooled")}, "0640", false))
+	mode := connect.FormatMode(0o640 &^ umask())
+	if err != nil || resp.StatusCode != http.StatusCreated || resp.Header.Get(connect.HeaderMode) != mode {
+		t.Errorf("expected 201 telling the mode %s, got %v, %v", mode, resp, err)
+	}
+	expectFile(t, path+".spooled", "spooled", 0o640&^umask())
+	expectNoTemporary(t, home)
+}
+
 // TestUploadWriteFailed guards an upload failing to write (no space left, here over the file size
 // limit of the process, which Go makes a failed write rather than a signal): 507 telling why, the
 // file it was to replace kept as it was, and no temporary file left.
