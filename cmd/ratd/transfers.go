@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -601,5 +602,11 @@ func changedRefusal(path string) result {
 func noTrueSizeRefusal(path string) result {
 	return result{outcome: failed, err: errNoTrueSize, text: fmt.Sprintf("%s tells a size that is not that of its "+
 		"content: a file the system makes as it is read, as in /proc and /sys. Read it with %s if it is text, or "+
-		"copy it in a terminal (cat %s > ~/copy) and download the copy.", path, tools.ReadFile, path)}
+		"copy it in a terminal (cat %s > ~/copy) and download the copy.", path, tools.ReadFile, shellWord(path))}
+}
+
+// shellWord returns s quoted for bash, between single quotes: a path for a command to copy as is
+// into a terminal, spaces and all.
+func shellWord(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

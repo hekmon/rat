@@ -752,6 +752,21 @@ func TestDownloadLookFailed(t *testing.T) {
 	}
 }
 
+// TestShellWord guards a path quoted for a command an agent copies into a terminal (the copy a
+// refusal of a pseudo-file suggests): between single quotes, spaces kept, a single quote of the
+// path closed, escaped and opened again.
+func TestShellWord(t *testing.T) {
+	for path, word := range map[string]string{
+		"/proc/version": `'/proc/version'`,
+		"/tmp/a b":      `'/tmp/a b'`,
+		"/tmp/it's":     `'/tmp/it'\''s'`,
+	} {
+		if got := shellWord(path); got != word {
+			t.Errorf("%s: expected %s, got %s", path, word, got)
+		}
+	}
+}
+
 // TestDownloadNoTrueSize guards a file whose size is not that of its content, one the system makes
 // as it is read, which a download, sending the size a file had when opened, sent empty told
 // complete (/proc, showing 0) or failed as changed (/sys, showing a page): refused, telling to read
@@ -768,8 +783,8 @@ func TestDownloadNoTrueSize(t *testing.T) {
 	r, client, home := transferRatd(t)
 	told := func(path string) string {
 		return path + " tells a size that is not that of its content: a file the system makes as it is read, as " +
-			"in /proc and /sys. Read it with read_file if it is text, or copy it in a terminal (cat " + path +
-			" > ~/copy) and download the copy."
+			"in /proc and /sys. Read it with read_file if it is text, or copy it in a terminal (cat '" + path +
+			"' > ~/copy) and download the copy."
 	}
 	empty := filepath.Join(home, "empty.log")
 	t.Run("empty", func(t *testing.T) {

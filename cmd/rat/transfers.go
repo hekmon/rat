@@ -504,10 +504,16 @@ func (t *transfers) cancel(ctx context.Context, q transferRequest) (string, bool
 		return "", false
 	}
 	t.forget(j)
-	if !j.canceled {
-		return "Too late to cancel: " + j.text, j.isError
+	switch {
+	case j.canceled:
+		return j.text, j.isError
+	case j.isError:
+		// a failure, or an answer lost: told first, rather than behind "too late to cancel", which
+		// reads as a copy done
+		return j.text + " The cancel came too late to stop it.", true
+	default:
+		return "Too late to cancel: " + j.text, false
 	}
-	return j.text, j.isError
 }
 
 // job is a transfer under way, or ended and not told yet.
