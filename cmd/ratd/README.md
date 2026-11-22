@@ -621,8 +621,9 @@ client checks, never through MCP: `/mcp` stays MCP only. The contract is declare
   permission bits in `Rat-Mode` and its size in `Rat-Size`. HEAD answers the headers alone.
 - The answers of both endpoints carry `Rat-Version`, the version of ratd: a 404 without it comes
   from a ratd older than the transfers, whose mux serves `/mcp` alone, one with it from a missing
-  file. A refusal is a status (400, 403, 404, 409, 412, 415, 507) with a sentence for the agent,
-  which rat relays.
+  file. A refusal is a status (400, 403, 404, 409, 412, 415, 507, or 500 for a failure of the
+  system without a status of its own, an I/O error) with a sentence for the agent, which rat
+  relays, as it relays the 503 of every request while ratd has no valid CRL.
 
 HTTP as designed: the URL names the endpoint, headers describe the file, the body is the file.
 Rejected: the path as a query parameter (`?path=`), a function call dressed as HTTP; the path in

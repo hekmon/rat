@@ -70,7 +70,7 @@ type uploadInput struct {
 	LocalPath  string `json:"local_path" jsonschema:"the file to copy, relative to the transfers directory"`
 	RemotePath string `json:"remote_path" jsonschema:"where to write it on the machine of the terminals: absolute, or starting with ~/"`
 	Overwrite  bool   `json:"overwrite,omitempty" jsonschema:"true replaces an existing file; false, the default, refuses it"`
-	Cancel     bool   `json:"cancel,omitempty" jsonschema:"true stops the transfer of these paths under way, leaving the destination as it was"`
+	Cancel     bool   `json:"cancel,omitempty" jsonschema:"true stops the transfer of these paths under way, leaving the destination as it was, unless too late"`
 }
 
 // downloadInput is the input of download_file.
@@ -78,7 +78,7 @@ type downloadInput struct {
 	RemotePath string `json:"remote_path" jsonschema:"the file to copy from the machine of the terminals: absolute, or starting with ~/"`
 	LocalPath  string `json:"local_path" jsonschema:"where to write it, relative to the transfers directory"`
 	Overwrite  bool   `json:"overwrite,omitempty" jsonschema:"true replaces an existing file; false, the default, refuses it"`
-	Cancel     bool   `json:"cancel,omitempty" jsonschema:"true stops the transfer of these paths under way, leaving the destination as it was"`
+	Cancel     bool   `json:"cancel,omitempty" jsonschema:"true stops the transfer of these paths under way, leaving the destination as it was, unless too late"`
 }
 
 // transferDescription tells what both tools do, after their first sentence: dir is the transfers
@@ -89,7 +89,8 @@ const transferDescription = "Its content never enters your context, whatever its
 	"its permissions; a new one gets those of %s. A symbolic link at the end of a path is refused, naming its target, " +
 	"and a file changing while it is copied fails the transfer: copy it once complete. The call waits up to %d " +
 	"seconds: a longer copy goes on in the background, the call telling its progress, and calling again with the " +
-	"same paths waits for the rest, or tells how it ended; cancel stops it, leaving the destination as it was."
+	"same paths waits for the rest, or tells how it ended; cancel stops it, leaving the destination as it was, " +
+	"unless it comes too late, as the copy ends."
 
 // toolDefinition is a tool as tools/list tells it.
 type toolDefinition struct {

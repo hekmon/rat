@@ -71,11 +71,11 @@ not fail the startup of the harness, the first request tells.
 - **No connection state** beyond the negotiated version and the calls in flight: a ratd restart
   only fails the requests sent meanwhile.
 - **Stopping**: at the end of stdin (the harness leaving) or on SIGTERM or SIGINT, rat ends the
-  calls in flight and exits, rather than waiting for them. It cuts the file transfers under way
-  first, an upload sent whole included, whose answer a cancel waits for but nobody would read
-  then, canceled or not: the context of `connect.Upload` cuts it whatever was sent, apart from
-  the cancel of the agent, a context being done once. It waits for them to remove their
-  temporary files.
+  calls in flight and exits, rather than waiting for them. Once they ended, it cuts the file
+  transfers under way, an upload sent whole included, whose answer a cancel waits for but nobody
+  would read then, canceled or not: the context of `connect.Upload` cuts it whatever was sent,
+  apart from the cancel of the agent, a context being done once. It waits for them to remove
+  their temporary files; an upload ratd already received whole may still be written.
 
 ### Cancellation
 
@@ -137,7 +137,7 @@ another source to the same destination is refused while it runs. Canceling a cal
 giving up on it) ends its wait, not the transfer. `cancel` with the same paths stops it, leaving
 the destination as it was, decided at one point: before the last chunk of an upload (past it,
 ratd may be writing the file, and the call tells its answer, or that it was lost, the file
-possibly written), before the rename of a download.
+possibly written), before a download is put in place.
 Rejected: job identifiers, with tools to wait for, list and cancel jobs, which a context
 compaction loses, more tools for small models to juggle; a parameter for the wait, or a size
 choosing between waiting and a job, the speed of the link being unknown; MCP tasks (experimental

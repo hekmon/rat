@@ -209,7 +209,8 @@ transfers](MANUAL.md#file-transfers)):
 | `download_file` | `remote_path`, `local_path`, `overwrite` (optional, false), `cancel` (optional, false) | Copies a file of the machine of ratd into the transfers directory, its content never entering the context of the agent. |
 
 A transfer call waits 50 seconds at most: a longer copy goes on, the call telling its progress,
-and the same call again waits for the rest; `cancel` stops it, leaving the destination as it was.
+and the same call again waits for the rest; `cancel` stops it, leaving the destination as it was,
+unless it comes too late, as the copy ends, the call then telling how it ended.
 Local paths are relative to the transfers directory, and stay within it.
 
 Paths are absolute or start with `~/`. What `read_window` and `read_file` return is bounded by
