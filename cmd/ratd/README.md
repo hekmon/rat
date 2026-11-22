@@ -641,8 +641,13 @@ absence means overwrite, the opposite of ours.
 
 **All or nothing.** An upload goes to a temporary file next to its target (`.NAME.rat-RANDOM`,
 with the permission bits sent minus the umask), put in its place once complete: an upload cut
-midway leaves the previous version whole. `write_file` makes the opposite choice (see Files), for
-content it holds whole; a file arriving for minutes, half replaced, would be worse than none.
+midway leaves the previous version whole. Its path, absolute, is 14 bytes longer than the
+target's for a name of 200 bytes or less: a target within 14 bytes of the longest path the system
+takes (`PATH_MAX`: 1024 bytes on macOS, 4096 on Linux) is refused as a name too long, though
+`write_file` writes it. Left as it is, for paths that long: working relative to the directory, as
+rat does with `os.Root`, would take the whole placing of the file with it. `write_file` makes the
+opposite choice (see Files), for content it holds whole; a file arriving for minutes, half
+replaced, would be worse than none.
 Without overwrite, the temporary file is linked under the name of the target, which fails if a
 file appeared meanwhile (412), where a rename would replace it; with overwrite, it takes the mode
 of the file it replaces, then is renamed over it. Permissions follow `scp`: a new file gets those
@@ -650,9 +655,9 @@ of its source minus the umask, a replaced file keeps its own, and setuid, setgid
 travel. The price of the rename: hard links to a replaced file are broken, its extended
 attributes lost, and its owner becomes ratd's user (rat runs as a user of its own on each side,
 as the manual recommends). On a file system without hard links (FAT, some network ones, FUSE
-without link as sshfs, whatever error its link gives: EPERM, ENOSYS, ENOTSUP), the file is renamed
-even without overwrite, a file appearing in between then being replaced; rat does so too, on
-Windows with the errors of Windows (FAT, exFAT: ERROR_INVALID_FUNCTION). No fsync: all
+without link as sshfs, whatever error its link gives: EPERM, EMLINK, ENOSYS, ENOTSUP), the file
+is renamed even without overwrite, a file appearing in between then being replaced; rat does so
+too, on Windows with the errors of Windows (FAT, exFAT: ERROR_INVALID_FUNCTION). No fsync: all
 or nothing covers a transfer cut, not a power cut, after which a file may be lost as any other
 just written; an agent wanting it on disk runs `sync`. A ratd killed during an upload leaves its
 temporary file behind.
