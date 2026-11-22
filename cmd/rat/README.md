@@ -133,11 +133,14 @@ the size, the rate over the last 30 seconds, a rounded time left, or that nothin
 the agent to wait its own way (a `sleep` in its shell) or to do something else. A job is
 identified by its destination, which one transfer at a time writes, and found by its paths, as
 terminals are by name: the same call again waits for the rest, or tells how it ended, once;
-another source to the same destination is refused while it runs. Canceling a call (the harness
-giving up on it) ends its wait, not the transfer. `cancel` with the same paths stops it, leaving
-the destination as it was, decided at one point: before the last chunk of an upload (past it,
-ratd may be writing the file, and the call tells its answer, or that it was lost, the file
-possibly written), before a download is put in place.
+another source to the same destination is refused while it runs, and once it ended, its outcome
+not told yet, the call tells that outcome, as a cancel naming another source does, and forgets
+the job: the next call starts the transfer asked, the agent knowing what the first one wrote
+(after a context compaction, for one). Canceling a call (the harness giving up on it) ends its
+wait, not the transfer. `cancel` with the same paths stops it, leaving the destination as it
+was, decided at one point: before the last chunk of an upload (past it, ratd may be writing the
+file, and the call tells its answer, or that it was lost, the file possibly written), before a
+download is put in place.
 Rejected: job identifiers, with tools to wait for, list and cancel jobs, which a context
 compaction loses, more tools for small models to juggle; a parameter for the wait, or a size
 choosing between waiting and a job, the speed of the link being unknown; MCP tasks (experimental

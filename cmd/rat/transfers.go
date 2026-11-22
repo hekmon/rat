@@ -305,16 +305,21 @@ func (t *transfers) request(tool string, arguments json.RawMessage) (transferReq
 
 // join returns the job of q: the one under way for its destination, or a new one, started once
 // the local file checked. Refused: another source to the same destination, and what the local
-// side refuses before any request (see prepare).
+// side refuses before any request (see prepare). A job of another source that ended, its outcome
+// not told yet, is told instead, and forgotten: the next call starts the transfer asked.
 func (t *transfers) join(q transferRequest) (*job, string) {
 	t.jobsMu.Lock()
 	defer t.jobsMu.Unlock()
 	if j := t.jobs[q.key()]; j != nil {
-		if j.request.source() != q.source() {
-			return nil, fmt.Sprintf("A transfer to %s from %s is under way: wait for it with its paths, or stop it with "+
-				"cancel.", q.destination(), j.request.source())
+		switch {
+		case j.request.source() == q.source():
+			return j, ""
+		case j.hasEnded():
+			delete(t.jobs, q.key())
+			return nil, endedText(j) + fmt.Sprintf(" Nothing was copied from %s: call again to copy it.", q.source())
 		}
-		return j, ""
+		return nil, fmt.Sprintf("A transfer to %s from %s is under way: wait for it with its paths, or stop it with "+
+			"cancel.", q.destination(), j.request.source())
 	}
 	source, refused := t.prepare(q)
 	if refused != "" {
@@ -450,6 +455,13 @@ func (t *transfers) await(ctx context.Context, j *job, called time.Time) (string
 	return text, j.isError
 }
 
+// endedText tells how j ended, for a call to its destination from another source, which found it
+// ended, its outcome not told yet: as a call with its paths would tell it.
+func endedText(j *job) string {
+	return fmt.Sprintf("The transfer to %s from %s ended %s ago: %s", j.request.destination(), j.request.source(),
+		agoText(time.Since(j.ended)), j.text)
+}
+
 // forget removes j from the jobs, unless another job took its place.
 func (t *transfers) forget(j *job) {
 	t.jobsMu.Lock()
@@ -468,6 +480,10 @@ func (t *transfers) cancel(ctx context.Context, q transferRequest) (string, bool
 	switch {
 	case j == nil:
 		return fmt.Sprintf("No transfer to %s is under way: nothing to cancel.", q.destination()), false
+	case j.request.source() != q.source() && j.hasEnded():
+		// ended, its outcome not told yet: told now, and forgotten, as join does
+		t.forget(j)
+		return endedText(j) + " Nothing to cancel.", false
 	case j.request.source() != q.source():
 		return fmt.Sprintf("The transfer to %s under way is from %s, not %s: nothing canceled.", q.destination(),
 			j.request.source(), q.source()), true
@@ -597,6 +613,16 @@ func (j *job) cancelWasAsked() bool {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return j.cancelAsked
+}
+
+// hasEnded tells whether j ended, its outcome set.
+func (j *job) hasEnded() bool {
+	select {
+	case <-j.done:
+		return true
+	default:
+		return false
+	}
 }
 
 // run runs j, the transfer of source for an upload, until it ends or ctx is done, and sets its

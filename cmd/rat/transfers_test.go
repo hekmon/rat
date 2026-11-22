@@ -836,6 +836,54 @@ func TestTransferRate(t *testing.T) {
 	}
 }
 
+// TestTransferEndedOtherSource guards a transfer that ended, its outcome not told yet, met by a call
+// to its destination from another source, or by a cancel naming one (an agent after a context
+// compaction): told how it ended, and forgotten, the next call starting the transfer asked, rather
+// than told under way, which it is while it runs.
+func TestTransferEndedOtherSource(t *testing.T) {
+	shortWait(t, 300*time.Millisecond)
+	tt := startTransfers(t)
+	a := filepath.Join(tt.remote, "a.bin")
+	randomFile(t, a, 1<<20, 0o644)
+	b := filepath.Join(tt.remote, "b.bin")
+	randomFile(t, b, 1<<10, 0o644)
+	fromA := map[string]any{"remote_path": a, "local_path": "x.bin", "overwrite": true}
+	fromB := map[string]any{"remote_path": b, "local_path": "x.bin", "overwrite": true}
+	cancelB := map[string]any{"remote_path": b, "local_path": "x.bin", "cancel": true}
+	// asked, until a call no longer tells the download from a.bin under way: once it ended, the
+	// call tells how, which it never does without the fix
+	untilEnded := func(args map[string]any) string {
+		t.Helper()
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+			if text, _ := tt.call(t, downloadTool, args); !strings.Contains(text, "under way") {
+				return text
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Fatalf("%v: still told under way 10 seconds on", args)
+		return ""
+	}
+	for _, other := range []map[string]any{fromB, cancelB} {
+		stall := make(chan struct{})
+		release := sync.OnceFunc(func() { close(stall) })
+		tt.fake.set(func(f *fakeTransfers) { f.stall = stall })
+		tt.expect(t, downloadTool, fromA, false, "Still copying ")
+		release()
+		text := untilEnded(other)
+		ended := "The transfer to x.bin from " + a + " ended "
+		if !strings.HasPrefix(text, ended) || !strings.Contains(text, ": Downloaded "+a+" to x.bin (1 MiB): replaced.") &&
+			!strings.Contains(text, ": Downloaded "+a+" to x.bin (1 MiB): created.") {
+			t.Errorf("%v: expected how the download from a.bin ended, got %q", other, text)
+		}
+		// forgotten: told once
+		if other["cancel"] == true {
+			tt.expect(t, downloadTool, cancelB, false, "No transfer to x.bin is under way: nothing to cancel.")
+		} else {
+			tt.expect(t, downloadTool, fromB, false, "Downloaded "+b+" to x.bin (1 KiB): replaced.")
+		}
+	}
+}
+
 // TestTransferCanceledCallKeepsJob guards a call that the harness cancels as its job ends, waiting
 // for it or canceling it: the call tells nothing, its text dropped, and keeps the job for the next
 // call to tell how it ended, rather than forget it untold, select picking at random between the
