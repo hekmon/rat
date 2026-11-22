@@ -648,8 +648,10 @@ of the file it replaces, then is renamed over it. Permissions follow `scp`: a ne
 of its source minus the umask, a replaced file keeps its own, and setuid, setgid and sticky never
 travel. The price of the rename: hard links to a replaced file are broken, its extended
 attributes lost, and its owner becomes ratd's user (rat runs as a user of its own on each side,
-as the manual recommends). On a file system without hard links (FAT, some network ones), the file
-is renamed even without overwrite, a file appearing in between then being replaced. No fsync: all
+as the manual recommends). On a file system without hard links (FAT, some network ones, FUSE
+without link as sshfs, whatever error its link gives: EPERM, ENOSYS, ENOTSUP), the file is renamed
+even without overwrite, a file appearing in between then being replaced; rat does so too, on
+Windows with the errors of Windows (FAT, exFAT: ERROR_INVALID_FUNCTION). No fsync: all
 or nothing covers a transfer cut, not a power cut, after which a file may be lost as any other
 just written; an agent wanting it on disk runs `sync`. A ratd killed during an upload leaves its
 temporary file behind.

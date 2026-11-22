@@ -844,11 +844,14 @@ func (t *transfers) createTemporary(local string, mode fs.FileMode) (*os.File, s
 	}
 }
 
+// linkLocal is os.Root.Link, a variable for tests needing a file system without hard links.
+var linkLocal = (*os.Root).Link
+
 // place puts tmp, a complete temporary file next to local, in its place, as ratd places an upload
 // (see placeFile in cmd/ratd): a file found there is replaced with overwrite only, keeping its
 // mode, returned; otherwise tmp is linked under its name, which fails if a file appeared since it
-// was checked, looked at again then; on a file system without hard links, renamed. refused tells
-// what is found there and not replaced.
+// was checked, looked at again then; on a file system without hard links (see linkUnsupported),
+// renamed. refused tells what is found there and not replaced.
 func (t *transfers) place(tmp, local string, overwrite bool) (replaced bool, kept fs.FileMode, refused string, err error) {
 	q := transferRequest{tool: downloadTool, local: local, overwrite: overwrite}
 	for range 2 {
@@ -866,14 +869,13 @@ func (t *transfers) place(tmp, local string, overwrite bool) (replaced bool, kep
 		case !errors.Is(err, fs.ErrNotExist):
 			return false, 0, "", err
 		}
-		err = t.root.Link(tmp, local)
+		err = linkLocal(t.root, tmp, local)
 		switch {
 		case err == nil:
 			return false, 0, "", nil
 		case errors.Is(err, fs.ErrExist):
 			continue
-		case errors.Is(err, syscall.EPERM), errors.Is(err, syscall.ENOTSUP), errors.Is(err, syscall.EOPNOTSUPP),
-			errors.Is(err, syscall.EMLINK):
+		case linkUnsupported(err):
 			return false, 0, "", t.root.Rename(tmp, local)
 		default:
 			return false, 0, "", err

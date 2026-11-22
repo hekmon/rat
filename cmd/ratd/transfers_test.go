@@ -395,22 +395,31 @@ func TestUploadAppeared(t *testing.T) {
 	expectNoTemporary(t, home)
 }
 
-// TestUploadWithoutHardLinks guards an upload to a file system without hard links (FAT, some
-// network ones): the file is renamed into place instead.
+// TestUploadWithoutHardLinks guards an upload to a file system without hard links, whatever the
+// error its link gives (FAT, some network ones, FUSE without link as sshfs): the file is renamed
+// into place instead.
 func TestUploadWithoutHardLinks(t *testing.T) {
+	var linkErr atomic.Value
 	// set before ratd serves, and restored once it stopped (cleanups run in reverse order)
 	link := linkFile
 	linkFile = func(oldname, newname string) error {
-		return &os.LinkError{Op: "link", Old: oldname, New: newname, Err: syscall.EPERM}
+		return &os.LinkError{Op: "link", Old: oldname, New: newname, Err: linkErr.Load().(error)}
 	}
 	t.Cleanup(func() { linkFile = link })
 	r, client, home := transferRatd(t)
-	path := filepath.Join(home, "app.bin")
-	resp, _, err := sendTransfer(client, newUpload(t, r.addr, path, &fileBody{content: []byte("renamed")}, "0644", false))
-	if err != nil || resp.StatusCode != http.StatusCreated {
-		t.Errorf("expected 201, got %v, %v", resp, err)
+	// ENOTSUP and EOPNOTSUPP are one on Linux: each file is named after its rank
+	for i, errno := range []syscall.Errno{syscall.EPERM, syscall.EMLINK, syscall.ENOTSUP, syscall.EOPNOTSUPP,
+		syscall.ENOSYS} {
+		linkErr.Store(error(errno))
+		path := filepath.Join(home, "app-"+strconv.Itoa(i)+".bin")
+		resp, body, err := sendTransfer(client, newUpload(t, r.addr, path, &fileBody{content: []byte("renamed")}, "0644",
+			false))
+		if err != nil || resp.StatusCode != http.StatusCreated {
+			t.Errorf("link failing with %v: expected 201, got %v, %v: %s", errno, resp, err, body)
+			continue
+		}
+		expectFile(t, path, "renamed", 0o644&^umask())
 	}
-	expectFile(t, path, "renamed", 0o644&^umask())
 	expectNoTemporary(t, home)
 }
 

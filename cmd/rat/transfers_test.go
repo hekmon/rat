@@ -11,9 +11,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -669,6 +672,33 @@ func TestDownloadFileLongName(t *testing.T) {
 	name := strings.Repeat("a", 199) + "é.bin"
 	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": name}, false, "Downloaded ")
 	expectContent(t, filepath.Join(tt.local, name), content, 0o644&^umask())
+	expectNoTemporary(t, tt.local)
+}
+
+// TestDownloadFileWithoutHardLinks guards a download to a file system without hard links, whatever
+// the error its link gives (FAT, some network ones, FUSE without link as sshfs): the file is
+// renamed into place instead. Windows gives other errors (see link_windows.go).
+func TestDownloadFileWithoutHardLinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the errors of a link without hard links are those of Unix")
+	}
+	var linkErr atomic.Value
+	link := linkLocal
+	linkLocal = func(root *os.Root, oldname, newname string) error {
+		return &os.LinkError{Op: "linkat", Old: oldname, New: newname, Err: linkErr.Load().(error)}
+	}
+	t.Cleanup(func() { linkLocal = link })
+	tt := startTransfers(t)
+	remote := filepath.Join(tt.remote, "app.bin")
+	content := randomFile(t, remote, 1<<10, 0o644)
+	// ENOTSUP and EOPNOTSUPP are one on Linux: each file is named after its rank
+	for i, errno := range []syscall.Errno{syscall.EPERM, syscall.EMLINK, syscall.ENOTSUP, syscall.EOPNOTSUPP,
+		syscall.ENOSYS} {
+		linkErr.Store(error(errno))
+		local := "app-" + strconv.Itoa(i) + ".bin"
+		tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": local}, false, "Downloaded ")
+		expectContent(t, filepath.Join(tt.local, local), content, 0o644&^umask())
+	}
 	expectNoTemporary(t, tt.local)
 }
 
