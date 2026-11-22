@@ -486,8 +486,8 @@ func TestTransferModesNotTold(t *testing.T) {
 
 // TestUploadFileRefused guards what rat refuses of an upload, from the local side alone and before
 // any request: paths missing, a local path out of the transfers directory, a file missing, a
-// directory, and a symbolic link, telling where it leads within the directory, or that it leads
-// out of it.
+// directory, a symbolic link, telling where it leads within the directory, or that it leads out of
+// it, and a NUL byte in either path.
 func TestUploadFileRefused(t *testing.T) {
 	tt := startTransfers(t)
 	randomFile(t, filepath.Join(tt.local, "sub", "app.bin"), 10, 0o644)
@@ -508,9 +508,12 @@ func TestUploadFileRefused(t *testing.T) {
 		{"sub", "sub is a directory, not a file."},
 		{"link.bin", "link.bin is a symbolic link to sub/app.bin, which transfers do not follow: use that path instead."},
 		{"out.bin", "out.bin is a symbolic link leading out of " + tt.local + ", which transfers do not follow."},
+		{"a\x00b.bin", `local_path "a\x00b.bin" holds a NUL byte, which no file name can hold.`},
 	} {
 		tt.expect(t, uploadTool, map[string]any{"local_path": tc.local, "remote_path": remote}, true, tc.text)
 	}
+	tt.expect(t, uploadTool, map[string]any{"local_path": "sub/app.bin", "remote_path": remote + "\x00b"}, true,
+		"remote_path "+strconv.Quote(remote+"\x00b")+" holds a NUL byte, which no file name can hold.")
 	if requests := tt.fake.count(); requests != 0 {
 		t.Errorf("expected no request to ratd, got %d", requests)
 	}
@@ -690,6 +693,16 @@ func TestDownloadFile(t *testing.T) {
 		"Writing new/dir/app.bin/x.bin failed: not a directory.")
 	if tt.fake.count() != requests {
 		t.Error("expected a path under a file refused before any request")
+	}
+	// a NUL byte under a directory missing, where a look tells the file missing: refused before any
+	// request, and before the directory is created for it
+	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": "missing/a\x00b"}, true,
+		`local_path "missing/a\x00b" holds a NUL byte, which no file name can hold.`)
+	if tt.fake.count() != requests {
+		t.Error("expected a NUL byte refused before any request")
+	}
+	if _, err := os.Lstat(filepath.Join(tt.local, "missing")); err == nil {
+		t.Error("expected no directory created for a path holding a NUL byte")
 	}
 	if err := os.Chmod(local, 0o600); err != nil {
 		t.Fatal(err)

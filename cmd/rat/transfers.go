@@ -277,7 +277,9 @@ func (t *transfers) call(ctx context.Context, tool string, arguments json.RawMes
 	return t.await(ctx, j, called)
 }
 
-// request reads the call of tool with arguments, or tells why it is refused.
+// request reads the call of tool with arguments, or tells why it is refused. A path holding a NUL
+// byte, which no file name can hold, is refused here, before any request or directory created for
+// it, as ratd refuses one.
 func (t *transfers) request(tool string, arguments json.RawMessage) (transferRequest, string) {
 	q := transferRequest{tool: tool}
 	var err error
@@ -295,6 +297,10 @@ func (t *transfers) request(tool string, arguments json.RawMessage) (transferReq
 		return q, fmt.Sprintf("Invalid arguments: %v.", err)
 	case q.local == "" || q.remote == "":
 		return q, "local_path and remote_path are both required."
+	case strings.ContainsRune(q.local, 0):
+		return q, fmt.Sprintf("local_path %q holds a NUL byte, which no file name can hold.", q.local)
+	case strings.ContainsRune(q.remote, 0):
+		return q, fmt.Sprintf("remote_path %q holds a NUL byte, which no file name can hold.", q.remote)
 	case !filepath.IsLocal(q.local):
 		return q, fmt.Sprintf("local_path %q is not within %s: give a path relative to it, without going up (..).",
 			q.local, t.dir)
