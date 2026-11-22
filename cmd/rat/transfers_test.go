@@ -852,6 +852,66 @@ func TestTransferRate(t *testing.T) {
 	}
 }
 
+// TestTransferPrepareHeld guards a transfer whose local side does not answer (a stale NFS mount in
+// the transfers directory): it holds that transfer alone, its call returning once it waited,
+// telling its progress, while a call for other paths goes on, rather than every transfer call
+// held behind it; once the local side answers, the transfer goes on.
+func TestTransferPrepareHeld(t *testing.T) {
+	shortWait(t, 300*time.Millisecond)
+	held := make(chan struct{})
+	release := sync.OnceFunc(func() { close(held) })
+	entered := make(chan struct{}, 1)
+	// set before rat starts, and restored once it stopped (cleanups run in reverse order)
+	hook := preparing
+	preparing = func(q transferRequest) {
+		if q.local == "held.bin" {
+			select {
+			case entered <- struct{}{}:
+			default:
+			}
+			<-held
+		}
+	}
+	t.Cleanup(func() { preparing = hook })
+	tt := startTransfers(t)
+	// released before rat stops, which waits for its transfers
+	t.Cleanup(release)
+	remote := filepath.Join(tt.remote, "data.bin")
+	randomFile(t, remote, 1<<10, 0o644)
+	heldArgs := map[string]any{"remote_path": remote, "local_path": "held.bin"}
+	done := make(chan string, 1)
+	go func() {
+		result, err := tt.session.CallTool(context.Background(), &mcp.CallToolParams{Name: downloadTool,
+			Arguments: heldArgs})
+		switch {
+		case err != nil:
+			done <- err.Error()
+		case len(result.Content) == 0:
+			done <- "no content"
+		default:
+			text, _ := result.Content[0].(*mcp.TextContent)
+			done <- text.Text
+		}
+	}()
+	<-entered
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if text, isError := tt.callContext(t, ctx, downloadTool, map[string]any{"remote_path": remote,
+		"local_path": "free.bin"}); isError || !strings.HasPrefix(text, "Downloaded ") {
+		t.Errorf("expected a call for other paths to go on, got %q", text)
+	}
+	select {
+	case text := <-done:
+		if !strings.HasPrefix(text, "Still copying "+remote+" to held.bin: 0 B") {
+			t.Errorf("expected the held call to tell its progress once it waited, got %q", text)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("the held call did not return once it waited")
+	}
+	release()
+	tt.expect(t, downloadTool, heldArgs, false, "Downloaded "+remote+" to held.bin (1 KiB): created.")
+}
+
 // TestTransferEndedOtherSource guards a transfer that ended, its outcome not told yet, met by a call
 // to its destination from another source, or by a cancel naming one (an agent after a context
 // compaction): told how it ended, and forgotten, the next call starting the transfer asked, rather

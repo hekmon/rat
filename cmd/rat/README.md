@@ -75,7 +75,11 @@ not fail the startup of the harness, the first request tells.
   transfers under way, an upload sent whole included, whose answer a cancel waits for but nobody
   would read then, canceled or not: the context of `connect.Upload` cuts it whatever was sent,
   apart from the cancel of the agent, a context being done once. It waits for them to remove
-  their temporary files; an upload ratd already received whole may still be written.
+  their temporary files; an upload ratd already received whole may still be written. A file
+  system that stops answering in the transfers directory (a stale NFS mount) holds the transfers
+  reading or writing it, and so the stop, until it answers: no call waits for it longer than its
+  wait, and the transfers of other paths go on, each job checking its local side outside the lock
+  of the jobs.
 
 ### Cancellation
 

@@ -555,7 +555,8 @@ transfer. In the harness, with its client directory:
 - **Long transfers.** A call waits 50 seconds at most; a longer copy goes on in rat, the agent told
   its progress, and finds it again by calling with the same paths. Stopping rat (the harness
   quitting) or ratd cuts the transfers under way, removing their temporary files: only an upload
-  ratd already received whole may still be written.
+  ratd already received whole may still be written. A transfers directory on a file system that
+  stops answering (a stale NFS mount) holds the exit of rat until it answers.
 - **Through the same door.** Transfers reach the port of ratd with the same client certificate,
   through the proxy of the environment if any: nothing else to open. Both sides log one line per
   transfer (the paths and the size, never the content), and `systemctl status` counts the

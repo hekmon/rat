@@ -303,10 +303,10 @@ func (t *transfers) request(tool string, arguments json.RawMessage) (transferReq
 	return q, ""
 }
 
-// join returns the job of q: the one under way for its destination, or a new one, started once
-// the local file checked. Refused: another source to the same destination, and what the local
-// side refuses before any request (see prepare). A job of another source that ended, its outcome
-// not told yet, is told instead, and forgotten: the next call starts the transfer asked.
+// join returns the job of q: the one under way for its destination, or a new one, which checks the
+// local file first (see run). Refused: another source to the same destination. A job of another
+// source that ended, its outcome not told yet, is told instead, and forgotten: the next call
+// starts the transfer asked.
 func (t *transfers) join(q transferRequest) (*job, string) {
 	t.jobsMu.Lock()
 	defer t.jobsMu.Unlock()
@@ -321,17 +321,17 @@ func (t *transfers) join(q transferRequest) (*job, string) {
 		return nil, fmt.Sprintf("A transfer to %s from %s is under way: wait for it with its paths, or stop it with "+
 			"cancel.", q.destination(), j.request.source())
 	}
-	source, refused := t.prepare(q)
-	if refused != "" {
-		return nil, refused
-	}
 	ctx, cancel := context.WithCancel(t.ctx)
 	j := &job{request: q, started: time.Now(), cancel: cancel, done: make(chan struct{})}
 	t.jobs[q.key()] = j
 	t.running.Add(1)
-	go t.run(ctx, j, source)
+	go t.run(ctx, j)
 	return j, ""
 }
+
+// preparing is called with the request of a job as it checks its local side (see prepare): a hook
+// for tests, which hold it as a file system not answering would.
+var preparing = func(transferRequest) {}
 
 // prepare checks the local side of q before any request: for an upload, the file to send, opened
 // and returned; for a download, the file to write, refused if it exists without overwrite. A
@@ -625,16 +625,25 @@ func (j *job) hasEnded() bool {
 	}
 }
 
-// run runs j, the transfer of source for an upload, until it ends or ctx is done, and sets its
-// outcome.
-func (t *transfers) run(ctx context.Context, j *job, source *os.File) {
+// run runs j until it ends or ctx is done, and sets its outcome: its local side checked first (see
+// prepare), what it refuses ending j before any request.
+func (t *transfers) run(ctx context.Context, j *job) {
 	defer t.running.Done()
 	defer j.cancel()
+	// Checked here, rather than by the call starting j, under the lock of the jobs: a file system
+	// not answering (a stale NFS mount in the transfers directory) holds j alone, its call telling
+	// once it waited that nothing moved, rather than every transfer call, and the stop of rat
+	// waiting for them.
+	preparing(j.request)
+	source, refused := t.prepare(j.request)
 	var text string
 	var isError, canceled bool
-	if j.request.upload() {
+	switch {
+	case refused != "":
+		text, isError = refused, true
+	case j.request.upload():
 		text, isError, canceled = t.runUpload(ctx, j, source)
-	} else {
+	default:
 		text, isError, canceled = t.runDownload(ctx, j)
 	}
 	j.text, j.isError, j.canceled, j.ended = text, isError, canceled, time.Now()
