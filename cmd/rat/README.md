@@ -133,19 +133,22 @@ directory must be one of its own, as a new `.git/hooks/pre-commit` in a project 
 
 **Jobs, found by their paths.** A transfer can outlast a call, which several harnesses cut at 60
 seconds: it runs in rat, as a job kept in memory. A call waits for it 50 seconds at most, as
-`wait_window` does at most; a longer one goes on, the call telling its progress (the bytes of
-the size, the rate over the last 30 seconds, a rounded time left, or that nothing moved), for
-the agent to wait its own way (a `sleep` in its shell) or to do something else. A job is
-identified by its destination, which one transfer at a time writes, and found by its paths, as
-terminals are by name: the same call again waits for the rest, or tells how it ended, once;
-another source to the same destination is refused while it runs, and once it ended, its outcome
-not told yet, the call tells that outcome, as a cancel naming another source does, and forgets
-the job: the next call starts the transfer asked, the agent knowing what the first one wrote
-(after a context compaction, for one). Canceling a call (the harness giving up on it) ends its
-wait, not the transfer. `cancel` with the same paths stops it, leaving the destination as it
-was, decided at one point: before the last chunk of an upload (past it, ratd may be writing the
-file, and the call tells its answer, or that it was lost, the file possibly written), before a
-download is put in place.
+`wait_window` does at most; a longer one goes on, the call telling its progress (the bytes of the
+size, the rate over the last 30 seconds, a rounded time left, or that nothing moved), for the
+agent to wait its own way (a `sleep` in its shell) or to do something else. A job is identified
+by its destination, which one transfer at a time writes, and found by its paths, as terminals are
+by name: the same call again waits for the rest, or tells how it ended, once; another source to
+the same destination, or the same one with another overwrite, is refused while it runs, and once
+it ended, its outcome not told yet, the call tells that outcome, as a cancel naming another
+source does, and forgets the job: the next call starts the transfer asked, the agent knowing what
+the first one wrote (after a context compaction, for one). Paths are cleaned as a call is read,
+the remote one lexically (`path.Clean`, `~/` kept): its spellings with a doubled slash, a dot or
+a parent make one job, but `~/x` and the absolute path it stands for stay two, as do two paths
+through a link of ratd's machine, which rat can not resolve. Canceling a call (the harness giving
+up on it) ends its wait, not the transfer. `cancel` with the same paths stops it, leaving the
+destination as it was, decided at one point: before the last chunk of an upload (past it, ratd
+may be writing the file, and the call tells its answer, or that it was lost, the file possibly
+written), before a download is put in place.
 Rejected: job identifiers, with tools to wait for, list and cancel jobs, which a context
 compaction loses, more tools for small models to juggle; a parameter for the wait, or a size
 choosing between waiting and a job, the speed of the link being unknown; MCP tasks (experimental

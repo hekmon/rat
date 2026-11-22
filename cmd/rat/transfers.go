@@ -12,6 +12,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -135,9 +136,20 @@ func (q transferRequest) destination() string {
 }
 
 // key identifies the transfer of the request: its destination, which one transfer at a time
-// writes.
+// writes, its paths cleaned as they were read (see request).
 func (q transferRequest) key() string {
 	return q.tool + "\x00" + q.destination()
+}
+
+// cleanRemote returns remote, a path of ratd's machine, lexically clean, its ~ kept: with path,
+// not filepath, for a path of that machine, rat running on Windows too. Its spellings (a doubled
+// slash, a dot, a parent) then make one transfer; what ~ stands for, and the links of that
+// machine, rat can not know, ~/x and its absolute path staying two.
+func cleanRemote(remote string) string {
+	if rest, ok := strings.CutPrefix(remote, "~/"); ok {
+		return "~/" + path.Clean(rest)
+	}
+	return path.Clean(remote)
 }
 
 // transfers runs the file transfers of rat. Each transfer is a job, identified by its destination,
@@ -279,7 +291,7 @@ func (t *transfers) call(ctx context.Context, tool string, arguments json.RawMes
 
 // request reads the call of tool with arguments, or tells why it is refused. A path holding a NUL
 // byte, which no file name can hold, is refused here, before any request or directory created for
-// it, as ratd refuses one.
+// it, as ratd refuses one. Both paths are cleaned, the remote one lexically (see cleanRemote).
 func (t *transfers) request(tool string, arguments json.RawMessage) (transferRequest, string) {
 	q := transferRequest{tool: tool}
 	var err error
@@ -305,24 +317,34 @@ func (t *transfers) request(tool string, arguments json.RawMessage) (transferReq
 		return q, fmt.Sprintf("local_path %q is not within %s: give a path relative to it, without going up (..).",
 			q.local, t.dir)
 	}
-	q.local = filepath.Clean(q.local)
+	q.local, q.remote = filepath.Clean(q.local), cleanRemote(q.remote)
 	return q, ""
 }
 
-// join returns the job of q: the one under way for its destination, or a new one, which checks the
-// local file first (see run). Refused: another source to the same destination. A job of another
-// source that ended, its outcome not told yet, is told instead, and forgotten: the next call
-// starts the transfer asked.
+// join returns the job of q: the one under way for its destination, of the same request (its
+// source and overwrite), or a new one, which checks the local file first (see run). Refused:
+// another source to the same destination, or the same one with another overwrite, while it runs.
+// One that ended, its outcome not told yet, is told instead, and forgotten: the next call starts
+// the transfer asked, rather than told the outcome of another request as its own (a file existing,
+// refused without overwrite, to a call setting it).
 func (t *transfers) join(q transferRequest) (*job, string) {
 	t.jobsMu.Lock()
 	defer t.jobsMu.Unlock()
 	if j := t.jobs[q.key()]; j != nil {
+		sameSource := j.request.source() == q.source()
 		switch {
-		case j.request.source() == q.source():
+		case sameSource && j.request.overwrite == q.overwrite:
 			return j, ""
+		case j.hasEnded() && sameSource:
+			delete(t.jobs, q.key())
+			return nil, endedText(j) + fmt.Sprintf(" Nothing was copied with overwrite %v: call again to copy it.",
+				q.overwrite)
 		case j.hasEnded():
 			delete(t.jobs, q.key())
 			return nil, endedText(j) + fmt.Sprintf(" Nothing was copied from %s: call again to copy it.", q.source())
+		case sameSource:
+			return nil, fmt.Sprintf("A transfer to %s from %s is under way with overwrite %v: wait for it with its "+
+				"paths and that overwrite, or stop it with cancel.", q.destination(), q.source(), j.request.overwrite)
 		}
 		return nil, fmt.Sprintf("A transfer to %s from %s is under way: wait for it with its paths, or stop it with "+
 			"cancel.", q.destination(), j.request.source())

@@ -233,15 +233,16 @@ func TestUploadNameNotUTF8(t *testing.T) {
 }
 
 // TestUploadRefused guards what ratd refuses from the headers of an upload alone, telling why,
-// before the client sends any byte: a missing, undecodable or relative path, permission bits or an
-// overwrite it can not read, a body declared other than bytes, an existing file without
-// overwrite, a directory, a FIFO, a symbolic link (telling where it leads, even nowhere), a path
-// under a file, a denied permission naming the user, and a name too long, though its temporary
-// file, named to fit, could take the bytes, even under a directory to create, which it names, or
-// of a directory to create, naming those created before it, a NUL byte in the path, no directory
-// created for it, and a link leading nowhere or looping where a directory is to be created,
-// mistakes of the client (409) rather than of ratd. The file existing stays as it was, and no
-// temporary file is left. The endpoints answer their method only.
+// before the client sends any byte: a missing, undecodable or relative path, permission bits or
+// an overwrite it can not read, a body declared other than bytes, an existing file without
+// overwrite, a directory, a FIFO, a symbolic link (telling where it leads, even nowhere, or that
+// it loops), a path under a file, a denied permission naming the user, and a name too long,
+// though its temporary file, named to fit, could take the bytes, even under a directory to
+// create, which it names, or of a directory to create, naming those created before it, a NUL
+// byte in the path, no directory created for it, and a link leading nowhere or looping where a
+// directory is to be created, mistakes of the client (409) rather than of ratd. The file
+// existing stays as it was, and no temporary file is left. The endpoints answer their method
+// only.
 func TestUploadRefused(t *testing.T) {
 	r, client, home := transferRatd(t)
 	file := filepath.Join(home, "file")
@@ -331,6 +332,8 @@ func TestUploadRefused(t *testing.T) {
 			"Creating " + dangling + " failed: file exists."},
 		{"under a link loop", loop + "/x.bin", false, nil, http.StatusConflict,
 			"Creating " + loop + " failed: too many levels of symbolic links."},
+		{"link looping", loop, true, nil, http.StatusConflict,
+			loop + " is a symbolic link to " + loop + ", a loop of links leading to no file."},
 	} {
 		// no permission is denied to root
 		if tc.status == http.StatusForbidden && os.Geteuid() == 0 {
@@ -561,8 +564,9 @@ func TestDownload(t *testing.T) {
 
 // TestDownloadRefused guards what ratd refuses to download, telling why: a relative path, a
 // missing file, a directory (pointing to an archive), a FIFO (without blocking on it), a device, a
-// symbolic link (telling where it leads, even nowhere), a denied permission naming the user, and a
-// name too long or a NUL byte in the path, mistakes of the client (400) rather than of ratd.
+// symbolic link (telling where it leads, even nowhere, or that it loops), a denied permission naming
+// the user, and a name too long or a NUL byte in the path, mistakes of the client (400) rather than
+// of ratd.
 func TestDownloadRefused(t *testing.T) {
 	r, client, home := transferRatd(t)
 	file := filepath.Join(home, "file")
@@ -578,6 +582,10 @@ func TestDownloadRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.Symlink("missing", dangling); err != nil {
+		t.Fatal(err)
+	}
+	loop := filepath.Join(home, "loop")
+	if err := os.Symlink("loop", loop); err != nil {
 		t.Fatal(err)
 	}
 	locked := filepath.Join(home, "locked")
@@ -604,6 +612,8 @@ func TestDownloadRefused(t *testing.T) {
 			link + " is a symbolic link to " + file + ", which transfers do not follow: use that path instead."},
 		{"dangling link", dangling, http.StatusConflict,
 			dangling + " is a symbolic link to " + missing + ", which does not exist: there is no file to download."},
+		{"link looping", loop, http.StatusConflict,
+			loop + " is a symbolic link to " + loop + ", a loop of links leading to no file."},
 		{"permission denied", locked, http.StatusForbidden,
 			"Permission denied: " + locked + " can not be read by " + me.Username + ", the user the terminals run as."},
 		{"name too long", tooLong, http.StatusBadRequest, "Reading " + tooLong + " failed: file name too long."},

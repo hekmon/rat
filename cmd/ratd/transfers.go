@@ -208,7 +208,11 @@ func linkRefusal(path string, way direction) *result {
 	if !filepath.IsAbs(target) {
 		target = filepath.Join(filepath.Dir(path), target)
 	}
+	// links looping: EvalSymlinks tells it too many links, the system ELOOP
+	_, statErr := os.Stat(path)
 	switch {
+	case errors.Is(statErr, syscall.ELOOP):
+		r.text = fmt.Sprintf("%s is a symbolic link to %s, a loop of links leading to no file.", path, target)
 	case !errors.Is(err, fs.ErrNotExist):
 		r.text = fmt.Sprintf("%s is a symbolic link to %s, which transfers do not follow: use that path instead.",
 			path, target)
