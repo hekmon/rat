@@ -617,9 +617,11 @@ func canceledText(j *job) string {
 }
 
 // failureText tells j failing with err: its answer lost once all of it was sent, ratd possibly
-// having written it, a cancel coming then too late to cut it; canceled (whatever the error the cut
-// gave); refused or failed by ratd (its sentence); ratd older than the transfers or not reached;
-// the file changed while read, or failing to read, as the system tells it; the copy cut.
+// having written it, a cancel coming then too late to cut it; refused or failed by ratd (its
+// sentence), an answer of ratd, which a cancel never brings, cutting the connection first: a cancel
+// came too late then; canceled (whatever the error the cut gave); ratd older than the transfers or
+// not reached; the file changed while read, or failing to read, as the system tells it; the copy
+// cut.
 func (t *transfers) failureText(j *job, err error) (string, bool, bool) {
 	var refused *connect.Refusal
 	var failed *connect.TransferError
@@ -628,10 +630,10 @@ func (t *transfers) failureText(j *job, err error) (string, bool, bool) {
 		return fmt.Sprintf("The answer of ratd to the copy of %[1]s to %[2]s was lost once all of it was sent "+
 			"(%[3]v): %[2]s may be written or not. Check it before using it, or call %[4]s again with overwrite.",
 			j.request.source(), j.request.destination(), failed.Reason, j.request.tool), true, false
-	case j.cancelWasAsked():
-		return canceledText(j), false, true
 	case errors.As(err, &refused):
 		return refused.Text, true, false
+	case j.cancelWasAsked():
+		return canceledText(j), false, true
 	case errors.Is(err, connect.ErrNoTransfers):
 		return fmt.Sprintf("The ratd at %s is older than this rat and serves no file transfers: whoever runs it must "+
 			"upgrade it.", t.server), true, false

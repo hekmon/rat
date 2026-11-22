@@ -554,6 +554,37 @@ func TestUploadFileReadFailed(t *testing.T) {
 	}
 }
 
+// TestUploadCancelTooLateRefused guards a cancel coming once all of an upload was sent, too late to
+// cut it, ratd then failing the upload (the fake failing to write into a directory that does not
+// exist, 500): told too late, with the sentence of ratd, rather than canceled, its reason lost.
+func TestUploadCancelTooLateRefused(t *testing.T) {
+	shortWait(t, time.Second)
+	tt := startTransfers(t)
+	stall := make(chan struct{})
+	release := sync.OnceFunc(func() { close(stall) })
+	t.Cleanup(release)
+	// the fake reads a first chunk, then stalls, the rest in the buffers of the connection; once
+	// released, it fails to write the file
+	tt.fake.set(func(f *fakeTransfers) { f.stall = stall })
+	randomFile(t, filepath.Join(tt.local, "up.bin"), 64<<10, 0o644)
+	remote := filepath.Join(tt.remote, "missing", "up.bin")
+	args := map[string]any{"local_path": "up.bin", "remote_path": remote}
+	tt.expect(t, uploadTool, args, false, "Still copying up.bin to "+remote+": 64 KiB of 64 KiB")
+	// sent whole: the cancel comes too late, ratd failing the upload meanwhile
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		release()
+	}()
+	args["cancel"] = true
+	text := tt.expect(t, uploadTool, args, true, "Too late to cancel: ")
+	if !strings.HasSuffix(text, "missing/up.bin: no such file or directory") {
+		t.Errorf("expected the sentence of ratd, got %q", text)
+	}
+	if _, err := os.Lstat(remote); err == nil {
+		t.Error("expected no remote file written")
+	}
+}
+
 // TestUploadFileCut guards an upload whose connection is lost midway, once ratd gave its go-ahead:
 // told cut, with the reason, rather than ratd unreachable, the remote file as it was.
 func TestUploadFileCut(t *testing.T) {
