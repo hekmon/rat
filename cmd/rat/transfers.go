@@ -521,15 +521,19 @@ func (j *job) count(n int) {
 	j.samples = append(j.samples, sample{at: now, bytes: moved})
 }
 
-// rate returns the bytes moved per second over rateWindow, or since the start.
+// rate returns the bytes moved per second over about rateWindow, as the samples of j tell it: from
+// the oldest one within rateWindow, since its first bytes for a transfer younger; from the last one
+// when none is within it, near nothing for a transfer stalled since, rather than its average since
+// its start.
 func (j *job) rate(now time.Time) float64 {
 	moved := j.moved.Load()
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	// the start, with no sample: nothing moved then
 	from := sample{at: j.started}
 	for _, s := range j.samples {
+		from = s
 		if now.Sub(s.at) <= rateWindow {
-			from = s
 			break
 		}
 	}

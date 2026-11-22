@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -669,6 +670,34 @@ func TestTransferLong(t *testing.T) {
 	}
 	expectContent(t, filepath.Join(tt.local, "big.bin"), content, 0o644&^umask())
 	tt.expect(t, downloadTool, args, true, "big.bin exists: set overwrite to replace it.")
+}
+
+// TestTransferRate guards the rate a progress tells: over about rateWindow for a transfer that kept
+// moving, since its first bytes for one younger, near nothing for one stalled for longer than
+// rateWindow rather than its average since its start (which a transfer moving at the start of a
+// wait, then stalled, was told, with a time left), and nothing before any byte moved.
+func TestTransferRate(t *testing.T) {
+	now := time.Now()
+	ago := func(seconds int) time.Time { return now.Add(-time.Duration(seconds) * time.Second) }
+	for _, tc := range []struct {
+		what    string
+		started time.Time
+		samples []sample
+		moved   int64
+		rate    float64
+	}{
+		{"kept moving", ago(120), []sample{{ago(60), 10 << 20}, {ago(40), 20 << 20}, {ago(25), 30 << 20},
+			{ago(5), 40 << 20}}, 42 << 20, float64(12<<20) / 25},
+		{"younger", ago(12), []sample{{ago(10), 1 << 20}, {ago(1), 12 << 20}}, 12 << 20, float64(11<<20) / 10},
+		{"stalled", ago(120), []sample{{ago(100), 1 << 20}, {ago(40), 60 << 20}}, 60 << 20, 0},
+		{"nothing moved", ago(10), nil, 0, 0},
+	} {
+		j := &job{started: tc.started, samples: tc.samples}
+		j.moved.Store(tc.moved)
+		if got := j.rate(now); math.Abs(got-tc.rate) > 1e-6 {
+			t.Errorf("%s: expected %.0f B/s, got %.0f", tc.what, tc.rate, got)
+		}
+	}
 }
 
 // TestTransferCancel guards a transfer stalling, then canceled: the call tells nothing moved; a
