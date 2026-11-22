@@ -343,6 +343,10 @@ var preparing = func(transferRequest) {}
 // place: a hook for tests, which cancel it there, where a cancel is still in time.
 var downloaded = func(*job) {}
 
+// uploadLooked is called with the local path of an upload once looked at, before it is opened: a
+// hook for tests, which replace the file there.
+var uploadLooked = func(string) {}
+
 // prepare checks the local side of q before any request: for an upload, the file to send, opened
 // and returned; for a download, the file to write, refused if it exists without overwrite. A
 // symbolic link at the end of the local path is refused, as ratd refuses one at the end of the
@@ -356,6 +360,7 @@ func (t *transfers) prepare(q transferRequest) (*os.File, string) {
 		if refused := t.checkLocal(q.local, info, q); refused != "" {
 			return nil, refused
 		}
+		uploadLooked(q.local)
 		// without blocking: a FIFO replacing the file looked at would block until written to
 		file, err := t.root.OpenFile(q.local, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 		if err != nil {

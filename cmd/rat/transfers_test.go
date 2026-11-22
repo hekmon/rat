@@ -730,6 +730,52 @@ func TestDownloadFileLongName(t *testing.T) {
 	expectNoTemporary(t, tt.local)
 }
 
+// TestDownloadFileAppearedAtLink guards a local file appearing at the destination of a download as
+// its temporary file is linked there, after the last look: the link fails, where a rename would
+// replace the file, and the file found then is not replaced, kept as it appeared.
+func TestDownloadFileAppearedAtLink(t *testing.T) {
+	// set before rat starts, and restored once it stopped (cleanups run in reverse order)
+	link := linkLocal
+	linkLocal = func(root *os.Root, oldname, newname string) error {
+		if err := root.WriteFile(newname, []byte("appeared"), 0o600); err != nil {
+			t.Error(err)
+		}
+		return link(root, oldname, newname)
+	}
+	t.Cleanup(func() { linkLocal = link })
+	tt := startTransfers(t)
+	remote := filepath.Join(tt.remote, "app.bin")
+	randomFile(t, remote, 1<<10, 0o644)
+	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": "x.bin"}, true,
+		"x.bin exists: set overwrite to replace it.")
+	expectContent(t, filepath.Join(tt.local, "x.bin"), []byte("appeared"), 0o600)
+	expectNoTemporary(t, tt.local)
+}
+
+// TestUploadFileReplacedBeforeOpen guards a local file replaced between the look of an upload and
+// its open (a file renamed over it): refused, telling it changed, before any request, rather than
+// sending another file than the one looked at.
+func TestUploadFileReplacedBeforeOpen(t *testing.T) {
+	// set before rat starts, and restored once it stopped (cleanups run in reverse order)
+	hook := uploadLooked
+	var replace func(string)
+	uploadLooked = func(local string) { replace(local) }
+	t.Cleanup(func() { uploadLooked = hook })
+	tt := startTransfers(t)
+	randomFile(t, filepath.Join(tt.local, "up.bin"), 1<<10, 0o644)
+	randomFile(t, filepath.Join(tt.local, "other.bin"), 1<<10, 0o644)
+	replace = func(string) {
+		if err := os.Rename(filepath.Join(tt.local, "other.bin"), filepath.Join(tt.local, "up.bin")); err != nil {
+			t.Error(err)
+		}
+	}
+	tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": filepath.Join(tt.remote, "up.bin")},
+		true, "up.bin changed while it was opened: upload it again.")
+	if n := tt.fake.count(); n != 0 {
+		t.Errorf("expected no request, %d made", n)
+	}
+}
+
 // TestDownloadFileWithoutHardLinks guards a download to a file system without hard links, whatever
 // the error its link gives (FAT, some network ones, FUSE without link as sshfs): the file is
 // renamed into place instead. Windows gives other errors (see link_windows.go).

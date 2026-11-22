@@ -390,8 +390,8 @@ func TestUploadCut(t *testing.T) {
 }
 
 // TestUploadAppeared guards a file appearing at the path of an upload while its bytes are sent:
-// without overwrite, it is not replaced (412), where a rename would have; with overwrite, it is,
-// keeping its mode.
+// without overwrite, it is not replaced (412), found by the look before placing; with overwrite,
+// it is, keeping its mode. TestUploadAppearedAtLink guards the window after that look.
 func TestUploadAppeared(t *testing.T) {
 	r, client, home := transferRatd(t)
 	path := filepath.Join(home, "app.bin")
@@ -414,6 +414,29 @@ func TestUploadAppeared(t *testing.T) {
 		t.Errorf("appeared with overwrite: expected 204 keeping its mode, got %v, %v", resp, err)
 	}
 	expectFile(t, path, "uploaded", 0o600)
+	expectNoTemporary(t, home)
+}
+
+// TestUploadAppearedAtLink guards a file appearing at the path of an upload after the last look
+// before placing it, as the temporary file is linked there: the link fails, where a rename would
+// replace the file, and the file found then is not replaced (412), kept as it appeared.
+func TestUploadAppearedAtLink(t *testing.T) {
+	// set before ratd serves, and restored once it stopped (cleanups run in reverse order)
+	link := linkFile
+	linkFile = func(oldname, newname string) error {
+		if err := os.WriteFile(newname, []byte("appeared"), 0o600); err != nil {
+			t.Error(err)
+		}
+		return link(oldname, newname)
+	}
+	t.Cleanup(func() { linkFile = link })
+	r, client, home := transferRatd(t)
+	path := filepath.Join(home, "app.bin")
+	resp, body, err := sendTransfer(client, newUpload(t, r.addr, path, &fileBody{content: []byte("uploaded")}, "0644",
+		false))
+	expectRefused(t, "appeared at the link", resp, body, err, http.StatusPreconditionFailed,
+		path+" exists: set overwrite to replace it.")
+	expectFile(t, path, "appeared", 0o600)
 	expectNoTemporary(t, home)
 }
 
