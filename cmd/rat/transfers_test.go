@@ -537,7 +537,9 @@ func TestUploadFileAnswerLost(t *testing.T) {
 
 // TestUploadCancelTooLateWritten guards a cancel coming once all of an upload was sent, too late to
 // cut it, ratd then writing the file and answering: the copy told done behind "Too late to
-// cancel", where an upload failing tells its failure first (TestUploadCancelTooLateRefused).
+// cancel", where an upload failing tells its failure first (TestUploadCancelTooLateRefused). The
+// progress of the upload read whole still offers the cancel: the bytes read do not tell the end of
+// the body, which connect decides (a link stalled on the last chunk leaves it untold).
 func TestUploadCancelTooLateWritten(t *testing.T) {
 	shortWait(t, time.Second)
 	tt := startTransfers(t)
@@ -549,8 +551,10 @@ func TestUploadCancelTooLateWritten(t *testing.T) {
 	randomFile(t, filepath.Join(tt.local, "up.bin"), 64<<10, 0o644)
 	remote := filepath.Join(tt.remote, "up.bin")
 	args := map[string]any{"local_path": "up.bin", "remote_path": remote}
-	tt.expect(t, uploadTool, args, false, "Still copying up.bin to "+remote+": all of it sent (64 KiB), waiting for the "+
-		"answer of ratd. Call upload_file again with the same paths to know how it ended; a cancel comes too late now.")
+	text := tt.expect(t, uploadTool, args, false, "Still copying up.bin to "+remote+": 64 KiB of 64 KiB")
+	if !strings.HasSuffix(text, "or with cancel to stop it.") {
+		t.Errorf("expected the progress of an upload read whole to offer the cancel, got %q", text)
+	}
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 		release()
@@ -574,8 +578,7 @@ func TestUploadCancelTooLateAnswerLost(t *testing.T) {
 	randomFile(t, filepath.Join(tt.local, "up.bin"), 64<<10, 0o644)
 	remote := filepath.Join(tt.remote, "up.bin")
 	args := map[string]any{"local_path": "up.bin", "remote_path": remote}
-	tt.expect(t, uploadTool, args, false, "Still copying up.bin to "+remote+": all of it sent (64 KiB), waiting for the "+
-		"answer of ratd. Call upload_file again with the same paths to know how it ended; a cancel comes too late now.")
+	tt.expect(t, uploadTool, args, false, "Still copying up.bin to "+remote+": 64 KiB of 64 KiB")
 	// sent whole: the cancel comes too late, ratd answering meanwhile, its answer lost
 	go func() {
 		time.Sleep(200 * time.Millisecond)
@@ -630,8 +633,7 @@ func TestUploadCancelTooLateRefused(t *testing.T) {
 	randomFile(t, filepath.Join(tt.local, "up.bin"), 64<<10, 0o644)
 	remote := filepath.Join(tt.remote, "missing", "up.bin")
 	args := map[string]any{"local_path": "up.bin", "remote_path": remote}
-	tt.expect(t, uploadTool, args, false, "Still copying up.bin to "+remote+": all of it sent (64 KiB), waiting for the "+
-		"answer of ratd. Call upload_file again with the same paths to know how it ended; a cancel comes too late now.")
+	tt.expect(t, uploadTool, args, false, "Still copying up.bin to "+remote+": 64 KiB of 64 KiB")
 	// sent whole: the cancel comes too late, ratd failing the upload meanwhile
 	go func() {
 		time.Sleep(200 * time.Millisecond)

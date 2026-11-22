@@ -960,12 +960,10 @@ func (t *transfers) place(tmp, local string, overwrite bool) (replaced bool, kep
 // moved: the bytes moved of the size, the rate and the time left, or that nothing moved.
 func (t *transfers) progressText(j *job, before int64) string {
 	moved, size := j.moved.Load(), j.size.Load()
-	if j.request.upload() && size > 0 && moved >= size {
-		// sent whole: ratd may be writing the file, and a cancel comes too late (see connect.Upload)
-		return fmt.Sprintf("Still copying %s to %s: all of it sent (%s), waiting for the answer of ratd. Call %s "+
-			"again with the same paths to know how it ended; a cancel comes too late now.", j.request.source(),
-			j.request.destination(), sizeText(size), j.request.tool)
-	}
+	// An upload read whole is not told sent whole, a cancel too late: connect decides that as it
+	// tells the end of the body, under its lock, which the bytes read do not show (a link stalled on
+	// the last chunk, an empty file waiting for the go-ahead). The cancel offered may then come too
+	// late, which its call tells, with how the transfer ended.
 	text := fmt.Sprintf("Still copying %s to %s: %s", j.request.source(), j.request.destination(), sizeText(moved))
 	if size > 0 {
 		text += " of " + sizeText(size)
