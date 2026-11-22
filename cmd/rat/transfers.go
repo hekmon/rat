@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -56,6 +57,12 @@ func replaceCopyHints(body []byte) []byte {
 // waits (tools.MaxWaitSeconds), several harnesses cutting a tool call at 60 seconds. A longer
 // transfer goes on, the call telling its progress. A variable for tests.
 var transferWait = time.Duration(tools.MaxWaitSeconds) * time.Second
+
+// modesTold tells whether a transfer replacing a file tells the agent it kept permissions other
+// than those of its source: not on Windows, whose files have no permission bits (Go shows 0666, or
+// 0444 for a read-only file), which almost every file of the other side differs from. A variable
+// for tests.
+var modesTold = runtime.GOOS != "windows"
 
 const (
 	// rateWindow is how far back the rate of a transfer is measured: recent enough for a link that
@@ -694,7 +701,7 @@ func (t *transfers) runUpload(ctx context.Context, j *job, source *os.File) (str
 		how = "replaced"
 	}
 	text := fmt.Sprintf("Uploaded %s to %s (%s): %s.", j.request.local, j.request.remote, sizeText(up.Sent), how)
-	if up.Replaced && up.Mode != info.Mode().Perm() {
+	if modesTold && up.Replaced && up.Mode != info.Mode().Perm() {
 		text += fmt.Sprintf(" It kept its permissions (%s), not those of your file (%s): change them in a terminal "+
 			"(chmod) if it needs yours.", connect.FormatMode(up.Mode), connect.FormatMode(info.Mode()))
 	}
@@ -780,7 +787,7 @@ func (t *transfers) runDownload(ctx context.Context, j *job) (string, bool, bool
 		how = "replaced"
 	}
 	text := fmt.Sprintf("Downloaded %s to %s (%s): %s.", j.request.remote, local, sizeText(j.moved.Load()), how)
-	if replaced && kept != download.Mode {
+	if modesTold && replaced && kept != download.Mode {
 		text += fmt.Sprintf(" It kept its permissions (%s), not those of the remote file (%s).",
 			connect.FormatMode(kept), connect.FormatMode(download.Mode))
 	}

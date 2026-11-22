@@ -154,7 +154,9 @@ telling where it leads; `os.Root` ignores `O_NOFOLLOW`, so rat looks at the file
 `Root.Lstat`, then checks the file it opened is the one it looked at. An upload is stamped when
 opened and once read (`connect.Upload`): a file changing meanwhile fails the transfer, ratd
 writing nothing. A replaced file keeping permissions other than those of its source is told, as
-an agent setting overwrite may expect a chmod in the same call.
+an agent setting overwrite may expect a chmod in the same call, but on Windows, whose files have
+no permission bits (Go shows 0666, or 0444 for a read-only file): almost every replace would tell
+it.
 
 **The texts of ratd name the tools.** The descriptions of `write_file` and `read_file`, and the
 instructions, point a file the agent only moves to "a tool copying files by path if you have

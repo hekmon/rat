@@ -548,8 +548,10 @@ transfer. In the harness, with its client directory:
   (`SIGKILL`, a crash) leaves its temporary file behind, which can be removed.
 - **Permissions, as `scp` copies them.** A new file gets the permission bits of its source, minus
   the umask; a replaced file keeps its own, the agent told when they differ from those of the
-  source. A replaced file is a new file in its place: it belongs to the user that wrote it, and its
-  hard links and extended attributes are lost.
+  source. On Windows, whose files have no permission bits, rat sees 0666, or 0444 for a read-only
+  file: a file it uploads gets those, minus the umask, and it tells no difference. A replaced file
+  is a new file in its place: it belongs to the user that wrote it, and its hard links and
+  extended attributes are lost.
 - **Long transfers.** A call waits 50 seconds at most; a longer copy goes on in rat, the agent told
   its progress, and finds it again by calling with the same paths. Stopping rat (the harness
   quitting) or ratd cuts the transfers under way, removing their temporary files: only an upload

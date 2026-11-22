@@ -452,6 +452,27 @@ func TestUploadFile(t *testing.T) {
 	}
 }
 
+// TestTransferModesNotTold guards a replaced file keeping permissions other than those of its
+// source left untold where rat tells no modes (modesTold, false on Windows, whose files show 0666
+// or 0444 whatever they are), both ways: otherwise, almost every replace would tell it.
+func TestTransferModesNotTold(t *testing.T) {
+	saved := modesTold
+	modesTold = false
+	t.Cleanup(func() { modesTold = saved })
+	tt := startTransfers(t)
+	// as a file shows on Windows
+	randomFile(t, filepath.Join(tt.local, "app.bin"), 1<<10, 0o666)
+	remote := filepath.Join(tt.remote, "app.bin")
+	randomFile(t, remote, 1<<10, 0o644)
+	args := map[string]any{"local_path": "app.bin", "remote_path": remote, "overwrite": true}
+	for _, tool := range []string{uploadTool, downloadTool} {
+		text, isError := tt.call(t, tool, args)
+		if isError || !strings.HasSuffix(text, "(1 KiB): replaced.") {
+			t.Errorf("%s: expected the file replaced, its permissions untold, got %q", tool, text)
+		}
+	}
+}
+
 // TestUploadFileRefused guards what rat refuses of an upload, from the local side alone and before
 // any request: paths missing, a local path out of the transfers directory, a file missing, a
 // directory, and a symbolic link, telling where it leads within the directory, or that it leads
