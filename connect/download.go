@@ -53,16 +53,16 @@ func StartDownload(ctx context.Context, client *http.Client, server, path string
 }
 
 // WriteTo writes the file to w, and returns the bytes written, failing unless they are the whole
-// file as ratd opened it: a body cut short fails with [ErrCut]; a file ratd found changed while
-// reading it, or could not read, with a [Refusal] (status 200) telling why, from the trailer of
-// the body; a write failing with the error of w. What was written is then partial, for the caller
-// to drop.
+// file as ratd opened it: a body cut short fails with a [TransferError] of kind [ErrCut], telling
+// why; a file ratd found changed while reading it, or could not read, with a [Refusal] (status 200)
+// telling why, from the trailer of the body; a write failing with the error of w. What was written
+// is then partial, for the caller to drop.
 func (d *Download) WriteTo(w io.Writer) (int64, error) {
 	body := &readErrors{r: d.resp.Body}
 	n, err := io.Copy(w, body)
 	switch {
 	case body.err != nil:
-		return n, fmt.Errorf("%w: %w", ErrCut, body.err)
+		return n, &TransferError{Kind: ErrCut, Reason: body.err}
 	case err != nil:
 		return n, err
 	}
@@ -71,7 +71,7 @@ func (d *Download) WriteTo(w io.Writer) (int64, error) {
 		return n, &Refusal{Status: d.resp.StatusCode, Text: text}
 	}
 	if n != d.Size {
-		return n, fmt.Errorf("%w: %d bytes received of %d", ErrCut, n, d.Size)
+		return n, &TransferError{Kind: ErrCut, Reason: fmt.Errorf("%d bytes received of %d", n, d.Size)}
 	}
 	return n, nil
 }

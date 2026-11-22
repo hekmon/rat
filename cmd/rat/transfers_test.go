@@ -29,7 +29,8 @@ const fakeChunk = 32 << 10
 
 // fakeTransfers serves the file transfers as ratd does, at paths of the machine of the test, with
 // what a test needs of a ratd: older than the transfers, slow (a pause between chunks), stalling
-// after its first chunk until stall is closed, or failing a download in its trailer.
+// after its first chunk until stall is closed, failing a download in its trailer, or cutting a
+// download after its first chunk.
 type fakeTransfers struct {
 	// mu guards the fields below
 	mu       sync.Mutex
@@ -38,14 +39,15 @@ type fakeTransfers struct {
 	pause    time.Duration
 	stall    chan struct{}
 	failWith string
+	cut      bool
 }
 
 // take counts a transfer request, and returns how to answer it.
-func (f *fakeTransfers) take() (old bool, pause time.Duration, stall chan struct{}, failWith string) {
+func (f *fakeTransfers) take() (old bool, pause time.Duration, stall chan struct{}, failWith string, cut bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.requests++
-	return f.old, f.pause, f.stall, f.failWith
+	return f.old, f.pause, f.stall, f.failWith, f.cut
 }
 
 // count returns the transfer requests received.
@@ -63,7 +65,7 @@ func (f *fakeTransfers) set(change func(*fakeTransfers)) {
 }
 
 func (f *fakeTransfers) upload(w http.ResponseWriter, r *http.Request) {
-	old, pause, stall, _ := f.take()
+	old, pause, stall, _, _ := f.take()
 	if old {
 		http.NotFound(w, r)
 		return
@@ -110,7 +112,7 @@ func (f *fakeTransfers) upload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *fakeTransfers) download(w http.ResponseWriter, r *http.Request) {
-	old, pause, stall, failWith := f.take()
+	old, pause, stall, failWith, cut := f.take()
 	if old {
 		http.NotFound(w, r)
 		return
@@ -133,6 +135,10 @@ func (f *fakeTransfers) download(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = http.NewResponseController(w).Flush()
+		if off == 0 && cut {
+			// the connection closed without the end of the body, as when ratd is killed
+			panic(http.ErrAbortHandler)
+		}
 		if off == 0 && stall != nil {
 			<-stall
 		}
@@ -459,8 +465,9 @@ func TestDownloadFile(t *testing.T) {
 }
 
 // TestDownloadFileFailed guards downloads failing: refused by ratd (its sentence relayed), failed
-// by its trailer (a file changed while it read it), and from a ratd older than the transfers,
-// whoever runs it to be told; no file nor temporary file left.
+// by its trailer (a file changed while it read it), cut midway (the reason told, rather than
+// "<nil>", which errors.Unwrap gave of the cut connect tells), and from a ratd older than the
+// transfers, whoever runs it to be told; no file nor temporary file left.
 func TestDownloadFileFailed(t *testing.T) {
 	tt := startTransfers(t)
 	missing := filepath.Join(tt.remote, "missing")
@@ -471,7 +478,10 @@ func TestDownloadFileFailed(t *testing.T) {
 	failure := remote + " changed while it was read: it may still be written. Download it again once it is complete."
 	tt.fake.set(func(f *fakeTransfers) { f.failWith = failure })
 	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": "a.bin"}, true, failure)
-	tt.fake.set(func(f *fakeTransfers) { f.failWith, f.old = "", true })
+	tt.fake.set(func(f *fakeTransfers) { f.failWith, f.cut = "", true })
+	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": "a.bin"}, true,
+		"The copy of "+remote+" to a.bin was cut: unexpected EOF. a.bin is as it was.")
+	tt.fake.set(func(f *fakeTransfers) { f.cut, f.old = false, true })
 	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": "a.bin"}, true,
 		"The ratd at "+tt.addr+" is older than this rat and serves no file transfers: whoever runs it must upgrade it.")
 	if _, err := os.Lstat(filepath.Join(tt.local, "a.bin")); err == nil {

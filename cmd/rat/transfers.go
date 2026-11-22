@@ -607,6 +607,7 @@ func canceledText(j *job) string {
 // while read, the copy cut.
 func (t *transfers) failureText(j *job, err error) (string, bool, bool) {
 	var refused *connect.Refusal
+	var failed *connect.TransferError
 	switch {
 	case j.cancelWasAsked():
 		return canceledText(j), false, true
@@ -618,9 +619,9 @@ func (t *transfers) failureText(j *job, err error) (string, bool, bool) {
 	case errors.Is(err, connect.ErrChanged):
 		return fmt.Sprintf("%s changed while it was read: it may still be written. Upload it again once it is "+
 			"complete.", j.request.local), true, false
-	case errors.Is(err, connect.ErrCut):
+	case errors.Is(err, connect.ErrCut) && errors.As(err, &failed):
 		return fmt.Sprintf("The copy of %s to %s was cut: %v. %s is as it was.", j.request.source(),
-			j.request.destination(), errors.Unwrap(err), j.request.destination()), true, false
+			j.request.destination(), failed.Reason, j.request.destination()), true, false
 	default:
 		return t.reachText(err), true, false
 	}

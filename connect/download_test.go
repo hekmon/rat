@@ -43,7 +43,8 @@ func TestDownload(t *testing.T) {
 // TestDownloadFailed guards the failures of a download: refused by ratd from the start (a Refusal
 // with its sentence), a ratd older than the transfers (a 404 without its version), the file
 // changed while ratd read it (the Rat-Error trailer, a Refusal of status 200), a body cut short,
-// and fewer bytes than the size told (ErrCut).
+// and fewer bytes than the size told (a TransferError of kind ErrCut, its reason read apart: what
+// the system gave, or how short the body came).
 func TestDownloadFailed(t *testing.T) {
 	server, client := fakeRatd(t, func(w http.ResponseWriter, r *http.Request) {
 		path, _ := DecodePath(r.Header.Get(HeaderPath))
@@ -76,6 +77,7 @@ func TestDownloadFailed(t *testing.T) {
 		t.Errorf("a 404 without the version: expected ErrNoTransfers, got %v", err)
 	}
 	var refused *Refusal
+	var failed *TransferError
 	if _, err := StartDownload(context.Background(), client, server, "/refused"); !errors.As(err, &refused) ||
 		refused.Status != http.StatusConflict || refused.Text != "/refused is a directory, not a file." {
 		t.Errorf("expected a refusal with the sentence of ratd, got %v", err)
@@ -84,8 +86,12 @@ func TestDownloadFailed(t *testing.T) {
 		"/changed": func(err error) bool {
 			return errors.As(err, &refused) && refused.Status == http.StatusOK && refused.Text == "/changed changed while it was read."
 		},
-		"/cut":   func(err error) bool { return errors.Is(err, ErrCut) },
-		"/short": func(err error) bool { return errors.Is(err, ErrCut) },
+		"/cut": func(err error) bool {
+			return errors.Is(err, ErrCut) && errors.As(err, &failed) && errors.Is(failed.Reason, io.ErrUnexpectedEOF)
+		},
+		"/short": func(err error) bool {
+			return errors.Is(err, ErrCut) && errors.As(err, &failed) && failed.Reason.Error() == "500 bytes received of 1000"
+		},
 	} {
 		d, err := StartDownload(context.Background(), client, server, path)
 		if err != nil {

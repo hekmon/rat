@@ -62,9 +62,27 @@ var (
 	// ErrChanged is the error of an upload whose file changed while it was read: ratd wrote
 	// nothing.
 	ErrChanged = errors.New("the file changed while it was read")
-	// ErrCut is the error of a download whose body was cut before its end.
+	// ErrCut is the kind of a [TransferError] of a download whose body was cut before its end.
 	ErrCut = errors.New("transfer cut")
 )
+
+// TransferError is a transfer failed in a way its caller tells apart with errors.Is, its Kind
+// ([ErrCut]), along with the Reason it failed: what the system gave ("unexpected EOF"), or what
+// came short. errors.As gives the reason apart, for a caller to tell it in its own words, which
+// errors.Unwrap does not give of an error wrapping both.
+type TransferError struct {
+	Kind   error
+	Reason error
+}
+
+func (e *TransferError) Error() string {
+	return e.Kind.Error() + ": " + e.Reason.Error()
+}
+
+// Unwrap returns the kind and the reason, for errors.Is to find either.
+func (e *TransferError) Unwrap() []error {
+	return []error{e.Kind, e.Reason}
+}
 
 // Refusal is a transfer ratd refused or failed: its HTTP status, 200 for a download failed by its
 // trailer (see [HeaderError]), and the sentence ratd wrote for the agent. It wraps [ErrRefused].
