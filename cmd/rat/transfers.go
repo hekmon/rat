@@ -736,16 +736,17 @@ func (t *transfers) runDownload(ctx context.Context, j *job) (string, bool, bool
 	defer download.Close()
 	j.size.Store(download.Size)
 	created, err := t.createDirectories(filepath.Dir(local))
-	if err != nil {
-		return t.localFailure(err, "Writing", local), true, false
-	}
 	// From now on, a failure names the directories created, which it leaves, as a download
-	// creating the file does: an agent catches a typo the same way.
+	// creating the file does: an agent catches a typo the same way. Creating them failing, those
+	// created before are named.
 	failed := func(text string, isError, canceled bool) (string, bool, bool) {
 		if len(created) > 0 {
 			text += " " + t.createdText(created)
 		}
 		return text, isError, canceled
+	}
+	if err != nil {
+		return failed(t.localFailure(err, "Writing", local), true, false)
 	}
 	// The file was looked at before the request (see prepare), a look stopping at the first
 	// directory missing, which tells the file missing whatever its name. Once they are created,
@@ -813,7 +814,7 @@ func (t *transfers) createdText(created []string) string {
 }
 
 // createDirectories creates dir, within the transfers directory, and its missing parents, and
-// returns the ones it created, from the top.
+// returns the ones it created, from the top: failing, those it created before, left as they are.
 func (t *transfers) createDirectories(dir string) ([]string, error) {
 	var created []string
 	for parent := dir; parent != "."; parent = filepath.Dir(parent) {
@@ -825,7 +826,16 @@ func (t *transfers) createDirectories(dir string) ([]string, error) {
 	if len(created) == 0 {
 		return nil, nil
 	}
-	return created, t.root.MkdirAll(dir, 0o755)
+	if err := t.root.MkdirAll(dir, 0o755); err != nil {
+		// made from the top: those before the first missing one were made, and are left
+		for i, made := range created {
+			if _, statErr := t.root.Stat(made); statErr != nil {
+				return created[:i], err
+			}
+		}
+		return created, err
+	}
+	return created, nil
 }
 
 // createTemporary creates the temporary file of a download to local: next to it, hidden and named

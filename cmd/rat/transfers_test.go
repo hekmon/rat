@@ -705,8 +705,8 @@ func TestDownloadFileWithoutHardLinks(t *testing.T) {
 // TestDownloadFileNameTooLong guards a download to a name longer than any file system takes,
 // though its temporary file, named to fit, could take the bytes: refused before any byte is
 // written, in the transfers directory before any request, and under a directory to create once
-// it is created, a look before the request stopping at it, the directory then named. No
-// temporary file is left.
+// it is created, a look before the request stopping at it, the directory then named; a directory
+// to create too long names those created before it. No temporary file is left.
 func TestDownloadFileNameTooLong(t *testing.T) {
 	tt := startTransfers(t)
 	remote := filepath.Join(tt.remote, "data.bin")
@@ -726,6 +726,11 @@ func TestDownloadFileNameTooLong(t *testing.T) {
 	under := filepath.Join("new", name)
 	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": under}, true,
 		"Writing "+under+" failed: file name too long. Missing directories created in "+tt.local+": new. Check the "+
+			"path if you did not mean them.")
+	// a directory to create too long, under one created before it
+	dir := filepath.Join("made", name, "f.bin")
+	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": dir}, true,
+		"Writing "+dir+" failed: file name too long. Missing directories created in "+tt.local+": made. Check the "+
 			"path if you did not mean them.")
 	expectNoTemporary(t, tt.local)
 }

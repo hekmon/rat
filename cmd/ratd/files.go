@@ -153,7 +153,8 @@ func createdText(created []string) string {
 }
 
 // createDirectories creates dir and its missing parents, as mkdir -p does, and returns the ones it
-// created, from the top. It refuses a parent that is not a directory, naming it.
+// created, from the top. It refuses a parent that is not a directory, naming it. A failure
+// creating them names those it created before, left as they are.
 func (d *daemon) createDirectories(dir string) (created []string, refused *result) {
 	for parent := dir; ; parent = filepath.Dir(parent) {
 		info, err := os.Stat(parent)
@@ -176,9 +177,23 @@ func (d *daemon) createDirectories(dir string) (created []string, refused *resul
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		r := d.fileFailure(err, "Creating "+dir, written, false)
+		if made := existing(created); len(made) > 0 {
+			r.text += " " + createdText(made)
+		}
 		return nil, &r
 	}
 	return created, nil
+}
+
+// existing returns the first of dirs, from the top, that exist: those MkdirAll made, from the top,
+// before failing on the next one.
+func existing(dirs []string) []string {
+	for i, dir := range dirs {
+		if _, err := os.Stat(dir); err != nil {
+			return dirs[:i]
+		}
+	}
+	return dirs
 }
 
 // notRegularError is the error of openRegular for a file that is not a regular file.

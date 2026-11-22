@@ -237,9 +237,9 @@ func TestUploadNameNotUTF8(t *testing.T) {
 // overwrite it can not read, a body declared other than bytes, an existing file without
 // overwrite, a directory, a FIFO, a symbolic link (telling where it leads, even nowhere), a path
 // under a file, a denied permission naming the user, and a name too long, though its temporary
-// file, named to fit, could take the bytes, even under a directory to create, which it names. The
-// file existing stays as it was, and no temporary file is left. The endpoints answer their method
-// only.
+// file, named to fit, could take the bytes, even under a directory to create, which it names, or
+// of a directory to create, naming those created before it. The file existing stays as it was, and
+// no temporary file is left. The endpoints answer their method only.
 func TestUploadRefused(t *testing.T) {
 	r, client, home := transferRatd(t)
 	file := filepath.Join(home, "file")
@@ -265,6 +265,8 @@ func TestUploadRefused(t *testing.T) {
 	// tempname), and under a directory to create, which a look at the path stops at
 	tooLong := filepath.Join(home, strings.Repeat("a", 300))
 	tooLongUnder := filepath.Join(home, "new", strings.Repeat("a", 300))
+	// a directory to create too long, under one created before it
+	tooLongDir := filepath.Join(home, "made", strings.Repeat("a", 300), "f.bin")
 	me, err := user.Current()
 	if err != nil {
 		t.Fatal(err)
@@ -312,6 +314,9 @@ func TestUploadRefused(t *testing.T) {
 		{"name too long under a directory to create", tooLongUnder, false, nil, http.StatusBadRequest,
 			"Writing " + tooLongUnder + " failed: file name too long. Missing directories created: " +
 				filepath.Join(home, "new") + ". Check the path if you did not mean them."},
+		{"directory name too long", tooLongDir, false, nil, http.StatusBadRequest,
+			"Creating " + filepath.Dir(tooLongDir) + " failed: file name too long. Missing directories created: " +
+				filepath.Join(home, "made") + ". Check the path if you did not mean them."},
 	} {
 		// no permission is denied to root
 		if tc.status == http.StatusForbidden && os.Geteuid() == 0 {
