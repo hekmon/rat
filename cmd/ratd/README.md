@@ -658,8 +658,8 @@ ratd (`Expect: 100-continue`), which Go's server gives when the handler first re
 is an existing file without overwrite (412), a symbolic link or what is not a regular file (409),
 a relative path or a header ratd can not read (400), a body declared other than bytes (415:
 `curl -d @file`, for one, strips the new lines of the file), and a path the system fails to look
-at, told as it tells it (a name too long). Measured: without the go-ahead, a refusal came once
-384 KiB of the file had left.
+at or refuses, told as it tells it (a name too long, or not UTF-8 on APFS: 400). Measured: without
+the go-ahead, a refusal came once 384 KiB of the file had left.
 
 **Symbolic links.** A link at the end of the path is refused, naming its target, every link
 resolved (for a link leading nowhere, its target as written): a rename would replace the link

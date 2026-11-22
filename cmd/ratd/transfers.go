@@ -129,6 +129,10 @@ func transferStatus(err error) int {
 		return http.StatusInsufficientStorage
 	case errors.Is(err, syscall.ENOTDIR), errors.Is(err, syscall.EISDIR):
 		return http.StatusConflict
+	case errors.Is(err, syscall.ENAMETOOLONG), errors.Is(err, syscall.EILSEQ):
+		// the path the request names can be no file: a name too long, or one that is not UTF-8
+		// where the file system takes UTF-8 alone (APFS); a mistake of the client, not of ratd
+		return http.StatusBadRequest
 	default:
 		return http.StatusInternalServerError
 	}

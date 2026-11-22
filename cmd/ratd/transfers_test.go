@@ -213,6 +213,25 @@ func TestUploadLongName(t *testing.T) {
 	expectNoTemporary(t, home)
 }
 
+// TestUploadNameNotUTF8 guards an upload to a name that is not UTF-8, which APFS refuses (EILSEQ):
+// refused 400, a mistake of the client, before any byte is sent, no temporary file left. Linux
+// takes any byte in a name but / and NUL: the test runs on macOS alone.
+func TestUploadNameNotUTF8(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("only APFS refuses a name that is not UTF-8")
+	}
+	r, client, home := transferRatd(t)
+	path := filepath.Join(home, "\xffname")
+	body := &fileBody{content: bytes.Repeat([]byte("x"), 1<<20)}
+	resp, text, err := sendTransfer(client, newUpload(t, r.addr, path, body, "0644", false))
+	expectRefused(t, "name not UTF-8", resp, text, err, http.StatusBadRequest,
+		"Writing "+path+" failed: illegal byte sequence.")
+	if taken := body.taken.Load(); taken != 0 {
+		t.Errorf("expected the refusal before any byte was sent, %d were", taken)
+	}
+	expectNoTemporary(t, home)
+}
+
 // TestUploadRefused guards what ratd refuses from the headers of an upload alone, telling why,
 // before the client sends any byte: a missing, undecodable or relative path, permission bits or an
 // overwrite it can not read, a body declared other than bytes, an existing file without
@@ -287,9 +306,9 @@ func TestUploadRefused(t *testing.T) {
 			file + " is not a directory: " + file + "/a can not be created in it."},
 		{"permission denied", locked + "/a.txt", false, nil, http.StatusForbidden,
 			"Permission denied: " + locked + "/a.txt can not be written by " + me.Username + ", the user the terminals run as."},
-		{"name too long", tooLong, false, nil, http.StatusInternalServerError,
+		{"name too long", tooLong, false, nil, http.StatusBadRequest,
 			"Writing " + tooLong + " failed: file name too long."},
-		{"name too long under a directory to create", tooLongUnder, false, nil, http.StatusInternalServerError,
+		{"name too long under a directory to create", tooLongUnder, false, nil, http.StatusBadRequest,
 			"Writing " + tooLongUnder + " failed: file name too long."},
 	} {
 		// no permission is denied to root
@@ -486,7 +505,8 @@ func TestDownload(t *testing.T) {
 
 // TestDownloadRefused guards what ratd refuses to download, telling why: a relative path, a
 // missing file, a directory (pointing to an archive), a FIFO (without blocking on it), a device, a
-// symbolic link (telling where it leads, even nowhere), and a denied permission naming the user.
+// symbolic link (telling where it leads, even nowhere), a denied permission naming the user, and a
+// name too long, a mistake of the client (400) rather than of ratd.
 func TestDownloadRefused(t *testing.T) {
 	r, client, home := transferRatd(t)
 	file := filepath.Join(home, "file")
@@ -513,6 +533,7 @@ func TestDownloadRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	missing := filepath.Join(home, "missing")
+	tooLong := filepath.Join(home, strings.Repeat("a", 300))
 	for _, tc := range []struct {
 		what, path string
 		status     int
@@ -529,6 +550,7 @@ func TestDownloadRefused(t *testing.T) {
 			dangling + " is a symbolic link to " + missing + ", which does not exist: there is no file to download."},
 		{"permission denied", locked, http.StatusForbidden,
 			"Permission denied: " + locked + " can not be read by " + me.Username + ", the user the terminals run as."},
+		{"name too long", tooLong, http.StatusBadRequest, "Reading " + tooLong + " failed: file name too long."},
 	} {
 		// no permission is denied to root
 		if tc.status == http.StatusForbidden && os.Geteuid() == 0 {
