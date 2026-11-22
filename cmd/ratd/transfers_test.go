@@ -217,8 +217,9 @@ func TestUploadLongName(t *testing.T) {
 // before the client sends any byte: a missing, undecodable or relative path, permission bits or an
 // overwrite it can not read, a body declared other than bytes, an existing file without
 // overwrite, a directory, a FIFO, a symbolic link (telling where it leads, even nowhere), a path
-// under a file, and a denied permission naming the user. The file existing stays as it was, and
-// no temporary file is left. The endpoints answer their method only.
+// under a file, a denied permission naming the user, and a name too long, though its temporary
+// file, named to fit, could take the bytes, even under a directory to create. The file existing
+// stays as it was, and no temporary file is left. The endpoints answer their method only.
 func TestUploadRefused(t *testing.T) {
 	r, client, home := transferRatd(t)
 	file := filepath.Join(home, "file")
@@ -240,6 +241,10 @@ func TestUploadRefused(t *testing.T) {
 	if err := os.Mkdir(locked, 0o500); err != nil {
 		t.Fatal(err)
 	}
+	// longer than any file system takes, unlike its temporary name, cut to fit (see package
+	// tempname), and under a directory to create, which a look at the path stops at
+	tooLong := filepath.Join(home, strings.Repeat("a", 300))
+	tooLongUnder := filepath.Join(home, "new", strings.Repeat("a", 300))
 	me, err := user.Current()
 	if err != nil {
 		t.Fatal(err)
@@ -282,6 +287,10 @@ func TestUploadRefused(t *testing.T) {
 			file + " is not a directory: " + file + "/a can not be created in it."},
 		{"permission denied", locked + "/a.txt", false, nil, http.StatusForbidden,
 			"Permission denied: " + locked + "/a.txt can not be written by " + me.Username + ", the user the terminals run as."},
+		{"name too long", tooLong, false, nil, http.StatusInternalServerError,
+			"Writing " + tooLong + " failed: file name too long."},
+		{"name too long under a directory to create", tooLongUnder, false, nil, http.StatusInternalServerError,
+			"Writing " + tooLongUnder + " failed: file name too long."},
 	} {
 		// no permission is denied to root
 		if tc.status == http.StatusForbidden && os.Geteuid() == 0 {

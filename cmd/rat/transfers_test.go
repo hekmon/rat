@@ -651,6 +651,32 @@ func TestDownloadFileLongName(t *testing.T) {
 	expectNoTemporary(t, tt.local)
 }
 
+// TestDownloadFileNameTooLong guards a download to a name longer than any file system takes,
+// though its temporary file, named to fit, could take the bytes: refused before any byte is
+// written, in the transfers directory before any request, and under a directory to create once
+// it is created, a look before the request stopping at it. No temporary file is left.
+func TestDownloadFileNameTooLong(t *testing.T) {
+	tt := startTransfers(t)
+	remote := filepath.Join(tt.remote, "data.bin")
+	randomFile(t, remote, 1<<20, 0o644)
+	// the fake stalls after its first chunk: a download taking the bytes would wait there, its
+	// call telling its progress instead
+	stall := make(chan struct{})
+	release := sync.OnceFunc(func() { close(stall) })
+	defer release()
+	tt.fake.set(func(f *fakeTransfers) { f.stall = stall })
+	name := strings.Repeat("a", 300)
+	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": name}, true,
+		"Writing "+name+" failed: file name too long.")
+	if n := tt.fake.count(); n != 0 {
+		t.Errorf("a name too long in the transfers directory: expected no request, %d were made", n)
+	}
+	under := filepath.Join("new", name)
+	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": under}, true,
+		"Writing "+under+" failed: file name too long.")
+	expectNoTemporary(t, tt.local)
+}
+
 // TestDownloadFileFailed guards downloads failing: refused by ratd (its sentence relayed), failed
 // by its trailer (a file changed while it read it), cut midway (the reason told, rather than
 // "<nil>", which errors.Unwrap gave of the cut connect tells), and from a ratd older than the

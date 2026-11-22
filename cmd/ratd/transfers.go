@@ -234,9 +234,10 @@ func transferNotRegular(path string, info fs.FileInfo, way direction) *result {
 // to it, put in its place once complete (see placeFile), the file replaced keeping its own mode.
 // What the headers alone refuse is refused before the client sends any byte, when it waits for
 // ratd's go-ahead (Expect: 100-continue): a file existing without Rat-Overwrite, a symbolic link,
-// what is not a regular file, a body that is not bytes. A body cut short (the client failing it,
-// its file having changed, or the connection lost) leaves no file. Missing directories are
-// created, as write_file does, and named in the answer (201), for an agent to catch a typo.
+// what is not a regular file, a path the system fails to look at (a name too long), a body that is
+// not bytes. A body cut short (the client failing it, its file having changed, or the connection
+// lost) leaves no file. Missing directories are created, as write_file does, and named in the
+// answer (201), for an agent to catch a typo.
 func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 	// No Content-Type reads as bytes (RFC 9110). Another one is refused: a client sending a form
 	// (curl -d @file strips the new lines of the file) must find out.
@@ -259,13 +260,6 @@ func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 	if err != nil {
 		return refuse(w, http.StatusBadRequest, result{err: err, attrs: attrs, text: err.Error() + "."})
 	}
-	// The place of the file is checked now, before any byte is sent, and again once they all came.
-	// A failure to look is found again when writing.
-	if info, err := os.Lstat(path); err == nil {
-		if r := checkReplaced(path, info, overwrite); r != nil {
-			return refuse(w, refusalStatus(r), withAttrs(*r, attrs))
-		}
-	}
 	created, refused := d.createDirectories(filepath.Dir(path))
 	if refused != nil {
 		return refuse(w, transferStatus(refused.err), withAttrs(*refused, attrs))
@@ -273,6 +267,21 @@ func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 	writeFailure := func(err error) result {
 		err = targetError(err, path)
 		return refuse(w, transferStatus(err), withAttrs(d.fileFailure(err, "Writing "+path, written, false), attrs))
+	}
+	// The place of the file is checked now, before any byte is sent, and again once they all came.
+	// A failure to look is refused now too, rather than met when placing the file, once all the
+	// bytes came: the temporary file, under a name of its own, may not meet it (a name too long,
+	// the temporary one cut to fit: see package tempname). It is looked at once its directories
+	// are there: under one missing, the system stops at it, telling the file missing whatever its
+	// name. Directories are only created for a file that can not exist yet, so only a failure to
+	// look can refuse it then, leaving them, as a write failing later does.
+	switch info, err := os.Lstat(path); {
+	case err == nil:
+		if r := checkReplaced(path, info, overwrite); r != nil {
+			return refuse(w, refusalStatus(r), withAttrs(*r, attrs))
+		}
+	case !errors.Is(err, fs.ErrNotExist):
+		return writeFailure(err)
 	}
 	tmp, err := createTemporary(path, mode)
 	if err != nil {
