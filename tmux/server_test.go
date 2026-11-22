@@ -269,6 +269,50 @@ func TestServerStartExitStatusZero(t *testing.T) {
 	}
 }
 
+// TestServerStartExitBeforeDeadline guards a server exiting during its startup while a probe takes
+// all of the wait (a machine under load): told exiting, the cause it is, rather than not ready,
+// select picking at random between the exit and the end of the wait once both came. A tmux wrapper
+// exits at once in place of the server, telling it in a file, and holds the probes until they are
+// killed; the wait ends once it exited, through a cancel of the context of StartServer, which ends
+// it as its deadline does. Without the fix, a start told not ready half of the time: sixteen starts.
+func TestServerStartExitBeforeDeadline(t *testing.T) {
+	tmuxPath, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal("tmux is required to run the tests:", err)
+	}
+	dir := t.TempDir()
+	exited := filepath.Join(dir, "exited")
+	wrapper := "#!/bin/sh\nfor arg; do\n\tcase $arg in\n\t-D) : > " + shellQuote(exited) + "; exit 0 ;;\n" +
+		"\tdisplay-message) exec sleep 10 ;;\n\tesac\ndone\nexec " + shellQuote(tmuxPath) + " \"$@\"\n"
+	if err = os.WriteFile(filepath.Join(dir, "tmux"), []byte(wrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	c := newTestController(t, "exitbeforedeadline")
+	for range 16 {
+		if err = os.Remove(exited); err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			// the wait ended once the server exited, its watcher given the time to see it
+			for ctx.Err() == nil {
+				if _, err := os.Stat(exited); err == nil {
+					time.Sleep(100 * time.Millisecond)
+					cancel()
+					return
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+		}()
+		err = c.StartServer(ctx)
+		cancel()
+		if err == nil || !strings.Contains(err.Error(), "server exited during startup") {
+			t.Fatalf("expected the exit told, got %v", err)
+		}
+	}
+}
+
 func TestLimitedBuffer(t *testing.T) {
 	lb := &limitedBuffer{limit: 5}
 	for _, p := range []string{"abc", "defgh", "ij"} {

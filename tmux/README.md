@@ -61,7 +61,9 @@ by the unix socket path limit (104 bytes on macOS, 108 on Linux).
 The server socket appears a few milliseconds after the process starts. `StartServer` probes the
 server (`display-message -p '#{pid}'`) every 50 ms, for up to a second, and only accepts an
 answer carrying the PID of the process it started. Another server may be answering on the
-socket: a leftover of a previous run, or another rat on the same tenant.
+socket: a leftover of a previous run, or another rat on the same tenant. A server exiting during
+the wait is told exiting, even once the second has passed: a probe may take all of it (a machine
+under load), and the exit tells more than the wait ending.
 
 - If a server already runs on the socket, `tmux -D` does not start a second one: it connects to
   it as a client, fails (`open terminal failed: not a terminal`) and exits. The watcher reports
