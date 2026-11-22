@@ -54,13 +54,14 @@ func (s stopOnAnswer) RoundTrip(req *http.Request) (*http.Response, error) {
 
 // testFile is a file to upload: content, or size zero bytes without it. grows tells it grew once
 // read to its end, its stamp then changing; fails, when set, fails its reads once half of it was
-// read, as a disk failing.
+// read, as a disk failing; lookFails, when set, fails its looks once it was read to its end.
 type testFile struct {
-	content []byte
-	size    int
-	mode    fs.FileMode
-	grows   bool
-	fails   error
+	content   []byte
+	size      int
+	mode      fs.FileMode
+	grows     bool
+	fails     error
+	lookFails error
 	// mu guards off, the bytes read
 	mu  sync.Mutex
 	off int
@@ -95,6 +96,9 @@ func (f *testFile) Read(p []byte) (int, error) {
 }
 
 func (f *testFile) Stat() (fs.FileInfo, error) {
+	if f.lookFails != nil && f.taken() == f.length() {
+		return nil, f.lookFails
+	}
 	size := int64(f.length())
 	if f.grows && f.taken() == f.length() {
 		size++
@@ -257,25 +261,36 @@ func TestUploadChanged(t *testing.T) {
 	}
 }
 
-// TestUploadReadFailed guards a file failing to read while it is uploaded (a disk failing): the
-// body ends with an error instead of its end, so that ratd sees it cut, and Upload fails with a
-// TransferError of kind ErrRead, its reason the error of the read, for the caller to tell its own
-// side failing rather than the connection or ratd.
+// TestUploadReadFailed guards a file failing to read while it is uploaded (a disk failing), or to
+// be looked at once read: the body ends with an error instead of its end, so that ratd sees it
+// cut, and Upload fails with a TransferError of kind ErrRead, its reason the error of the read or
+// of the look, for the caller to tell its own side failing rather than the connection or ratd, and
+// a look failing rather than a change the file may not have.
 func TestUploadReadFailed(t *testing.T) {
 	cut := make(chan error, 1)
 	server, client := fakeRatd(t, func(w http.ResponseWriter, r *http.Request) {
 		_, err := io.Copy(io.Discard, r.Body)
 		cut <- err
 	})
-	failing := &fs.PathError{Op: "read", Path: "test.bin", Err: errors.New("input/output error")}
-	file := &testFile{content: bytes.Repeat([]byte("x"), 64<<10), mode: 0o644, fails: failing}
-	_, err := Upload(context.Background(), nil, client, server, file, "/x", false)
-	var failed *TransferError
-	if !errors.Is(err, ErrRead) || !errors.As(err, &failed) || failed.Reason != failing {
-		t.Errorf("expected ErrRead, its reason the error of the read, got %v", err)
-	}
-	if err := <-cut; err == nil {
-		t.Error("expected ratd to see the body cut")
+	content := bytes.Repeat([]byte("x"), 64<<10)
+	reading := &fs.PathError{Op: "read", Path: "test.bin", Err: errors.New("input/output error")}
+	looking := &fs.PathError{Op: "fstat", Path: "test.bin", Err: errors.New("input/output error")}
+	for _, tc := range []struct {
+		what    string
+		file    *testFile
+		failing error
+	}{
+		{"read", &testFile{content: content, mode: 0o644, fails: reading}, reading},
+		{"look once read", &testFile{content: content, mode: 0o644, lookFails: looking}, looking},
+	} {
+		_, err := Upload(context.Background(), nil, client, server, tc.file, "/x", false)
+		var failed *TransferError
+		if !errors.Is(err, ErrRead) || !errors.As(err, &failed) || failed.Reason != tc.failing {
+			t.Errorf("%s failing: expected ErrRead, its reason that error, got %v", tc.what, err)
+		}
+		if err := <-cut; err == nil {
+			t.Errorf("%s failing: expected ratd to see the body cut", tc.what)
+		}
 	}
 }
 

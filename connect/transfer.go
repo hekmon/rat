@@ -63,8 +63,9 @@ var (
 	// nothing.
 	ErrChanged = errors.New("the file changed while it was read")
 	// ErrRead is the kind of a [TransferError] of an upload whose file failed to read (a disk
-	// failing, a file system gone), its reason the error of the read: ratd wrote nothing. A failure
-	// on the side of the caller, told apart from the connection lost or ratd failing.
+	// failing, a file system gone), or to be looked at once read, its reason that error: ratd wrote
+	// nothing. A failure on the side of the caller, told apart from the connection lost or ratd
+	// failing.
 	ErrRead = errors.New("reading the file failed")
 	// ErrCut is the kind of a [TransferError] of a transfer cut before its end once ratd answered:
 	// a download whose body was cut short; an upload whose connection was lost once ratd gave its

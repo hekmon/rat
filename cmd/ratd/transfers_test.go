@@ -674,6 +674,58 @@ func TestDownloadChanged(t *testing.T) {
 	}
 }
 
+// TestDownloadLookFailed guards a download whose look at its file once read fails (fstat, a disk
+// failing): told as a read failing, with the reason of the system, rather than as a change the
+// file may not have, at each of the three looks: a file read whole and one ending before its size
+// in the trailer, one showing no size yet giving bytes before anything is sent.
+func TestDownloadLookFailed(t *testing.T) {
+	var change atomic.Value
+	// set before ratd serves, and restored once it stopped (cleanups run in reverse order)
+	opened, stat := downloadOpened, statOnceRead
+	downloadOpened = func(path string) { change.Load().(func(string))(path) }
+	statOnceRead = func(file *os.File) (fs.FileInfo, error) {
+		return nil, &fs.PathError{Op: "fstat", Path: file.Name(), Err: syscall.EIO}
+	}
+	t.Cleanup(func() { downloadOpened, statOnceRead = opened, stat })
+	r, client, home := transferRatd(t)
+	path := filepath.Join(home, "app.log")
+	failure := "Reading " + path + " failed: input/output error."
+	content := bytes.Repeat([]byte("line\n"), 1<<10)
+	for _, tc := range []struct {
+		what    string
+		content []byte
+		change  func(string)
+	}{
+		{"read whole", content, func(string) {}},
+		{"ending before its size", content, func(path string) {
+			if err := os.Truncate(path, 10); err != nil {
+				t.Error(err)
+			}
+		}},
+		{"showing no size", nil, func(path string) {
+			if err := os.WriteFile(path, content, 0o600); err != nil {
+				t.Error(err)
+			}
+		}},
+	} {
+		if err := os.WriteFile(path, tc.content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		change.Store(tc.change)
+		resp, body, err := sendTransfer(client, newDownload(t, r.addr, path))
+		if tc.content == nil {
+			expectRefused(t, tc.what, resp, body, err, http.StatusInternalServerError, failure)
+			continue
+		}
+		if err != nil || resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s: expected 200, got %v, %v", tc.what, resp, err)
+		}
+		if got := resp.Trailer.Get(connect.HeaderError); got != failure {
+			t.Errorf("%s: expected Rat-Error telling the read failing, got %q", tc.what, got)
+		}
+	}
+}
+
 // TestDownloadNoTrueSize guards a file whose size is not that of its content, one the system makes
 // as it is read, which a download, sending the size a file had when opened, sent empty told
 // complete (/proc, showing 0) or failed as changed (/sys, showing a page): refused, telling to read

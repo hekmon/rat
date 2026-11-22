@@ -507,7 +507,10 @@ func (d *daemon) download(w http.ResponseWriter, req *http.Request) result {
 		n, err := file.Read(make([]byte, 1))
 		switch {
 		case n > 0:
-			if now, err := file.Stat(); err != nil || !stamp.Of(now).Equal(opened) {
+			switch changed, lookFailed := d.lookedAgain(file, path, opened); {
+			case lookFailed != nil:
+				return refuse(w, transferStatus(lookFailed.err), withAttrs(*lookFailed, attrs))
+			case changed:
 				return refuse(w, http.StatusConflict, withAttrs(changedRefusal(path), attrs))
 			}
 			return refuse(w, http.StatusConflict, withAttrs(noTrueSizeRefusal(path), attrs))
@@ -535,16 +538,22 @@ func (d *daemon) download(w http.ResponseWriter, req *http.Request) result {
 	case errors.Is(err, io.EOF):
 		// shorter than when opened: truncated or replaced in place while being read, or, unchanged,
 		// a file the system makes as it is read, its size telling nothing of its content (/sys)
-		if now, err := file.Stat(); err == nil && stamp.Of(now).Equal(opened) {
-			failure = noTrueSizeRefusal(path)
-		} else {
+		switch changed, lookFailed := d.lookedAgain(file, path, opened); {
+		case lookFailed != nil:
+			failure = *lookFailed
+		case changed:
 			failure = changedRefusal(path)
+		default:
+			failure = noTrueSizeRefusal(path)
 		}
 	case err != nil:
 		// writing failed: the client left, or ratd stops (see cutOnStop); nobody reads a trailer
 		return result{outcome: failed, err: d.cutError(err), attrs: attrs}
 	default:
-		if now, err := file.Stat(); err != nil || !stamp.Of(now).Equal(opened) {
+		switch changed, lookFailed := d.lookedAgain(file, path, opened); {
+		case lookFailed != nil:
+			failure = *lookFailed
+		case changed:
 			failure = changedRefusal(path)
 		}
 	}
@@ -554,6 +563,22 @@ func (d *daemon) download(w http.ResponseWriter, req *http.Request) result {
 	header.Set(connect.HeaderError, failure.text)
 	failure.outcome, failure.attrs = failed, attrs
 	return failure
+}
+
+// statOnceRead looks at the file of a download once read: os.File.Stat, a variable for tests
+// making the look fail.
+var statOnceRead = (*os.File).Stat
+
+// lookedAgain looks at file, opened at path with the stamp opened, once read, and tells whether it
+// changed since. A look failing is told as a read failing (lookFailed), with the reason of the
+// system, rather than as a change the file may not have.
+func (d *daemon) lookedAgain(file *os.File, path string, opened stamp.Stamp) (changed bool, lookFailed *result) {
+	now, err := statOnceRead(file)
+	if err != nil {
+		r := d.fileFailure(err, "Reading "+path, read, false)
+		return false, &r
+	}
+	return !stamp.Of(now).Equal(opened), nil
 }
 
 // changedRefusal fails the download of path, changed while it was read.

@@ -44,8 +44,9 @@ type Uploaded struct {
 //
 // src is stamped when opened and once read (see package stamp): a file that changed meanwhile (a
 // log still written, a build output) ends the body with an error instead of its end, and Upload
-// fails with [ErrChanged], ratd writing nothing. A read of src failing ends it so too, Upload
-// failing with a [TransferError] of kind [ErrRead], its reason the error of the read.
+// fails with [ErrChanged], ratd writing nothing. A read of src failing, or the look at it once
+// read, ends it so too, Upload failing with a [TransferError] of kind [ErrRead], its reason that
+// error.
 //
 // Two signals stop an upload. Closing cancel (unless nil), as an agent cancels, cuts it, ratd
 // writing nothing, Upload returning [context.Canceled], unless the whole file was sent: from then
@@ -184,7 +185,13 @@ func (b *uploadBody) Read(p []byte) (int, error) {
 		// cancelled while reading
 		return 0, b.err
 	case err == io.EOF:
-		if info, statErr := b.src.Stat(); statErr != nil || !stamp.Of(info).Equal(b.opened) {
+		// a look failing is a read failing, rather than a change the file may not have
+		info, statErr := b.src.Stat()
+		switch {
+		case statErr != nil:
+			b.err = &TransferError{Kind: ErrRead, Reason: statErr}
+			return 0, b.err
+		case !stamp.Of(info).Equal(b.opened):
 			b.err = ErrChanged
 			return 0, b.err
 		}
