@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hekmon/rat/cmd/ratd/tools"
 	"github.com/hekmon/rat/connect"
 	"github.com/hekmon/rat/internal/stamp"
 	"github.com/hekmon/rat/internal/tempname"
@@ -41,6 +42,10 @@ var errSymbolicLink = errors.New("symbolic link")
 
 // errChanged is the error of a download whose file changed while being read.
 var errChanged = errors.New("file changed while read")
+
+// errNoTrueSize is the error of a download whose file tells a size that is not that of its
+// content (see noTrueSizeRefusal).
+var errNoTrueSize = errors.New("size not that of the content")
 
 // addTransfers serves the file transfers on mux, behind the same client checks as MCP requests.
 // GET also answers HEAD, with the headers of a download and no body.
@@ -482,6 +487,21 @@ func (d *daemon) download(w http.ResponseWriter, req *http.Request) result {
 	}
 	downloadOpened(path)
 	opened := stamp.Of(info)
+	// A file showing no size may hold bytes yet: one the system makes as it is read (/proc,
+	// cgroups), which a copy of its size would send empty, told complete. A read tells it apart
+	// from a file truly empty before anything is sent; a file filling meanwhile changed.
+	if info.Size() == 0 {
+		n, err := file.Read(make([]byte, 1))
+		switch {
+		case n > 0:
+			if now, err := file.Stat(); err != nil || !stamp.Of(now).Equal(opened) {
+				return refuse(w, http.StatusConflict, withAttrs(changedRefusal(path), attrs))
+			}
+			return refuse(w, http.StatusConflict, withAttrs(noTrueSizeRefusal(path), attrs))
+		case err != nil && !errors.Is(err, io.EOF):
+			return refuse(w, transferStatus(err), withAttrs(d.fileFailure(err, "Reading "+path, read, false), attrs))
+		}
+	}
 	header := w.Header()
 	header.Set("Content-Type", connect.OctetStream)
 	header.Set(connect.HeaderMode, connect.FormatMode(info.Mode()))
@@ -500,8 +520,13 @@ func (d *daemon) download(w http.ResponseWriter, req *http.Request) result {
 	case source.err != nil:
 		failure = d.fileFailure(source.err, "Reading "+path, read, false)
 	case errors.Is(err, io.EOF):
-		// shorter than when opened: truncated or replaced in place while being read
-		failure = changedRefusal(path)
+		// shorter than when opened: truncated or replaced in place while being read, or, unchanged,
+		// a file the system makes as it is read, its size telling nothing of its content (/sys)
+		if now, err := file.Stat(); err == nil && stamp.Of(now).Equal(opened) {
+			failure = noTrueSizeRefusal(path)
+		} else {
+			failure = changedRefusal(path)
+		}
 	case err != nil:
 		// writing failed: the client left, or ratd stops (see cutOnStop); nobody reads a trailer
 		return result{outcome: failed, err: d.cutError(err), attrs: attrs}
@@ -522,4 +547,13 @@ func (d *daemon) download(w http.ResponseWriter, req *http.Request) result {
 func changedRefusal(path string) result {
 	return result{outcome: failed, err: errChanged, text: fmt.Sprintf("%s changed while it was read: it may still "+
 		"be written. Download it again once it is complete.", path)}
+}
+
+// noTrueSizeRefusal fails the download of path, a file whose size is not that of its content: one
+// the system makes as it is read (/proc shows 0, /sys a page), which a download, sending the size
+// a file had when opened, can not copy, and read_file reads to its end.
+func noTrueSizeRefusal(path string) result {
+	return result{outcome: failed, err: errNoTrueSize, text: fmt.Sprintf("%s tells a size that is not that of its "+
+		"content: a file the system makes as it is read, as in /proc and /sys. Read it with %s if it is text, or "+
+		"copy it in a terminal (cat %s > ~/copy) and download the copy.", path, tools.ReadFile, path)}
 }

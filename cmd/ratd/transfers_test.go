@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -640,6 +641,68 @@ func TestDownloadChanged(t *testing.T) {
 	if !strings.Contains(r.logs.String(), `error="file changed while read"`) {
 		t.Errorf("expected the change logged:\n%s", r.logs)
 	}
+}
+
+// TestDownloadNoTrueSize guards a file whose size is not that of its content, one the system makes
+// as it is read, which a download, sending the size a file had when opened, sent empty told
+// complete (/proc, showing 0) or failed as changed (/sys, showing a page): refused, telling to read
+// it with read_file or to copy it first, before anything is sent (409) for one showing 0, in the
+// trailer for one ending before its size. An empty file stays sent empty, and one filled once
+// opened is told changed. The files of the system are Linux's: those cases run there alone.
+func TestDownloadNoTrueSize(t *testing.T) {
+	var change atomic.Value
+	change.Store(func(string) {})
+	// set before ratd serves, and restored once it stopped (cleanups run in reverse order)
+	opened := downloadOpened
+	downloadOpened = func(path string) { change.Load().(func(string))(path) }
+	t.Cleanup(func() { downloadOpened = opened })
+	r, client, home := transferRatd(t)
+	told := func(path string) string {
+		return path + " tells a size that is not that of its content: a file the system makes as it is read, as " +
+			"in /proc and /sys. Read it with read_file if it is text, or copy it in a terminal (cat " + path +
+			" > ~/copy) and download the copy."
+	}
+	empty := filepath.Join(home, "empty.log")
+	t.Run("empty", func(t *testing.T) {
+		if err := os.WriteFile(empty, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		resp, body, err := sendTransfer(client, newDownload(t, r.addr, empty))
+		if err != nil || resp.StatusCode != http.StatusOK || body != "" || resp.Trailer.Get(connect.HeaderError) != "" {
+			t.Errorf("expected the empty file sent empty, got %v, %q, %v", resp, body, err)
+		}
+	})
+	t.Run("filled once opened", func(t *testing.T) {
+		if err := os.WriteFile(empty, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		change.Store(func(path string) {
+			if err := os.WriteFile(path, []byte("filled\n"), 0o600); err != nil {
+				t.Error(err)
+			}
+		})
+		defer change.Store(func(string) {})
+		resp, body, err := sendTransfer(client, newDownload(t, r.addr, empty))
+		expectRefused(t, "filled once opened", resp, body, err, http.StatusConflict, empty+" changed while it was read")
+	})
+	t.Run("showing no size", func(t *testing.T) {
+		if runtime.GOOS != "linux" {
+			t.Skip("/proc is Linux's")
+		}
+		resp, body, err := sendTransfer(client, newDownload(t, r.addr, "/proc/version"))
+		expectRefused(t, "/proc/version", resp, body, err, http.StatusConflict, told("/proc/version"))
+	})
+	t.Run("showing a page", func(t *testing.T) {
+		if runtime.GOOS != "linux" {
+			t.Skip("/sys is Linux's")
+		}
+		// 4096 bytes told, a line of 18 held
+		const attribute = "/sys/class/net/lo/address"
+		resp, _, err := sendTransfer(client, newDownload(t, r.addr, attribute))
+		if err != nil || resp.StatusCode != http.StatusOK || resp.Trailer.Get(connect.HeaderError) != told(attribute) {
+			t.Errorf("expected Rat-Error telling its size is not that of its content, got %v, %v", resp, err)
+		}
+	})
 }
 
 // growingFile is a file growing as it is read, as a log still written: once read to its end, a

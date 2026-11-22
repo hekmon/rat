@@ -677,7 +677,13 @@ target with `Lstat`, before and after its bytes come, and only opens a temporary
 time when opening it and once read (package `internal/stamp`), as GNU tar does: a file still being
 written (a log, a build output) is not copied torn. A download sends the size the file had when
 opened, so that a file growing forever still ends, then tells a change, or a read failing, in the
-`Rat-Error` trailer of its chunked body, and rat drops what it received. A change in an upload is
+`Rat-Error` trailer of its chunked body, and rat drops what it received. That size is not always
+the one of the content: a file the system makes as it is read shows 0 (`/proc`, cgroups) or a
+page (`/sys`), which a download would send empty, or end short of. Such a file is refused,
+pointing to `read_file`, which reads it to its end, or to a copy made in a terminal: showing 0, by
+a first read giving bytes before anything is sent; ending before its size, unchanged, in the
+trailer. Rejected: reading it to its end, as `read_file` does, before its headers, a second way of
+reading in ratd for files a terminal copies. A change in an upload is
 rat's to find: it ends the body with an error instead of its last chunk, and ratd, seeing the body
 cut, drops its temporary file. A cancel ends it the same way, until the last chunk is sent: past
 it, ratd may be writing the file, and the client waits for its answer rather than leave unknown
