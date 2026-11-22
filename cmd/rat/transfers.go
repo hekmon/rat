@@ -775,15 +775,14 @@ func (t *transfers) runDownload(ctx context.Context, j *job) (string, bool, bool
 		return failed(t.localFailure(err, "Writing", local), true, false)
 	}
 	// The file was looked at before the request (see prepare), a look stopping at the first
-	// directory missing, which tells the file missing whatever its name. Once they are created,
-	// it is looked at again, before any byte is written: the temporary file, under a name of its
-	// own, may not meet a failure to look (a name too long, the temporary one cut to fit: see
-	// package tempname), which placing it would meet once all the bytes came. The download is
-	// cut, only the bytes already on their way lost.
-	if len(created) > 0 {
-		if _, err := t.root.Lstat(local); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return failed(t.localFailure(err, "Writing", local), true, false)
-		}
+	// directory missing, which tells the file missing whatever its name. Once they are there,
+	// created by this download or by another transfer meanwhile, it is looked at again, before
+	// any byte is written: the temporary file, under a name of its own, may not meet a failure to
+	// look (a name too long, the temporary one cut to fit: see package tempname), which placing
+	// it would meet once all the bytes came. The download is cut, only the bytes already on their
+	// way lost.
+	if _, err := t.root.Lstat(local); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return failed(t.localFailure(err, "Writing", local), true, false)
 	}
 	tmp, tmpName, err := t.createTemporary(local, download.Mode)
 	if err != nil {

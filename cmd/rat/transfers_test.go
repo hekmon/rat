@@ -34,8 +34,9 @@ const fakeChunk = 32 << 10
 // fakeTransfers serves the file transfers as ratd does, at paths of the machine of the test, with
 // what a test needs of a ratd: older than the transfers, slow (a pause between chunks), stalling
 // after its first chunk until stall is closed, failing a download in its trailer, cutting a
-// transfer after its first chunk, or losing the answer to an upload it received whole
-// (dropAnswer).
+// transfer after its first chunk, losing the answer to an upload it received whole (dropAnswer),
+// or calling meanwhile as a download comes, before answering it, as another transfer acting in
+// between.
 type fakeTransfers struct {
 	// mu guards the fields below
 	mu         sync.Mutex
@@ -46,6 +47,7 @@ type fakeTransfers struct {
 	failWith   string
 	cut        bool
 	dropAnswer bool
+	meanwhile  func()
 }
 
 // take counts a transfer request, and returns how to answer it.
@@ -149,6 +151,12 @@ func (f *fakeTransfers) download(w http.ResponseWriter, r *http.Request) {
 	if old {
 		http.NotFound(w, r)
 		return
+	}
+	f.mu.Lock()
+	meanwhile := f.meanwhile
+	f.mu.Unlock()
+	if meanwhile != nil {
+		meanwhile()
 	}
 	w.Header().Set(connect.HeaderVersion, "test")
 	path, _ := connect.DecodePath(r.Header.Get(connect.HeaderPath))
@@ -705,8 +713,9 @@ func TestDownloadFileWithoutHardLinks(t *testing.T) {
 // TestDownloadFileNameTooLong guards a download to a name longer than any file system takes,
 // though its temporary file, named to fit, could take the bytes: refused before any byte is
 // written, in the transfers directory before any request, and under a directory to create once
-// it is created, a look before the request stopping at it, the directory then named; a directory
-// to create too long names those created before it. No temporary file is left.
+// it is created, a look before the request stopping at it, the directory then named, or once
+// another transfer created it meanwhile; a directory to create too long names those created
+// before it. No temporary file is left.
 func TestDownloadFileNameTooLong(t *testing.T) {
 	tt := startTransfers(t)
 	remote := filepath.Join(tt.remote, "data.bin")
@@ -732,6 +741,13 @@ func TestDownloadFileNameTooLong(t *testing.T) {
 	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": dir}, true,
 		"Writing "+dir+" failed: file name too long. Missing directories created in "+tt.local+": made. Check the "+
 			"path if you did not mean them.")
+	// the directory missing before the request, created by another transfer before the answer
+	tt.fake.set(func(f *fakeTransfers) {
+		f.meanwhile = func() { _ = os.Mkdir(filepath.Join(tt.local, "meanwhile"), 0o755) }
+	})
+	other := filepath.Join("meanwhile", name)
+	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": other}, true,
+		"Writing "+other+" failed: file name too long.")
 	expectNoTemporary(t, tt.local)
 }
 

@@ -151,8 +151,8 @@ would have to support, and which could only add to this, never replace it.
 put in place once complete: linked under its name without overwrite, which fails if a file
 appeared meanwhile, renamed over the file it replaces with overwrite, the file replaced keeping
 its mode; missing directories are created, and named, and the destination looked at again once
-they are, before any byte is written: under a directory missing, the look made before the
-request could not tell a name too long. A download failing once some were created, creating them
+they are there, whoever created them, before any byte is written: under a directory missing, the
+look made before the request could not tell a name too long. A download failing once some were created, creating them
 included, names them too, leaving them; an upload cut or canceled can not name those ratd
 created, its answer never read. A symbolic link at the end of a local path is refused, telling where it leads; `os.Root`
 ignores `O_NOFOLLOW`, so rat looks at the file with
