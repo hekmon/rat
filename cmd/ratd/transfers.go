@@ -240,7 +240,7 @@ func transferNotRegular(path string, info fs.FileInfo, way direction) *result {
 // what is not a regular file, a path the system fails to look at (a name too long), a body that is
 // not bytes. A body cut short (the client failing it, its file having changed, or the connection
 // lost) leaves no file. Missing directories are created, as write_file does, and named in the
-// answer (201), for an agent to catch a typo.
+// answer, a 201 or a failure leaving them, for an agent to catch a typo.
 func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 	// No Content-Type reads as bytes (RFC 9110). Another one is refused: a client sending a form
 	// (curl -d @file strips the new lines of the file) must find out.
@@ -465,13 +465,14 @@ var downloadOpened = func(string) {}
 // download sends the file at the path req names, as it was when opened: its size then is told
 // (Rat-Size), and that many bytes sent, so that a file growing forever (a log) still ends. The
 // body is chunked: once sent, the file is stamped again (see package stamp), and a file that
-// changed while being read, or failed to be, is told in the Rat-Error trailer, which makes the
-// download fail. A symbolic link at the end of the path is refused, and so is what is not a
-// regular file, both looked at before opening, as opening acts on what is not a regular file: it
-// releases a command waiting to write into a FIFO, whose next write then fails once the refusal
-// closes it, and a device may act on it (a tape rewinds). The file opened is checked again, as it
-// may have been replaced meanwhile, opened without blocking (a FIFO without a writer would block
-// forever).
+// changed while being read, or failed to be, or ended before its size, unchanged (a file the
+// system makes as it is read), is told in the Rat-Error trailer, which makes the download fail. A
+// file showing no size yet giving bytes is refused before. A symbolic link at the end of the path
+// is refused, and so is what is not a regular file, both looked at before opening, as opening
+// acts on what is not a regular file: it releases a command waiting to write into a FIFO, whose
+// next write then fails once the refusal closes it, and a device may act on it (a tape rewinds).
+// The file opened is checked again, as it may have been replaced meanwhile, opened without
+// blocking (a FIFO without a writer would block forever).
 func (d *daemon) download(w http.ResponseWriter, req *http.Request) result {
 	path, refused := transferPath(req)
 	if refused != nil {

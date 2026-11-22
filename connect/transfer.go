@@ -39,8 +39,8 @@ const (
 	// with no Content-Length.
 	HeaderSize = "Rat-Size"
 	// HeaderError is a trailer of a download, telling why the file was not sent whole as it was
-	// opened (it changed while being read, a read failed), for the agent: a download is complete
-	// only without it.
+	// opened (it changed while being read, a read failed, its size was not that of its content),
+	// for the agent: a download is complete only without it.
 	HeaderError = "Rat-Error"
 	// HeaderVersion is the version of ratd, in every answer of the transfer endpoints: a 404
 	// without it comes from a ratd older than the transfers, one with it from a missing file.
