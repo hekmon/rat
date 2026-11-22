@@ -48,7 +48,7 @@ func (d *daemon) readFile(ctx context.Context, in tools.ReadFileInput) result {
 	attrs := []any{"path", in.Path}
 	path, err := absolutePath(in.Path)
 	if err != nil {
-		return result{outcome: failed, err: err, attrs: attrs, text: relativeText(in.Path)}
+		return result{outcome: failed, err: err, attrs: attrs, text: pathRefusal(in.Path, err)}
 	}
 	attrs[1] = path
 	scanTime := toolTimeout / 2

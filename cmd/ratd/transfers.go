@@ -151,7 +151,7 @@ func transferPath(req *http.Request) (string, *result) {
 	}
 	path, err := absolutePath(named)
 	if err != nil {
-		return "", &result{outcome: failed, err: err, text: relativeText(named)}
+		return "", &result{outcome: failed, err: err, text: pathRefusal(named, err)}
 	}
 	return path, nil
 }

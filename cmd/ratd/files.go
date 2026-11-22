@@ -36,15 +36,31 @@ func (d *daemon) addFileTools(server *mcp.Server, logger *slog.Logger) {
 // one of its foreground process, the local one of an ssh client for instance.
 var errRelativePath = errors.New("relative path")
 
+// errNULInPath refuses a path holding a NUL byte, which no file name can hold: the system would
+// refuse it (EINVAL), once the missing directories were created for it.
+var errNULInPath = errors.New("NUL byte in path")
+
 // relativeText refuses path, relative (see errRelativePath).
 func relativeText(path string) string {
 	return fmt.Sprintf("Path %q is relative: give an absolute path, or one starting with ~/ (list_windows shows "+
 		"the directories of your windows).", path)
 }
 
+// pathRefusal returns the text refusing path, which absolutePath refused with err.
+func pathRefusal(path string, err error) string {
+	if errors.Is(err, errNULInPath) {
+		return fmt.Sprintf("Path %q holds a NUL byte, which no file name can hold.", path)
+	}
+	return relativeText(path)
+}
+
 // absolutePath returns path, absolute or starting with ~/ for the home directory of ratd's user
-// (where terminals start), as an absolute clean path.
+// (where terminals start), as an absolute clean path. A path holding a NUL byte is refused
+// (errNULInPath), before anything is created for it.
 func absolutePath(path string) (string, error) {
+	if strings.ContainsRune(path, 0) {
+		return "", errNULInPath
+	}
 	if path == "~" || strings.HasPrefix(path, "~/") {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -71,7 +87,7 @@ func (d *daemon) writeFile(ctx context.Context, in tools.WriteFileInput) result 
 	attrs := []any{"path", in.Path, "bytes", len(in.Content)}
 	path, err := absolutePath(in.Path)
 	if err != nil {
-		return result{outcome: failed, err: err, attrs: attrs, text: relativeText(in.Path)}
+		return result{outcome: failed, err: err, attrs: attrs, text: pathRefusal(in.Path, err)}
 	}
 	attrs[1] = path
 	written := make(chan result, 1)

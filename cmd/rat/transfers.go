@@ -361,7 +361,7 @@ func (t *transfers) prepare(q transferRequest) (*os.File, string) {
 	switch {
 	case err == nil:
 		return nil, t.checkLocal(q.local, info, q)
-	case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
+	case errors.Is(err, fs.ErrNotExist):
 		return nil, ""
 	default:
 		return nil, t.localFailure(err, "Writing", q.local)

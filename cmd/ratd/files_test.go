@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -128,13 +129,20 @@ func TestCopyHints(t *testing.T) {
 }
 
 // TestWriteFileRefused guards what write_file does not write, telling why: a relative path, a
-// directory, a FIFO (without blocking on it), a device, a path under a file, a denied permission
+// path holding a NUL byte (no directory created for it), a directory, a FIFO (without blocking on
+// it), a device, a path under a file, a denied permission
 // naming the user, and a write failing midway, leaving the file partial (here over the file size
 // limit of the process, which Go makes a failed write rather than a signal).
 func TestWriteFileRefused(t *testing.T) {
 	session, _, home := connectFiles(t)
 	expectTool(t, session, "write_file", map[string]any{"path": "notes.txt", "content": "x"}, true,
 		`Path "notes.txt" is relative: give an absolute path, or one starting with ~/`)
+	nul := filepath.Join(home, "nul", "a\x00b")
+	expectTool(t, session, "write_file", map[string]any{"path": nul, "content": "x"}, true,
+		"Path "+strconv.Quote(nul)+" holds a NUL byte, which no file name can hold.")
+	if _, err := os.Stat(filepath.Dir(nul)); err == nil {
+		t.Error("NUL in path: expected no directory created for it")
+	}
 	expectTool(t, session, "write_file", map[string]any{"path": "~", "content": "x"}, true, home+" is a directory, not a file.")
 
 	fifo := filepath.Join(home, "fifo")

@@ -238,8 +238,9 @@ func TestUploadNameNotUTF8(t *testing.T) {
 // overwrite, a directory, a FIFO, a symbolic link (telling where it leads, even nowhere), a path
 // under a file, a denied permission naming the user, and a name too long, though its temporary
 // file, named to fit, could take the bytes, even under a directory to create, which it names, or
-// of a directory to create, naming those created before it. The file existing stays as it was, and
-// no temporary file is left. The endpoints answer their method only.
+// of a directory to create, naming those created before it, and a NUL byte in the path, no
+// directory created for it. The file existing stays as it was, and no temporary file is left. The
+// endpoints answer their method only.
 func TestUploadRefused(t *testing.T) {
 	r, client, home := transferRatd(t)
 	file := filepath.Join(home, "file")
@@ -267,6 +268,8 @@ func TestUploadRefused(t *testing.T) {
 	tooLongUnder := filepath.Join(home, "new", strings.Repeat("a", 300))
 	// a directory to create too long, under one created before it
 	tooLongDir := filepath.Join(home, "made", strings.Repeat("a", 300), "f.bin")
+	// no file name holds a NUL byte, refused before anything is created for it
+	nul := filepath.Join(home, "nul", "a\x00b")
 	me, err := user.Current()
 	if err != nil {
 		t.Fatal(err)
@@ -317,6 +320,8 @@ func TestUploadRefused(t *testing.T) {
 		{"directory name too long", tooLongDir, false, nil, http.StatusBadRequest,
 			"Creating " + filepath.Dir(tooLongDir) + " failed: file name too long. Missing directories created: " +
 				filepath.Join(home, "made") + ". Check the path if you did not mean them."},
+		{"NUL in path", nul, false, nil, http.StatusBadRequest,
+			"Path " + strconv.Quote(nul) + " holds a NUL byte, which no file name can hold."},
 	} {
 		// no permission is denied to root
 		if tc.status == http.StatusForbidden && os.Geteuid() == 0 {
@@ -334,6 +339,9 @@ func TestUploadRefused(t *testing.T) {
 		}
 	}
 	expectFile(t, file, "kept", 0o600)
+	if _, err := os.Stat(filepath.Dir(nul)); err == nil {
+		t.Error("NUL in path: expected no directory created for it")
+	}
 	expectNoTemporary(t, home)
 
 	for _, wrong := range []struct{ method, path string }{
@@ -522,7 +530,7 @@ func TestDownload(t *testing.T) {
 // TestDownloadRefused guards what ratd refuses to download, telling why: a relative path, a
 // missing file, a directory (pointing to an archive), a FIFO (without blocking on it), a device, a
 // symbolic link (telling where it leads, even nowhere), a denied permission naming the user, and a
-// name too long, a mistake of the client (400) rather than of ratd.
+// name too long or a NUL byte in the path, mistakes of the client (400) rather than of ratd.
 func TestDownloadRefused(t *testing.T) {
 	r, client, home := transferRatd(t)
 	file := filepath.Join(home, "file")
@@ -567,6 +575,8 @@ func TestDownloadRefused(t *testing.T) {
 		{"permission denied", locked, http.StatusForbidden,
 			"Permission denied: " + locked + " can not be read by " + me.Username + ", the user the terminals run as."},
 		{"name too long", tooLong, http.StatusBadRequest, "Reading " + tooLong + " failed: file name too long."},
+		{"NUL in path", home + "/a\x00b", http.StatusBadRequest,
+			"Path " + strconv.Quote(home+"/a\x00b") + " holds a NUL byte, which no file name can hold."},
 	} {
 		// no permission is denied to root
 		if tc.status == http.StatusForbidden && os.Geteuid() == 0 {
