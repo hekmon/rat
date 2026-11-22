@@ -700,6 +700,42 @@ func TestDownloadChanged(t *testing.T) {
 	}
 }
 
+// TestDownloadChangedNames guards the Rat-Error trailer of a download whose file name holds what a
+// header can not carry (an escape, a new line, DEL): the sentence of ratd reaches the client
+// whole, encoded (connect.EncodeError), rather than the trailer refused by Go's client, the
+// download then told cut, or a new line turned into a space, the sentence naming another path.
+func TestDownloadChangedNames(t *testing.T) {
+	// set before ratd serves, and restored once it stopped (cleanups run in reverse order)
+	opened := downloadOpened
+	downloadOpened = func(path string) {
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+		if err == nil {
+			_, err = file.WriteString("more\n")
+			_ = file.Close()
+		}
+		if err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { downloadOpened = opened })
+	r, client, home := transferRatd(t)
+	for _, name := range []string{"esc\x1b.log", "new\nline.log", "del\x7f.log"} {
+		path := filepath.Join(home, name)
+		if err := os.WriteFile(path, []byte("line\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		resp, _, err := sendTransfer(client, newDownload(t, r.addr, path))
+		if err != nil || resp.StatusCode != http.StatusOK {
+			t.Errorf("%q: expected 200, got %v, %v", name, resp, err)
+			continue
+		}
+		if got := connect.DecodeError(resp.Trailer.Get(connect.HeaderError)); got != path+" changed while it was "+
+			"read: it may still be written. Download it again once it is complete." {
+			t.Errorf("%q: expected Rat-Error telling the file changed, got %q", name, got)
+		}
+	}
+}
+
 // TestDownloadLookFailed guards a download whose look at its file once read fails (fstat, a disk
 // failing): told as a read failing, with the reason of the system, rather than as a change the
 // file may not have, at each of the three looks: a file read whole and one ending before its size

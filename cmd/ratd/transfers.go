@@ -569,7 +569,7 @@ func (d *daemon) download(w http.ResponseWriter, req *http.Request) result {
 	if failure.text == "" {
 		return result{attrs: attrs}
 	}
-	header.Set(connect.HeaderError, failure.text)
+	header.Set(connect.HeaderError, connect.EncodeError(failure.text))
 	failure.outcome, failure.attrs = failed, attrs
 	return failure
 }

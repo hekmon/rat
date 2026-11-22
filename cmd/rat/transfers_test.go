@@ -186,7 +186,7 @@ func (f *fakeTransfers) download(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(pause)
 	}
 	if failWith != "" {
-		w.Header().Set(connect.HeaderError, failWith)
+		w.Header().Set(connect.HeaderError, connect.EncodeError(failWith))
 	}
 }
 
@@ -783,7 +783,8 @@ func TestDownloadFileNameTooLong(t *testing.T) {
 }
 
 // TestDownloadFileFailed guards downloads failing: refused by ratd (its sentence relayed), failed
-// by its trailer (a file changed while it read it), cut midway (the reason told, rather than
+// by its trailer (a file changed while it read it, its sentence told whole even when its path holds
+// what a header can not carry), cut midway (the reason told, rather than
 // "<nil>", which errors.Unwrap gave of the cut connect tells, and the directories it created
 // named, left), and from a ratd older than the transfers, whoever runs it to be told; no file nor
 // temporary file left.
@@ -797,6 +798,12 @@ func TestDownloadFileFailed(t *testing.T) {
 	failure := remote + " changed while it was read: it may still be written. Download it again once it is complete."
 	tt.fake.set(func(f *fakeTransfers) { f.failWith = failure })
 	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": "a.bin"}, true, failure)
+	// a name holding what a header can not carry: the sentence of ratd told whole
+	escaped := filepath.Join(tt.remote, "app\x1b.log")
+	randomFile(t, escaped, 100<<10, 0o644)
+	failure = escaped + " changed while it was read: it may still be written. Download it again once it is complete."
+	tt.fake.set(func(f *fakeTransfers) { f.failWith = failure })
+	tt.expect(t, downloadTool, map[string]any{"remote_path": escaped, "local_path": "a.bin"}, true, failure)
 	tt.fake.set(func(f *fakeTransfers) { f.failWith, f.cut = "", true })
 	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": "a.bin"}, true,
 		"The copy of "+remote+" to a.bin was cut: unexpected EOF. a.bin is as it was.")

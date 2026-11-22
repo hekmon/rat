@@ -68,7 +68,7 @@ func (d *Download) WriteTo(w io.Writer) (int64, error) {
 	}
 	// the trailer is read with the end of the body
 	if text := d.resp.Trailer.Get(HeaderError); text != "" {
-		return n, &Refusal{Status: d.resp.StatusCode, Text: text}
+		return n, &Refusal{Status: d.resp.StatusCode, Text: DecodeError(text)}
 	}
 	if n != d.Size {
 		return n, &TransferError{Kind: ErrCut, Reason: fmt.Errorf("%d bytes received of %d", n, d.Size)}

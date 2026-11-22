@@ -40,7 +40,8 @@ const (
 	HeaderSize = "Rat-Size"
 	// HeaderError is a trailer of a download, telling why the file was not sent whole as it was
 	// opened (it changed while being read, a read failed, its size was not that of its content),
-	// for the agent: a download is complete only without it.
+	// for the agent: a download is complete only without it. Its sentence travels encoded (see
+	// [EncodeError]): it names a path, which may hold what a header can not carry.
 	HeaderError = "Rat-Error"
 	// HeaderVersion is the version of ratd, in every answer of the transfer endpoints: a 404
 	// without it comes from a ratd older than the transfers, one with it from a missing file.
@@ -182,6 +183,34 @@ func DecodePath(value string) (string, error) {
 		return "", fmt.Errorf("%w %s %q: not a percent-encoded path", ErrHeader, HeaderPath, value)
 	}
 	return path, nil
+}
+
+// EncodeError returns text as [HeaderError] carries it: percent-encoded where a header can carry
+// nothing as is, control characters (a file name may hold an escape, a new line) and the percent
+// sign, the rest kept as is, readable with curl. Sent as is, a control character makes Go's client
+// refuse the trailer, the download then told cut, and a new line came as a space, the sentence
+// naming another path. Rejected: the path quoted in the sentence (%q), which every text naming a
+// path would then have to do.
+func EncodeError(text string) string {
+	var b strings.Builder
+	for i := range len(text) {
+		switch c := text[i]; {
+		case c < ' ', c == 0x7f, c == '%':
+			fmt.Fprintf(&b, "%%%02X", c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
+// DecodeError returns the text [HeaderError] carries in value (see [EncodeError]), or value as is
+// when it is not percent-encoded.
+func DecodeError(value string) string {
+	if text, err := url.PathUnescape(value); err == nil {
+		return text
+	}
+	return value
 }
 
 // FormatMode returns the permission bits of mode as [HeaderMode] carries them: four octal digits,

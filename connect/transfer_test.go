@@ -6,6 +6,29 @@ import (
 	"testing"
 )
 
+// TestErrorEncoding guards the sentence of a Rat-Error trailer: control characters and the
+// percent sign percent-encoded, which a header can not carry or would take for an escape, the rest
+// kept readable, UTF-8 and bytes that are not UTF-8 included; decoded back as it was; and a value
+// that is not percent-encoded read as is.
+func TestErrorEncoding(t *testing.T) {
+	for text, encoded := range map[string]string{
+		"/tmp/a.log changed while it was read.": "/tmp/a.log changed while it was read.",
+		"/tmp/esc\x1b.log changed.":             "/tmp/esc%1B.log changed.",
+		"/tmp/new\nline\tand\x7f.log":           "/tmp/new%0Aline%09and%7F.log",
+		"/tmp/100% é \xff.log":                  "/tmp/100%25 é \xff.log",
+	} {
+		if got := EncodeError(text); got != encoded {
+			t.Errorf("%q: expected it encoded %q, got %q", text, encoded, got)
+		}
+		if got := DecodeError(encoded); got != text {
+			t.Errorf("%q: expected it decoded %q, got %q", encoded, text, got)
+		}
+	}
+	if got := DecodeError("100% done"); got != "100% done" {
+		t.Errorf("expected a value not encoded read as is, got %q", got)
+	}
+}
+
 // TestPathEncoding guards that every path reaches ratd as sent: once encoded, a trailing space, a
 // new line, a tab, non-ASCII characters and a percent sign travel in a header (printable ASCII,
 // nothing a parser strips or refuses) and come back whole; slashes stay readable; and a value
