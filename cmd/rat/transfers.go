@@ -515,7 +515,9 @@ func (t *transfers) cancel(ctx context.Context, q transferRequest) (string, bool
 	}
 	t.forget(j)
 	switch {
-	case j.canceled:
+	case j.canceled, j.refused:
+		// stopped, or refused by its local side before any request: nothing ran for the cancel to
+		// come too late for
 		return j.text, j.isError
 	case j.isError:
 		// a failure, or an answer lost: told first, rather than behind "too late to cancel", which
@@ -544,11 +546,13 @@ type job struct {
 	// late to cancel
 	cancelAsked, placing bool
 	// done is closed once the transfer ended, its outcome set: what it tells, whether it is an
-	// error, whether a cancel stopped it, and when it ended
+	// error, whether a cancel stopped it, whether its local side refused it before any request,
+	// and when it ended
 	done     chan struct{}
 	text     string
 	isError  bool
 	canceled bool
+	refused  bool
 	ended    time.Time
 }
 
@@ -662,7 +666,7 @@ func (t *transfers) run(ctx context.Context, j *job) {
 	default:
 		text, isError, canceled = t.runDownload(ctx, j)
 	}
-	j.text, j.isError, j.canceled, j.ended = text, isError, canceled, time.Now()
+	j.text, j.isError, j.canceled, j.refused, j.ended = text, isError, canceled, refused != "", time.Now()
 	outcome := "ok"
 	switch {
 	case canceled:

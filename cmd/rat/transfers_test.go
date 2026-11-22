@@ -933,6 +933,52 @@ func TestTransferRate(t *testing.T) {
 	}
 }
 
+// TestTransferCancelDuringPrepare guards a cancel coming as a transfer checks its local side, which
+// then refuses it (a file existing without overwrite): told the refusal alone, before any request,
+// rather than "the cancel came too late", nothing having run for it to stop.
+func TestTransferCancelDuringPrepare(t *testing.T) {
+	shortWait(t, 3*time.Second)
+	held := make(chan struct{})
+	release := sync.OnceFunc(func() { close(held) })
+	entered := make(chan struct{}, 1)
+	// set before rat starts, and restored once it stopped (cleanups run in reverse order)
+	hook := preparing
+	preparing = func(q transferRequest) {
+		if q.local == "exists.bin" {
+			select {
+			case entered <- struct{}{}:
+			default:
+			}
+			<-held
+		}
+	}
+	t.Cleanup(func() { preparing = hook })
+	tt := startTransfers(t)
+	// released before rat stops, which waits for its transfers
+	t.Cleanup(release)
+	remote := filepath.Join(tt.remote, "data.bin")
+	randomFile(t, remote, 1<<10, 0o644)
+	randomFile(t, filepath.Join(tt.local, "exists.bin"), 10, 0o644)
+	args := map[string]any{"remote_path": remote, "local_path": "exists.bin"}
+	go func() {
+		_, _ = tt.session.CallTool(context.Background(), &mcp.CallToolParams{Name: downloadTool, Arguments: args})
+	}()
+	<-entered
+	// the cancel asked while the local side is held, released then
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		release()
+	}()
+	text, isError := tt.call(t, downloadTool, map[string]any{"remote_path": remote, "local_path": "exists.bin",
+		"cancel": true})
+	if !isError || text != "exists.bin exists: set overwrite to replace it." {
+		t.Errorf("expected the refusal of the local side alone, got %v: %q", isError, text)
+	}
+	if n := tt.fake.count(); n != 0 {
+		t.Errorf("expected no request, %d made", n)
+	}
+}
+
 // TestTransferPrepareHeld guards a transfer whose local side does not answer (a stale NFS mount in
 // the transfers directory): it holds that transfer alone, its call returning once it waited,
 // telling its progress, while a call for other paths goes on, rather than every transfer call
