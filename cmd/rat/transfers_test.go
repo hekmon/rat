@@ -606,6 +606,19 @@ func TestDownloadFile(t *testing.T) {
 	expectNoTemporary(t, tt.local)
 }
 
+// TestDownloadFileLongName guards a download to a local file whose name is longer than its
+// temporary name takes, a character across byte 200 (see package tempname): downloaded, no
+// temporary file left, rather than refused on macOS, whose APFS takes UTF-8 names only (EILSEQ).
+func TestDownloadFileLongName(t *testing.T) {
+	tt := startTransfers(t)
+	remote := filepath.Join(tt.remote, "data.bin")
+	content := randomFile(t, remote, 1<<10, 0o644)
+	name := strings.Repeat("a", 199) + "é.bin"
+	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": name}, false, "Downloaded ")
+	expectContent(t, filepath.Join(tt.local, name), content, 0o644&^umask())
+	expectNoTemporary(t, tt.local)
+}
+
 // TestDownloadFileFailed guards downloads failing: refused by ratd (its sentence relayed), failed
 // by its trailer (a file changed while it read it), cut midway (the reason told, rather than
 // "<nil>", which errors.Unwrap gave of the cut connect tells), and from a ratd older than the

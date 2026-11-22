@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"math/rand/v2"
 	"mime"
 	"net/http"
 	"os"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/hekmon/rat/connect"
 	"github.com/hekmon/rat/internal/stamp"
+	"github.com/hekmon/rat/internal/tempname"
 	"github.com/hekmon/rat/internal/version"
 	"github.com/hekmon/rat/mtls"
 )
@@ -375,21 +375,15 @@ func (e *readErrors) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// temporaryNameMax bounds the name of the file an upload goes to in its temporary name: the
-// suffix must fit within the 255 bytes a name takes on most file systems.
-const temporaryNameMax = 200
-
 // createTemporary creates the temporary file of an upload to path: next to it, for the rename to
-// stay within its file system, hidden and named after it (.NAME.rat-RANDOM), with the permission
-// bits of mode minus the umask, as any new file. A ratd killed during an upload leaves it behind.
+// stay within its file system, hidden and named after it (.NAME.rat-RANDOM, see package tempname),
+// with the permission bits of mode minus the umask, as any new file. A ratd killed during an
+// upload leaves it behind.
 func createTemporary(path string, mode fs.FileMode) (*os.File, error) {
 	dir, name := filepath.Split(path)
-	if len(name) > temporaryNameMax {
-		name = name[:temporaryNameMax]
-	}
 	for {
-		file, err := os.OpenFile(filepath.Join(dir, fmt.Sprintf(".%s.rat-%08x", name, rand.Uint32())),
-			os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode.Perm())
+		file, err := os.OpenFile(filepath.Join(dir, tempname.For(name)), os.O_WRONLY|os.O_CREATE|os.O_EXCL,
+			mode.Perm())
 		if !errors.Is(err, fs.ErrExist) {
 			return file, err
 		}

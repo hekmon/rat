@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"math"
-	"math/rand/v2"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -24,6 +23,7 @@ import (
 
 	"github.com/hekmon/rat/cmd/ratd/tools"
 	"github.com/hekmon/rat/connect"
+	"github.com/hekmon/rat/internal/tempname"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/hekmon/cunits/v3"
@@ -769,21 +769,15 @@ func (t *transfers) createDirectories(dir string) ([]string, error) {
 	return created, t.root.MkdirAll(dir, 0o755)
 }
 
-// temporaryNameMax bounds the name of the file a download goes to in its temporary name, as ratd
-// bounds its own: the suffix must fit within the 255 bytes a name takes on most file systems.
-const temporaryNameMax = 200
-
 // createTemporary creates the temporary file of a download to local: next to it, hidden and named
-// after it (.NAME.rat-RANDOM), with the permission bits of mode minus the umask, as any new file.
-// It returns the file and its name within the transfers directory: the name of a file opened
-// through the root is its full path, which the root refuses as escaping it.
+// after it (.NAME.rat-RANDOM, see package tempname), as ratd names its own, with the permission
+// bits of mode minus the umask, as any new file. It returns the file and its name within the
+// transfers directory: the name of a file opened through the root is its full path, which the root
+// refuses as escaping it.
 func (t *transfers) createTemporary(local string, mode fs.FileMode) (*os.File, string, error) {
 	dir, name := filepath.Split(local)
-	if len(name) > temporaryNameMax {
-		name = name[:temporaryNameMax]
-	}
 	for {
-		tmpName := filepath.Join(dir, fmt.Sprintf(".%s.rat-%08x", name, rand.Uint32()))
+		tmpName := filepath.Join(dir, tempname.For(name))
 		file, err := t.root.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode.Perm())
 		if !errors.Is(err, fs.ErrExist) {
 			return file, tmpName, err

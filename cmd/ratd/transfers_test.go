@@ -198,6 +198,20 @@ func TestUpload(t *testing.T) {
 	}
 }
 
+// TestUploadLongName guards an upload to a file whose name is longer than its temporary name takes,
+// a character across byte 200 (see package tempname): created, no temporary file left, rather than
+// refused on macOS, whose APFS takes UTF-8 names only (EILSEQ).
+func TestUploadLongName(t *testing.T) {
+	r, client, home := transferRatd(t)
+	path := filepath.Join(home, strings.Repeat("a", 199)+"é.bin")
+	resp, body, err := sendTransfer(client, newUpload(t, r.addr, path, &fileBody{content: []byte("data")}, "0644", false))
+	if err != nil || resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %v, %v: %s", resp, err, body)
+	}
+	expectFile(t, path, "data", 0o644&^umask())
+	expectNoTemporary(t, home)
+}
+
 // TestUploadRefused guards what ratd refuses from the headers of an upload alone, telling why,
 // before the client sends any byte: a missing, undecodable or relative path, permission bits or an
 // overwrite it can not read, a body declared other than bytes, an existing file without
