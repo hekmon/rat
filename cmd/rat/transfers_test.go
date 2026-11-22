@@ -30,7 +30,7 @@ const fakeChunk = 32 << 10
 // fakeTransfers serves the file transfers as ratd does, at paths of the machine of the test, with
 // what a test needs of a ratd: older than the transfers, slow (a pause between chunks), stalling
 // after its first chunk until stall is closed, failing a download in its trailer, or cutting a
-// download after its first chunk.
+// transfer after its first chunk.
 type fakeTransfers struct {
 	// mu guards the fields below
 	mu       sync.Mutex
@@ -65,7 +65,7 @@ func (f *fakeTransfers) set(change func(*fakeTransfers)) {
 }
 
 func (f *fakeTransfers) upload(w http.ResponseWriter, r *http.Request) {
-	old, pause, stall, _, _ := f.take()
+	old, pause, stall, _, cut := f.take()
 	if old {
 		http.NotFound(w, r)
 		return
@@ -87,6 +87,13 @@ func (f *fakeTransfers) upload(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			// cut: nothing written
+			return
+		}
+		if first && cut {
+			// the connection lost in the middle of the body, as when ratd is killed
+			if conn, _, err := http.NewResponseController(w).Hijack(); err == nil {
+				_ = conn.Close()
+			}
 			return
 		}
 		if first && stall != nil {
@@ -432,6 +439,30 @@ func TestUploadFileRefused(t *testing.T) {
 	}
 	if requests := tt.fake.count(); requests != 0 {
 		t.Errorf("expected no request to ratd, got %d", requests)
+	}
+}
+
+// TestUploadFileCut guards an upload whose connection is lost midway, once ratd gave its go-ahead:
+// told cut, with the reason, rather than ratd unreachable, the remote file as it was.
+func TestUploadFileCut(t *testing.T) {
+	tt := startTransfers(t)
+	tt.fake.set(func(f *fakeTransfers) { f.cut = true })
+	// zeros, sparse: far more than the buffers of the connection hold, the upload under way
+	local := filepath.Join(tt.local, "up.bin")
+	if err := os.WriteFile(local, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(local, 64<<20); err != nil {
+		t.Fatal(err)
+	}
+	remote := filepath.Join(tt.remote, "up.bin")
+	text := tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote}, true,
+		"The copy of up.bin to "+remote+" was cut: ")
+	if !strings.Contains(text, ". "+remote+" is as it was.") {
+		t.Errorf("expected the remote file told as it was, got %q", text)
+	}
+	if _, err := os.Lstat(remote); err == nil {
+		t.Error("expected no remote file written")
 	}
 }
 

@@ -62,7 +62,7 @@ func (d *Download) WriteTo(w io.Writer) (int64, error) {
 	n, err := io.Copy(w, body)
 	switch {
 	case body.err != nil:
-		return n, &TransferError{Kind: ErrCut, Reason: body.err}
+		return n, &TransferError{Kind: ErrCut, Reason: innermost(body.err)}
 	case err != nil:
 		return n, err
 	}

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,6 +24,17 @@ func fakeRatd(t *testing.T, handler http.HandlerFunc) (string, *http.Client) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = srv.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
 	return srv.Listener.Addr().String(), &http.Client{Transport: transport}
+}
+
+// hangUp closes the connection of the request w answers, with no answer: the connection lost.
+func hangUp(t *testing.T, w http.ResponseWriter) {
+	t.Helper()
+	conn, _, err := http.NewResponseController(w).Hijack()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	_ = conn.Close()
 }
 
 // testFile is a file to upload: content, or size zero bytes without it. grows tells it grew once
@@ -160,6 +172,46 @@ func TestUploadRefused(t *testing.T) {
 	if _, err = Upload(context.Background(), client, server, file, "/missing", false); !errors.As(err, &refused) ||
 		refused.Status != http.StatusNotFound {
 		t.Errorf("a 404 with the version: expected a refusal, got %v", err)
+	}
+}
+
+// TestUploadCut guards an upload whose connection is lost: once ratd gave its go-ahead, before the
+// end of the file, a TransferError of kind ErrCut, ratd writing nothing, its reason the one the
+// system gave rather than the request; with no go-ahead of ratd, or once the file was sent whole,
+// ratd then possibly writing it, the error as net/http gives it.
+func TestUploadCut(t *testing.T) {
+	server, client := fakeRatd(t, func(w http.ResponseWriter, r *http.Request) {
+		switch path, _ := DecodePath(r.Header.Get(HeaderPath)); path {
+		case "/go-ahead":
+			// reading the body sends the go-ahead
+			_, _ = io.ReadFull(r.Body, make([]byte, 1024))
+		case "/whole":
+			_, _ = io.Copy(io.Discard, r.Body)
+		}
+		hangUp(t, w)
+	})
+	for _, tc := range []struct {
+		path string
+		// size is the size of the file: beyond what the buffers of a connection hold, the
+		// connection is lost before its end
+		size int
+		cut  bool
+	}{
+		{"/go-ahead", 64 << 20, true},
+		{"/none", 64 << 20, false},
+		{"/whole", 1024, false},
+	} {
+		file := &testFile{size: tc.size, mode: 0o644}
+		_, err := Upload(context.Background(), client, server, file, tc.path, false)
+		var failed *TransferError
+		switch {
+		case err == nil:
+			t.Errorf("%s: expected the upload to fail", tc.path)
+		case errors.Is(err, ErrCut) != tc.cut:
+			t.Errorf("%s: expected ErrCut %v, got %v", tc.path, tc.cut, err)
+		case tc.cut && (!errors.As(err, &failed) || strings.Contains(failed.Reason.Error(), server)):
+			t.Errorf("%s: expected the reason alone, rather than the request, got %v", tc.path, err)
+		}
 	}
 }
 

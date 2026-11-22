@@ -6,8 +6,10 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/http/httptrace"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	"github.com/hekmon/rat/internal/stamp"
 )
@@ -35,7 +37,8 @@ type Uploaded struct {
 // nothing of an upload cut before its end. What its headers alone refuse is refused before any
 // byte is sent, client waiting for the go-ahead of ratd ([HTTPClient] waits a second for it). A
 // refusal or failure of ratd is a [Refusal], with the sentence ratd wrote for the agent;
-// [ErrNoTransfers] tells a ratd older than the transfers.
+// [ErrNoTransfers] tells a ratd older than the transfers; a [TransferError] of kind [ErrCut] the
+// connection lost once ratd gave its go-ahead, before the end of the file.
 //
 // src is stamped when opened and once read (see package stamp): a file that changed meanwhile (a
 // log still written, a build output) ends the body with an error instead of its end, and Upload
@@ -65,7 +68,12 @@ func Upload(ctx context.Context, client *http.Client, server string, src fs.File
 		}
 	})
 	defer stop()
-	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, transferURL(server, UploadPath), body)
+	// the go-ahead of ratd (100): the connection lost after it cuts the transfer ratd answered
+	var answered atomic.Bool
+	traced := httptrace.WithClientTrace(requestCtx, &httptrace.ClientTrace{
+		Got100Continue: func() { answered.Store(true) },
+	})
+	req, err := http.NewRequestWithContext(traced, http.MethodPost, transferURL(server, UploadPath), body)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +91,13 @@ func Upload(ctx context.Context, client *http.Client, server string, src fs.File
 		}
 		return nil, failure
 	}
-	if err != nil {
+	switch {
+	case err != nil && answered.Load() && !body.whole():
+		// lost once ratd gave its go-ahead, before the end of the file: cut, ratd writing nothing
+		return nil, &TransferError{Kind: ErrCut, Reason: innermost(err)}
+	case err != nil:
+		// ratd not reached, or lost before its go-ahead; or lost once the file was sent whole, ratd
+		// then possibly writing it, which only its answer would tell
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -168,4 +182,11 @@ func (b *uploadBody) read() int64 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.n
+}
+
+// whole tells whether the end of the file was told: the file sent whole.
+func (b *uploadBody) whole() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.ended
 }

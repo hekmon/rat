@@ -62,7 +62,11 @@ var (
 	// ErrChanged is the error of an upload whose file changed while it was read: ratd wrote
 	// nothing.
 	ErrChanged = errors.New("the file changed while it was read")
-	// ErrCut is the kind of a [TransferError] of a download whose body was cut before its end.
+	// ErrCut is the kind of a [TransferError] of a transfer cut before its end once ratd answered:
+	// a download whose body was cut short; an upload whose connection was lost once ratd gave its
+	// go-ahead (100), before the end of the file, ratd then writing nothing of it. Lost before any
+	// answer of ratd, or once the file of an upload was sent whole, ratd then possibly writing it,
+	// a transfer fails with the error of net/http.
 	ErrCut = errors.New("transfer cut")
 )
 
@@ -82,6 +86,17 @@ func (e *TransferError) Error() string {
 // Unwrap returns the kind and the reason, for errors.Is to find either.
 func (e *TransferError) Unwrap() []error {
 	return []error{e.Kind, e.Reason}
+}
+
+// innermost returns the innermost error of err, the reason the system gave ("broken pipe",
+// "unexpected EOF"), rather than the request and the layers of net/http on the way ("net/http:
+// HTTP/1.x transport connection broken", "write tcp A->B"), which tell an agent nothing more: the
+// reason of a [TransferError].
+func innermost(err error) error {
+	for next := errors.Unwrap(err); next != nil; next = errors.Unwrap(err) {
+		err = next
+	}
+	return err
 }
 
 // Refusal is a transfer ratd refused or failed: its HTTP status, 200 for a download failed by its
