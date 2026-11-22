@@ -663,9 +663,11 @@ just written; an agent wanting it on disk runs `sync`. A ratd killed during an u
 temporary file behind.
 
 What the headers alone refuse is refused before any byte is sent: rat waits for the go-ahead of
-ratd (`Expect: 100-continue`), which Go's server gives when the handler first reads the body. That
-is an existing file without overwrite (412), a symbolic link or what is not a regular file (409),
-a relative path or a header ratd can not read (400), a body declared other than bytes (415:
+ratd (`Expect: 100-continue`), which Go's server gives when the handler first reads the body, for
+a second at most (the default of Go's client, which `connect.HTTPClient` keeps): checks slower
+than that, a file system slow to answer, refuse once bytes have left. The headers alone refuse an
+existing file without overwrite (412), a symbolic link or what is not a regular file (409), a
+relative path or a header ratd can not read (400), a body declared other than bytes (415:
 `curl -d @file`, for one, strips the new lines of the file), and a path the system fails to look
 at or refuses, told as it tells it (a name too long, or not UTF-8 on APFS: 400). Measured: without
 the go-ahead, a refusal came once 384 KiB of the file had left.

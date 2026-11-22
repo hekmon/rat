@@ -456,7 +456,8 @@ func placeFile(tmp, path string, overwrite bool) (replaced bool, kept fs.FileMod
 			continue
 		case errors.Is(err, syscall.EPERM), errors.Is(err, syscall.EMLINK), errors.Is(err, errors.ErrUnsupported):
 			// a file system without hard links: FAT refuses with EPERM, FUSE without link (sshfs)
-			// with ENOSYS, others with ENOTSUP or EOPNOTSUPP, the three told by ErrUnsupported
+			// with ENOSYS, others with EMLINK, ENOTSUP or EOPNOTSUPP, ENOSYS and the last two told
+			// by ErrUnsupported
 			return false, 0, nil, os.Rename(tmp, path)
 		default:
 			return false, 0, nil, err
