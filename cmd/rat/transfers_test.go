@@ -1018,8 +1018,29 @@ func TestTransferCanceledCallKeepsJob(t *testing.T) {
 	}
 }
 
+// TestDownloadFileCanceledWhole guards a download canceled once its file came whole, before it is
+// put in place, the last moment a cancel is in time: canceled, the destination as it was, the
+// directories it created named, left as they are.
+func TestDownloadFileCanceledWhole(t *testing.T) {
+	// set before rat starts, and restored once it stopped (cleanups run in reverse order)
+	hook := downloaded
+	downloaded = func(j *job) { j.askCancel() }
+	t.Cleanup(func() { downloaded = hook })
+	tt := startTransfers(t)
+	remote := filepath.Join(tt.remote, "s.bin")
+	randomFile(t, remote, 1<<10, 0o644)
+	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": "whole/s.bin"}, false,
+		"Canceled the copy of "+remote+" to whole/s.bin after 1 KiB of 1 KiB: whole/s.bin is as it was. Missing "+
+			"directories created in "+tt.local+": whole. Check the path if you did not mean them.")
+	if _, err := os.Lstat(filepath.Join(tt.local, "whole", "s.bin")); err == nil {
+		t.Error("expected no file put in place")
+	}
+	expectNoTemporary(t, tt.local)
+}
+
 // TestTransferCancel guards a transfer stalling, then canceled: the call tells nothing moved; a
-// cancel stops it, leaving the destination as it was, with no temporary file; a transfer to the
+// cancel stops it, leaving the destination as it was, with no temporary file, naming the
+// directories it created; a transfer to the
 // same destination from another source is refused while it runs, and a cancel naming another
 // source, or no transfer under way, cancels nothing.
 func TestTransferCancel(t *testing.T) {
@@ -1046,6 +1067,13 @@ func TestTransferCancel(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(tt.local, "big.bin")); err == nil {
 		t.Error("expected no file written")
 	}
+	// canceled once it created its directories, which it names, left as they are
+	inNew := map[string]any{"remote_path": remote, "local_path": "new/big.bin"}
+	tt.expect(t, downloadTool, inNew, false, "Still copying "+remote+" to new/big.bin: 32 KiB of 1 MiB")
+	inNew["cancel"] = true
+	tt.expect(t, downloadTool, inNew, false, "Canceled the copy of "+remote+" to new/big.bin after 32 KiB of 1 MiB: "+
+		"new/big.bin is as it was. Missing directories created in "+tt.local+": new. Check the path if you did not "+
+		"mean them.")
 	expectNoTemporary(t, tt.local)
 
 	// zeros, sparse: far more than the buffers of the connection hold, the upload staying under way

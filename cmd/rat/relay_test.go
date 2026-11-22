@@ -413,15 +413,21 @@ func TestRelayFailures(t *testing.T) {
 
 // TestRelayErrorCut guards the first line of an HTTP error of ratd, told to the harness cut to 200
 // bytes: at the start of a character, rather than within it, which leaves a text that is not
-// UTF-8, the harness getting U+FFFD in its place once encoded in JSON; and there only, a byte that
-// is not UTF-8 before the cut kept, as a shorter line keeps it.
+// UTF-8, the harness getting U+FFFD in its place once encoded in JSON, a character of 2, 3 or 4
+// bytes across byte 200; and there only, a byte that is not UTF-8 before the cut kept, as a
+// shorter line keeps it.
 func TestRelayErrorCut(t *testing.T) {
 	r := &relay{target: flags.Target{Server: "ratd:7443"}}
-	for _, kept := range []string{strings.Repeat("a", 199), "\xff" + strings.Repeat("a", 198)} {
+	for _, tc := range []struct{ kept, across string }{
+		{strings.Repeat("a", 199), "é"},
+		{strings.Repeat("a", 198), "€"},
+		{strings.Repeat("a", 197), "😀"},
+		{"\xff" + strings.Repeat("a", 198), "é"},
+	} {
 		text := r.invalidResponseText(response{status: http.StatusBadGateway, contentType: "text/plain",
-			body: []byte(kept + "é and more\nanother line")})
-		if expected := "ratd at ratd:7443 answered HTTP 502: " + kept; text != expected {
-			t.Errorf("expected %q, got %q", expected, text)
+			body: []byte(tc.kept + tc.across + " and more\nanother line")})
+		if expected := "ratd at ratd:7443 answered HTTP 502: " + tc.kept; text != expected {
+			t.Errorf("%q across byte 200: expected %q, got %q", tc.across, expected, text)
 		}
 	}
 }

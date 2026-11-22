@@ -333,6 +333,10 @@ func (t *transfers) join(q transferRequest) (*job, string) {
 // for tests, which hold it as a file system not answering would.
 var preparing = func(transferRequest) {}
 
+// downloaded is called with the job of a download once its file came whole, before it is put in
+// place: a hook for tests, which cancel it there, where a cancel is still in time.
+var downloaded = func(*job) {}
+
 // prepare checks the local side of q before any request: for an upload, the file to send, opened
 // and returned; for a download, the file to write, refused if it exists without overwrite. A
 // symbolic link at the end of the local path is refused, as ratd refuses one at the end of the
@@ -813,6 +817,9 @@ func (t *transfers) runDownload(ctx context.Context, j *job) (string, bool, bool
 	_, err = download.WriteTo(countedWriter{w: tmp, job: j})
 	if closeErr := tmp.Close(); err == nil {
 		err = closeErr
+	}
+	if err == nil {
+		downloaded(j)
 	}
 	var pathErr *fs.PathError
 	switch {
