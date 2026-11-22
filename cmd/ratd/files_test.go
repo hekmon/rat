@@ -129,10 +129,11 @@ func TestCopyHints(t *testing.T) {
 }
 
 // TestWriteFileRefused guards what write_file does not write, telling why: a relative path, a
-// path holding a NUL byte (no directory created for it), a directory, a FIFO (without blocking on
-// it), a device, a path under a file, a denied permission
-// naming the user, and a write failing midway, leaving the file partial (here over the file size
-// limit of the process, which Go makes a failed write rather than a signal).
+// path holding a NUL byte (no directory created for it), a name too long under a directory it
+// created (which it names), a directory, a FIFO (without blocking on it), a device, a path under a
+// file, a denied permission naming the user, and a write failing midway, leaving the file partial
+// (here over the file size limit of the process, which Go makes a failed write rather than a
+// signal).
 func TestWriteFileRefused(t *testing.T) {
 	session, _, home := connectFiles(t)
 	expectTool(t, session, "write_file", map[string]any{"path": "notes.txt", "content": "x"}, true,
@@ -143,6 +144,11 @@ func TestWriteFileRefused(t *testing.T) {
 	if _, err := os.Stat(filepath.Dir(nul)); err == nil {
 		t.Error("NUL in path: expected no directory created for it")
 	}
+	// a name too long under a directory to create: the directory, left, named
+	tooLong := filepath.Join(home, "new", strings.Repeat("a", 300))
+	expectTool(t, session, "write_file", map[string]any{"path": tooLong, "content": "x"}, true,
+		"Writing "+tooLong+" failed: file name too long. Missing directories created: "+filepath.Join(home, "new")+
+			". Check the path if you did not mean them.")
 	expectTool(t, session, "write_file", map[string]any{"path": "~", "content": "x"}, true, home+" is a directory, not a file.")
 
 	fifo := filepath.Join(home, "fifo")

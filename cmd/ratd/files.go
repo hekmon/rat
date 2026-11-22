@@ -127,13 +127,20 @@ func (d *daemon) writeFileNow(path, content string) result {
 	default:
 		return d.fileFailure(err, "Writing "+path, written, false)
 	}
+	// From now on, a failure names the directories created, which it leaves, as a success does.
+	failed := func(r result) result {
+		if len(created) > 0 {
+			r.text += " " + createdText(created)
+		}
+		return r
+	}
 	file, isNew, err := openRegular(path)
 	var notRegular *notRegularError
 	switch {
 	case errors.As(err, &notRegular):
-		return *d.notRegular(path, notRegular.info, written)
+		return failed(*d.notRegular(path, notRegular.info, written))
 	case err != nil:
-		return d.fileFailure(err, "Writing "+path, written, false)
+		return failed(d.fileFailure(err, "Writing "+path, written, false))
 	}
 	// once truncated, a failure leaves the file partial
 	truncated := false
@@ -149,7 +156,7 @@ func (d *daemon) writeFileNow(path, content string) result {
 		err = closeErr
 	}
 	if err != nil {
-		return d.fileFailure(err, "Writing "+path, written, truncated)
+		return failed(d.fileFailure(err, "Writing "+path, written, truncated))
 	}
 	text := fmt.Sprintf("Replaced %s (%s, %s before).", path, sizeText(len(content)), sizeText(int(info.Size())))
 	if isNew {
