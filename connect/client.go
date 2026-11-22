@@ -28,6 +28,11 @@ func HTTPClient(side mtls.Source) (*http.Client, error) {
 	}
 	transport := defaultTransport.Clone()
 	transport.TLSClientConfig = config
+	// The trailer of a download (HeaderError) must fit whole in the read buffer of its connection,
+	// 4 KiB by default, beyond which Go fails the body ("suspiciously long trailer"), the download
+	// then told cut: its sentence names a path of up to 4 KiB (PATH_MAX on Linux), twice for a file
+	// whose size is not that of its content, a control character encoded in three bytes.
+	transport.ReadBufferSize = 64 << 10
 	// the default already, set here for Proxy to tell the proxy of every request
 	transport.Proxy = http.ProxyFromEnvironment
 	// The connections kept idle were checked against the CRL held before: the next request

@@ -768,6 +768,88 @@ func TestDownloadChangedNames(t *testing.T) {
 	}
 }
 
+// deepPath returns a path under base of about length bytes, its components made of part repeated
+// (200 bytes at most each), its directories created.
+func deepPath(t *testing.T, base string, length int, part string) string {
+	t.Helper()
+	path := base
+	for len(path)+200 < length-len("/app.log") {
+		path = filepath.Join(path, strings.Repeat(part, 200/len(part)))
+	}
+	if pad := length - len("/app.log") - len(path) - 1; pad > 0 {
+		path = filepath.Join(path, strings.Repeat(part, pad/len(part)))
+	}
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(path, "app.log")
+}
+
+// TestDownloadLongTrailer guards a Rat-Error trailer longer than the read buffer Go's client has
+// by default (4 KiB), read by the client rat uses (connect.HTTPClient): its sentence reaches it,
+// rather than the body failed ("suspiciously long trailer"), the download told cut. A file ending
+// before its size, unchanged (as /sys, emulated), whose sentence names its path twice, at a path of
+// escapes, encoded threefold; and on Linux, whose paths reach 4 KiB, a file changed at a path that
+// long.
+func TestDownloadLongTrailer(t *testing.T) {
+	var change, look atomic.Value
+	// set before ratd serves, and restored once it stopped (cleanups run in reverse order)
+	opened, stat := downloadOpened, statOnceRead
+	downloadOpened = func(path string) { change.Load().(func(string))(path) }
+	statOnceRead = func(file *os.File) (fs.FileInfo, error) {
+		return look.Load().(func(*os.File) (fs.FileInfo, error))(file)
+	}
+	t.Cleanup(func() { downloadOpened, statOnceRead = opened, stat })
+	r, client, home := transferRatd(t)
+	type tc struct {
+		what, path, told string
+		change           func(string)
+	}
+	cases := []tc{{"ending before its size, under escapes", deepPath(t, filepath.Join(home, "esc"), 1000, "\x1b"),
+		" tells a size that is not that of its content", func(path string) {
+			// as a file of /sys: its size tells a page, its content ends before it, unchanged
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if err := os.Truncate(path, 10); err != nil {
+				t.Error(err)
+			}
+			look.Store(func(*os.File) (fs.FileInfo, error) { return info, nil })
+		}}}
+	if runtime.GOOS == "linux" {
+		cases = append(cases, tc{"changed, at a path of 4 KiB", deepPath(t, filepath.Join(home, "long"), 4060, "a"),
+			" changed while it was read", func(path string) {
+				file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+				if err == nil {
+					_, err = file.WriteString("more\n")
+					_ = file.Close()
+				}
+				if err != nil {
+					t.Error(err)
+				}
+			}})
+	}
+	for _, c := range cases {
+		if err := os.WriteFile(c.path, []byte(strings.Repeat("line\n", 1000)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		look.Store(func(file *os.File) (fs.FileInfo, error) { return file.Stat() })
+		change.Store(c.change)
+		download, err := connect.StartDownload(context.Background(), client, r.addr, c.path)
+		if err != nil {
+			t.Fatalf("%s: %v", c.what, err)
+		}
+		_, err = download.WriteTo(io.Discard)
+		_ = download.Close()
+		var refused *connect.Refusal
+		if !errors.As(err, &refused) || !strings.HasPrefix(refused.Text, c.path+c.told) {
+			t.Errorf("%s: expected the sentence of the trailer, got %v", c.what, err)
+		}
+	}
+}
+
 // TestDownloadLookFailed guards a download whose look at its file once read fails (fstat, a disk
 // failing): told as a read failing, with the reason of the system, rather than as a change the
 // file may not have, at each of the three looks: a file read whole and one ending before its size
