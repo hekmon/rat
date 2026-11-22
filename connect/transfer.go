@@ -62,6 +62,10 @@ var (
 	// ErrChanged is the error of an upload whose file changed while it was read: ratd wrote
 	// nothing.
 	ErrChanged = errors.New("the file changed while it was read")
+	// ErrRead is the kind of a [TransferError] of an upload whose file failed to read (a disk
+	// failing, a file system gone), its reason the error of the read: ratd wrote nothing. A failure
+	// on the side of the caller, told apart from the connection lost or ratd failing.
+	ErrRead = errors.New("reading the file failed")
 	// ErrCut is the kind of a [TransferError] of a transfer cut before its end once ratd answered:
 	// a download whose body was cut short; an upload whose connection was lost once ratd gave its
 	// go-ahead (100), before the end of the file, ratd then writing nothing of it. Lost before any
@@ -75,9 +79,9 @@ var (
 )
 
 // TransferError is a transfer failed in a way its caller tells apart with errors.Is, its Kind
-// ([ErrCut], [ErrAnswerLost]), along with the Reason it failed: what the system gave ("unexpected
-// EOF"), or what came short. errors.As gives the reason apart, for a caller to tell it in its own
-// words, which errors.Unwrap does not give of an error wrapping both.
+// ([ErrCut], [ErrAnswerLost], [ErrRead]), along with the Reason it failed: what the system gave
+// ("unexpected EOF"), or what came short. errors.As gives the reason apart, for a caller to tell
+// it in its own words, which errors.Unwrap does not give of an error wrapping both.
 type TransferError struct {
 	Kind   error
 	Reason error

@@ -606,7 +606,7 @@ func canceledText(j *job) string {
 // failureText tells j failing with err: its answer lost once all of it was sent, ratd possibly
 // having written it, a cancel coming then too late to cut it; canceled (whatever the error the cut
 // gave); refused or failed by ratd (its sentence); ratd older than the transfers or not reached;
-// the file changed while read; the copy cut.
+// the file changed while read, or failing to read, as the system tells it; the copy cut.
 func (t *transfers) failureText(j *job, err error) (string, bool, bool) {
 	var refused *connect.Refusal
 	var failed *connect.TransferError
@@ -625,6 +625,9 @@ func (t *transfers) failureText(j *job, err error) (string, bool, bool) {
 	case errors.Is(err, connect.ErrChanged):
 		return fmt.Sprintf("%s changed while it was read: it may still be written. Upload it again once it is "+
 			"complete.", j.request.local), true, false
+	case errors.Is(err, connect.ErrRead) && errors.As(err, &failed):
+		return t.localFailure(failed.Reason, "Reading", j.request.local) + fmt.Sprintf(" %s is as it was.",
+			j.request.destination()), true, false
 	case errors.Is(err, connect.ErrCut) && errors.As(err, &failed):
 		return fmt.Sprintf("The copy of %s to %s was cut: %v. %s is as it was.", j.request.source(),
 			j.request.destination(), failed.Reason, j.request.destination()), true, false

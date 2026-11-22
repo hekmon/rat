@@ -192,6 +192,16 @@ type transferTest struct {
 // fresh transfers directory, its links resolved, and a harness connected to it.
 func startTransfers(t *testing.T) *transferTest {
 	t.Helper()
+	local, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return startTransfersAt(t, local)
+}
+
+// startTransfersAt is startTransfers with local as the transfers directory.
+func startTransfersAt(t *testing.T, local string) *transferTest {
+	t.Helper()
 	bundle := newBundle(t)
 	fake := &fakeTransfers{}
 	mux := http.NewServeMux()
@@ -199,10 +209,6 @@ func startTransfers(t *testing.T) *transferTest {
 	mux.HandleFunc("POST "+connect.UploadPath, fake.upload)
 	mux.HandleFunc("GET "+connect.DownloadPath, fake.download)
 	addr := fakeRatd(t, bundle, mux, nil)
-	local, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
 	remote, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -523,6 +529,27 @@ func TestUploadCancelTooLateAnswerLost(t *testing.T) {
 	}
 	if _, err := os.Lstat(remote); err != nil {
 		t.Errorf("expected the fake to write the file: %v", err)
+	}
+}
+
+// TestUploadFileReadFailed guards an upload whose local file fails to read (a disk failing, a file
+// system gone): told as the system tells it, a local failure, rather than ratd unreachable, ratd
+// being fine, the remote file as it was. The file failing is /proc/self/mem, whose reads fail at
+// its start (Linux), rat running in the process of the test: the test needs it.
+func TestUploadFileReadFailed(t *testing.T) {
+	if _, err := os.Stat("/proc/self/mem"); err != nil {
+		t.Skip("needs /proc/self/mem, a file whose reads fail (Linux)")
+	}
+	self, err := filepath.EvalSymlinks("/proc/self")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tt := startTransfersAt(t, self)
+	remote := filepath.Join(tt.remote, "mem")
+	tt.expect(t, uploadTool, map[string]any{"local_path": "mem", "remote_path": remote}, true,
+		"Reading mem failed: input/output error. "+remote+" is as it was.")
+	if _, err := os.Lstat(remote); err == nil {
+		t.Error("expected no remote file written")
 	}
 }
 
