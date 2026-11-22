@@ -416,7 +416,9 @@ func (t *transfers) localFailure(err error, what, local string) string {
 
 // await waits for j, for a call made at called, until it ends, transferWait passes, or ctx is done,
 // and returns what the call tells: how the transfer ended, or its progress. A job ended is told
-// once, then forgotten: the same call again starts a new transfer.
+// once, then forgotten: the same call again starts a new transfer. A call canceled tells nothing
+// and forgets nothing, even as its job ends, which select may pick as well: the harness drops its
+// text (see callTransfer), and the next call tells how the job ended.
 func (t *transfers) await(ctx context.Context, j *job, called time.Time) (string, bool) {
 	before := j.moved.Load()
 	timer := time.NewTimer(transferWait)
@@ -426,6 +428,10 @@ func (t *transfers) await(ctx context.Context, j *job, called time.Time) (string
 	case <-timer.C:
 		return t.progressText(j, before), false
 	case <-ctx.Done():
+		return "", false
+	}
+	if ctx.Err() != nil {
+		// canceled as the job ended: kept for the next call
 		return "", false
 	}
 	t.forget(j)
@@ -467,6 +473,10 @@ func (t *transfers) cancel(ctx context.Context, q transferRequest) (string, bool
 		return fmt.Sprintf("The transfer to %s is still ending: call %s again with the same paths to know how it "+
 			"ended.", q.destination(), q.tool), true
 	case <-ctx.Done():
+		return "", false
+	}
+	if ctx.Err() != nil {
+		// canceled as the job ended: kept for the next call (see await)
 		return "", false
 	}
 	t.forget(j)

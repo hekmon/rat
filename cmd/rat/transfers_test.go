@@ -746,6 +746,33 @@ func TestTransferRate(t *testing.T) {
 	}
 }
 
+// TestTransferCanceledCallKeepsJob guards a call that the harness cancels as its job ends, waiting
+// for it or canceling it: the call tells nothing, its text dropped, and keeps the job for the next
+// call to tell how it ended, rather than forget it untold, select picking at random between the
+// end of the job and the cancel of the call.
+func TestTransferCanceledCallKeepsJob(t *testing.T) {
+	q := transferRequest{tool: uploadTool, local: "up.bin", remote: "/r/up.bin"}
+	for _, way := range []string{"waiting", "canceling"} {
+		for range 20 {
+			j := &job{request: q, cancel: func() {}, done: make(chan struct{}), text: "Uploaded up.bin to /r/up.bin."}
+			close(j.done)
+			tr := &transfers{jobs: map[string]*job{q.key(): j}}
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			var text string
+			if way == "waiting" {
+				text, _ = tr.await(ctx, j, time.Now())
+			} else {
+				text, _ = tr.cancel(ctx, q)
+			}
+			if text != "" || tr.jobs[q.key()] != j {
+				t.Fatalf("%s, the call canceled as its job ended: expected nothing told and the job kept, got %q, "+
+					"kept %v", way, text, tr.jobs[q.key()] == j)
+			}
+		}
+	}
+}
+
 // TestTransferCancel guards a transfer stalling, then canceled: the call tells nothing moved; a
 // cancel stops it, leaving the destination as it was, with no temporary file; a transfer to the
 // same destination from another source is refused while it runs, and a cancel naming another
