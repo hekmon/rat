@@ -411,6 +411,18 @@ func TestRelayFailures(t *testing.T) {
 	})
 }
 
+// TestRelayErrorCut guards the first line of an HTTP error of ratd, told to the harness cut to 200
+// bytes: at the start of a character, rather than within it, which leaves a text that is not
+// UTF-8, the harness getting U+FFFD in its place once encoded in JSON.
+func TestRelayErrorCut(t *testing.T) {
+	r := &relay{target: flags.Target{Server: "ratd:7443"}}
+	text := r.invalidResponseText(response{status: http.StatusBadGateway, contentType: "text/plain",
+		body: []byte(strings.Repeat("a", 199) + "é and more\nanother line")})
+	if expected := "ratd at ratd:7443 answered HTTP 502: " + strings.Repeat("a", 199); text != expected {
+		t.Errorf("expected %q, got %q", expected, text)
+	}
+}
+
 // TestRelayWaitTimeout guards that a call waiting (wait_window) gets what it waits on top of the
 // timeout of a request: ratd answering it after the timeout of the other calls is relayed, while
 // another call answered as late fails.
