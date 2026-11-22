@@ -219,6 +219,8 @@ Comments rot quietly, tests break loudly. When a decision can be checked, write 
 - CI (`.github/workflows/tests.yml`) runs them with the tmux of several systems, from the oldest
   supported to the newest Fedora packages, and on macOS, at each push and once a week: what rat
   relies on changes from one version of tmux to the next, without a commit here.
+- rat and rat-tool are released for Windows too, where no test runs: their packages build there
+  all the same, tests included, CI vetting them for Windows.
 
 ### How we work
 

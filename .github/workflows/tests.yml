@@ -44,6 +44,10 @@ jobs:
           fi
       - name: Vet
         run: go vet ./...
+      # rat and rat-tool are released for Windows, where their tests do not run: their packages,
+      # tests included, are vetted for it (ratd and tmux need tmux, which is Unix's)
+      - name: Vet for Windows
+        run: GOOS=windows go vet $(go list ./... | grep -v -e '/cmd/ratd$' -e '/tmux$')
       - name: Build for every platform released
         run: |
           # as build.sh does: no ratd on Windows, as it needs tmux

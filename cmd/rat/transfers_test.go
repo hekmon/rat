@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -250,13 +249,6 @@ func expectNoTemporary(t *testing.T, root string) {
 		}
 		return nil
 	})
-}
-
-// umask returns the umask of the process, which the modes of new files go through.
-func umask() fs.FileMode {
-	mask := syscall.Umask(0)
-	syscall.Umask(mask)
-	return fs.FileMode(mask)
 }
 
 // shortWait sets transferWait to wait for the test, until it ends.
