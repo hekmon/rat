@@ -688,7 +688,8 @@ a first read giving bytes before anything is sent; ending before its size, uncha
 trailer. Rejected: reading it to its end, as `read_file` does, before its headers, a second way of
 reading in ratd for files a terminal copies. A change in an upload is
 rat's to find: it ends the body with an error instead of its last chunk, and ratd, seeing the body
-cut, drops its temporary file. A cancel ends it the same way, until the last chunk is sent: past
+cut, drops its temporary file; a file read past the size it had when opened is cut at once, rather
+than sent for as long as it grows. A cancel ends it the same way, until the last chunk is sent: past
 it, ratd may be writing the file, and the client waits for its answer rather than leave unknown
 whether it was written, unless it stops, nobody reading that answer any more (`connect.Upload`
 holds the client side). No digest: TLS authenticates every record, so a byte altered on the way

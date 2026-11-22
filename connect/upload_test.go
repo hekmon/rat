@@ -261,6 +261,74 @@ func TestUploadChanged(t *testing.T) {
 	}
 }
 
+// growingFile is a file a command writes faster than it is read, as a dump still written: opened
+// bytes when opened, then never an end, until stopped.
+type growingFile struct {
+	opened int64
+	// mu guards the fields below
+	mu      sync.Mutex
+	read    int64
+	stopped bool
+}
+
+func (f *growingFile) Read(p []byte) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.stopped {
+		return 0, io.EOF
+	}
+	clear(p)
+	f.read += int64(len(p))
+	return len(p), nil
+}
+
+func (f *growingFile) Stat() (fs.FileInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return testInfo{size: max(f.opened, f.read), mode: 0o644}, nil
+}
+
+func (f *growingFile) Close() error {
+	return nil
+}
+
+// taken returns the bytes read from the file, and stops it growing with stop.
+func (f *growingFile) taken(stop bool) int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.stopped = f.stopped || stop
+	return f.read
+}
+
+// TestUploadGrowing guards a file growing past its size when opened, written faster than it is
+// sent (a dump still written): Upload fails with ErrChanged as soon as it read past that size,
+// rather than sending whatever the file grows to for as long as it grows, ratd writing it all to
+// its temporary file.
+func TestUploadGrowing(t *testing.T) {
+	server, client := fakeRatd(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+	})
+	file := &growingFile{opened: 1 << 20}
+	done := make(chan error, 1)
+	go func() {
+		_, err := Upload(context.Background(), nil, client, server, file, "/x", false)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrChanged) {
+			t.Errorf("expected ErrChanged, got %v", err)
+		}
+		if read := file.taken(false); read > 2<<20 {
+			t.Errorf("expected the upload stopped past the size when opened (1 MiB), %d bytes were read", read)
+		}
+	case <-time.After(10 * time.Second):
+		read := file.taken(true)
+		<-done
+		t.Errorf("a file of 1 MiB when opened, growing: still uploading after 10 s, %d MiB read", read>>20)
+	}
+}
+
 // TestUploadReadFailed guards a file failing to read while it is uploaded (a disk failing), or to
 // be looked at once read: the body ends with an error instead of its end, so that ratd sees it
 // cut, and Upload fails with a TransferError of kind ErrRead, its reason the error of the read or

@@ -44,9 +44,11 @@ type Uploaded struct {
 //
 // src is stamped when opened and once read (see package stamp): a file that changed meanwhile (a
 // log still written, a build output) ends the body with an error instead of its end, and Upload
-// fails with [ErrChanged], ratd writing nothing. A read of src failing, or the look at it once
-// read, ends it so too, Upload failing with a [TransferError] of kind [ErrRead], its reason that
-// error.
+// fails with [ErrChanged], ratd writing nothing. A file read past its size when opened fails so
+// at once, rather than once it stops growing: one written faster than the link would otherwise be
+// sent for as long as it grows, filling the disk of ratd. A read of src failing, or the look at it
+// once read, ends it so too, Upload failing with a [TransferError] of kind [ErrRead], its reason
+// that error.
 //
 // Two signals stop an upload. Closing cancel (unless nil), as an agent cancels, cuts it, ratd
 // writing nothing, Upload returning [context.Canceled], unless the whole file was sent: from then
@@ -68,7 +70,7 @@ func Upload(ctx context.Context, cancel <-chan struct{}, client *http.Client, se
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("upload of %s: not a regular file", info.Name())
 	}
-	body := &uploadBody{src: src, opened: stamp.Of(info)}
+	body := &uploadBody{src: src, opened: stamp.Of(info), size: info.Size()}
 	// The request is cut at once by ctx, whatever was sent, and by cancel unless the file was sent
 	// whole (see uploadBody.cancel): a write blocked on a stalled connection never sees a cancel in
 	// the body. It is cut by these alone, once they failed the body with why, rather than by ctx
@@ -160,6 +162,8 @@ func afterClosed(c <-chan struct{}, f func()) (stop func()) {
 type uploadBody struct {
 	src    fs.File
 	opened stamp.Stamp
+	// size is the size of src when opened: read past it, src grew
+	size int64
 	// mu guards the fields below
 	mu sync.Mutex
 	// n counts the bytes read from src
@@ -183,6 +187,11 @@ func (b *uploadBody) Read(p []byte) (int, error) {
 	switch {
 	case b.err != nil:
 		// cancelled while reading
+		return 0, b.err
+	case b.n > b.size:
+		// grown: changed, told at once rather than once it stops growing, which a file written
+		// faster than the link never does
+		b.err = ErrChanged
 		return 0, b.err
 	case err == io.EOF:
 		// a look failing is a read failing, rather than a change the file may not have
