@@ -193,9 +193,9 @@ func TestUploadRefused(t *testing.T) {
 }
 
 // TestUploadCut guards an upload whose connection is lost: once ratd gave its go-ahead, before the
-// end of the file, a TransferError of kind ErrCut, ratd writing nothing, its reason the one the
-// system gave rather than the request; with no go-ahead of ratd, or once the file was sent whole,
-// ratd then possibly writing it, the error as net/http gives it.
+// end of the file, a TransferError of kind ErrCut, ratd writing nothing; once the file was sent
+// whole, of kind ErrAnswerLost, ratd possibly writing it; both with the reason the system gave
+// rather than the request; with no go-ahead of ratd, the error as net/http gives it.
 func TestUploadCut(t *testing.T) {
 	server, client := fakeRatd(t, func(w http.ResponseWriter, r *http.Request) {
 		switch path, _ := DecodePath(r.Header.Get(HeaderPath)); path {
@@ -212,11 +212,12 @@ func TestUploadCut(t *testing.T) {
 		// size is the size of the file: beyond what the buffers of a connection hold, the
 		// connection is lost before its end
 		size int
-		cut  bool
+		// kind is the kind of TransferError expected, nil for the error of net/http alone
+		kind error
 	}{
-		{"/go-ahead", 64 << 20, true},
-		{"/none", 64 << 20, false},
-		{"/whole", 1024, false},
+		{"/go-ahead", 64 << 20, ErrCut},
+		{"/none", 64 << 20, nil},
+		{"/whole", 1024, ErrAnswerLost},
 	} {
 		file := &testFile{size: tc.size, mode: 0o644}
 		_, err := Upload(context.Background(), nil, client, server, file, tc.path, false)
@@ -224,9 +225,11 @@ func TestUploadCut(t *testing.T) {
 		switch {
 		case err == nil:
 			t.Errorf("%s: expected the upload to fail", tc.path)
-		case errors.Is(err, ErrCut) != tc.cut:
-			t.Errorf("%s: expected ErrCut %v, got %v", tc.path, tc.cut, err)
-		case tc.cut && (!errors.As(err, &failed) || strings.Contains(failed.Reason.Error(), server)):
+		case tc.kind == nil && errors.As(err, &failed):
+			t.Errorf("%s: expected the error of net/http alone, got %v", tc.path, err)
+		case tc.kind != nil && !errors.Is(err, tc.kind):
+			t.Errorf("%s: expected %v, got %v", tc.path, tc.kind, err)
+		case tc.kind != nil && (!errors.As(err, &failed) || strings.Contains(failed.Reason.Error(), server)):
 			t.Errorf("%s: expected the reason alone, rather than the request, got %v", tc.path, err)
 		}
 	}

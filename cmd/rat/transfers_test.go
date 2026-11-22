@@ -29,17 +29,19 @@ const fakeChunk = 32 << 10
 
 // fakeTransfers serves the file transfers as ratd does, at paths of the machine of the test, with
 // what a test needs of a ratd: older than the transfers, slow (a pause between chunks), stalling
-// after its first chunk until stall is closed, failing a download in its trailer, or cutting a
-// transfer after its first chunk.
+// after its first chunk until stall is closed, failing a download in its trailer, cutting a
+// transfer after its first chunk, or losing the answer to an upload it received whole
+// (dropAnswer).
 type fakeTransfers struct {
 	// mu guards the fields below
-	mu       sync.Mutex
-	requests int
-	old      bool
-	pause    time.Duration
-	stall    chan struct{}
-	failWith string
-	cut      bool
+	mu         sync.Mutex
+	requests   int
+	old        bool
+	pause      time.Duration
+	stall      chan struct{}
+	failWith   string
+	cut        bool
+	dropAnswer bool
 }
 
 // take counts a transfer request, and returns how to answer it.
@@ -62,6 +64,25 @@ func (f *fakeTransfers) set(change func(*fakeTransfers)) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	change(f)
+}
+
+// answerLost tells whether the fake loses its answer to an upload it received whole (see
+// dropAnswer), hanging up, as a link going down then.
+func (f *fakeTransfers) answerLost(w http.ResponseWriter) bool {
+	f.mu.Lock()
+	drop := f.dropAnswer
+	f.mu.Unlock()
+	if drop {
+		hangUp(w)
+	}
+	return drop
+}
+
+// hangUp closes the connection of the request w answers, with no answer: the connection lost.
+func hangUp(w http.ResponseWriter) {
+	if conn, _, err := http.NewResponseController(w).Hijack(); err == nil {
+		_ = conn.Close()
+	}
 }
 
 func (f *fakeTransfers) upload(w http.ResponseWriter, r *http.Request) {
@@ -91,9 +112,7 @@ func (f *fakeTransfers) upload(w http.ResponseWriter, r *http.Request) {
 		}
 		if first && cut {
 			// the connection lost in the middle of the body, as when ratd is killed
-			if conn, _, err := http.NewResponseController(w).Hijack(); err == nil {
-				_ = conn.Close()
-			}
+			hangUp(w)
 			return
 		}
 		if first && stall != nil {
@@ -107,6 +126,9 @@ func (f *fakeTransfers) upload(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := os.WriteFile(path, received.Bytes(), mode); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if f.answerLost(w) {
 		return
 	}
 	written, _ := os.Stat(path)
@@ -452,6 +474,55 @@ func TestUploadFileRefused(t *testing.T) {
 	}
 	if requests := tt.fake.count(); requests != 0 {
 		t.Errorf("expected no request to ratd, got %d", requests)
+	}
+}
+
+// TestUploadFileAnswerLost guards an upload whose connection is lost once all of it was sent,
+// before ratd answered, as a link going down then: told so, the remote file possibly written,
+// rather than ratd unreachable.
+func TestUploadFileAnswerLost(t *testing.T) {
+	tt := startTransfers(t)
+	tt.fake.set(func(f *fakeTransfers) { f.dropAnswer = true })
+	randomFile(t, filepath.Join(tt.local, "up.bin"), 1<<10, 0o644)
+	remote := filepath.Join(tt.remote, "up.bin")
+	text := tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote}, true,
+		"The answer of ratd to the copy of up.bin to "+remote+" was lost once all of it was sent (")
+	if !strings.HasSuffix(text, "): "+remote+" may be written or not. Check it before using it, or call upload_file "+
+		"again with overwrite.") {
+		t.Errorf("expected the remote file told possibly written, got %q", text)
+	}
+}
+
+// TestUploadCancelTooLateAnswerLost guards a cancel coming once all of an upload was sent, too late
+// to cut it, ratd then writing the file and its answer lost, as a link going down then: told too
+// late, the remote file possibly written, rather than as it was.
+func TestUploadCancelTooLateAnswerLost(t *testing.T) {
+	shortWait(t, time.Second)
+	tt := startTransfers(t)
+	stall := make(chan struct{})
+	release := sync.OnceFunc(func() { close(stall) })
+	t.Cleanup(release)
+	// the fake reads a first chunk, then stalls, the rest in the buffers of the connection; once
+	// released, it writes the file, then hangs up
+	tt.fake.set(func(f *fakeTransfers) { f.stall, f.dropAnswer = stall, true })
+	randomFile(t, filepath.Join(tt.local, "up.bin"), 64<<10, 0o644)
+	remote := filepath.Join(tt.remote, "up.bin")
+	args := map[string]any{"local_path": "up.bin", "remote_path": remote}
+	tt.expect(t, uploadTool, args, false, "Still copying up.bin to "+remote+": 64 KiB of 64 KiB")
+	// sent whole: the cancel comes too late, ratd answering meanwhile, its answer lost
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		release()
+	}()
+	args["cancel"] = true
+	text := tt.expect(t, uploadTool, args, true, "Too late to cancel: The answer of ratd to the copy of up.bin to "+
+		remote+" was lost once all of it was sent (")
+	if !strings.HasSuffix(text, "): "+remote+" may be written or not. Check it before using it, or call upload_file "+
+		"again with overwrite.") {
+		t.Errorf("expected the remote file told possibly written, got %q", text)
+	}
+	if _, err := os.Lstat(remote); err != nil {
+		t.Errorf("expected the fake to write the file: %v", err)
 	}
 }
 

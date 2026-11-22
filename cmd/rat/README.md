@@ -136,7 +136,8 @@ terminals are by name: the same call again waits for the rest, or tells how it e
 another source to the same destination is refused while it runs. Canceling a call (the harness
 giving up on it) ends its wait, not the transfer. `cancel` with the same paths stops it, leaving
 the destination as it was, decided at one point: before the last chunk of an upload (past it,
-ratd may be writing the file, and the call tells its answer), before the rename of a download.
+ratd may be writing the file, and the call tells its answer, or that it was lost, the file
+possibly written), before the rename of a download.
 Rejected: job identifiers, with tools to wait for, list and cancel jobs, which a context
 compaction loses, more tools for small models to juggle; a parameter for the wait, or a size
 choosing between waiting and a job, the speed of the link being unknown; MCP tasks (experimental
@@ -174,7 +175,8 @@ that rat offers its transfers, for ratd to write its texts accordingly, a header
 - **The file transfers** refused or failing are tool results marked as errors, with a sentence
   for the agent: ratd's, relayed, or rat's (the local side, a ratd older than the transfers,
   ratd unreachable, told as for a call; or the transfer cut once ratd answered, told so with the
-  reason the system gave, which `connect.ErrCut` tells apart).
+  reason the system gave, which `connect.ErrCut` tells apart; or an upload whose answer was lost
+  once all of it was sent, told possibly written, which `connect.ErrAnswerLost` tells apart).
 - **Transport failures**: no JSON-RPC response exists, while the harness waits for one matching
   its request. rat answers with a JSON-RPC error of its own, code -32050 (in the range JSON-RPC
   leaves to implementations, apart from the codes of MCP and its SDKs), telling what failed:

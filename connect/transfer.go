@@ -65,15 +65,19 @@ var (
 	// ErrCut is the kind of a [TransferError] of a transfer cut before its end once ratd answered:
 	// a download whose body was cut short; an upload whose connection was lost once ratd gave its
 	// go-ahead (100), before the end of the file, ratd then writing nothing of it. Lost before any
-	// answer of ratd, or once the file of an upload was sent whole, ratd then possibly writing it,
-	// a transfer fails with the error of net/http.
+	// answer of ratd, a transfer fails with the error of net/http; once the file of an upload was
+	// sent whole, with [ErrAnswerLost].
 	ErrCut = errors.New("transfer cut")
+	// ErrAnswerLost is the kind of a [TransferError] of an upload whose connection was lost once
+	// its whole file was sent, before ratd answered: ratd may have written the file, which only its
+	// answer would have told.
+	ErrAnswerLost = errors.New("the answer of ratd lost once the file was sent whole")
 )
 
 // TransferError is a transfer failed in a way its caller tells apart with errors.Is, its Kind
-// ([ErrCut]), along with the Reason it failed: what the system gave ("unexpected EOF"), or what
-// came short. errors.As gives the reason apart, for a caller to tell it in its own words, which
-// errors.Unwrap does not give of an error wrapping both.
+// ([ErrCut], [ErrAnswerLost]), along with the Reason it failed: what the system gave ("unexpected
+// EOF"), or what came short. errors.As gives the reason apart, for a caller to tell it in its own
+// words, which errors.Unwrap does not give of an error wrapping both.
 type TransferError struct {
 	Kind   error
 	Reason error

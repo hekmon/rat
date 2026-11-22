@@ -38,7 +38,9 @@ type Uploaded struct {
 // byte is sent, client waiting for the go-ahead of ratd ([HTTPClient] waits a second for it). A
 // refusal or failure of ratd is a [Refusal], with the sentence ratd wrote for the agent;
 // [ErrNoTransfers] tells a ratd older than the transfers; a [TransferError] of kind [ErrCut] the
-// connection lost once ratd gave its go-ahead, before the end of the file.
+// connection lost once ratd gave its go-ahead, before the end of the file; of kind
+// [ErrAnswerLost] lost once the file was sent whole, before ratd answered, ratd then possibly
+// writing it.
 //
 // src is stamped when opened and once read (see package stamp): a file that changed meanwhile (a
 // log still written, a build output) ends the body with an error instead of its end, and Upload
@@ -109,12 +111,15 @@ func Upload(ctx context.Context, cancel <-chan struct{}, client *http.Client, se
 		return nil, failure
 	}
 	switch {
-	case err != nil && answered.Load() && !body.whole():
+	case err != nil && body.whole():
+		// lost once the file was sent whole: ratd may be writing it, which only its answer would
+		// have told
+		return nil, &TransferError{Kind: ErrAnswerLost, Reason: innermost(err)}
+	case err != nil && answered.Load():
 		// lost once ratd gave its go-ahead, before the end of the file: cut, ratd writing nothing
 		return nil, &TransferError{Kind: ErrCut, Reason: innermost(err)}
 	case err != nil:
-		// ratd not reached, or lost before its go-ahead; or lost once the file was sent whole, ratd
-		// then possibly writing it, which only its answer would tell
+		// ratd not reached, or lost before its go-ahead
 		return nil, err
 	}
 	defer resp.Body.Close()
