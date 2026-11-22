@@ -739,6 +739,14 @@ func (t *transfers) runDownload(ctx context.Context, j *job) (string, bool, bool
 	if err != nil {
 		return t.localFailure(err, "Writing", local), true, false
 	}
+	// From now on, a failure names the directories created, which it leaves, as a download
+	// creating the file does: an agent catches a typo the same way.
+	failed := func(text string, isError, canceled bool) (string, bool, bool) {
+		if len(created) > 0 {
+			text += " " + t.createdText(created)
+		}
+		return text, isError, canceled
+	}
 	// The file was looked at before the request (see prepare), a look stopping at the first
 	// directory missing, which tells the file missing whatever its name. Once they are created,
 	// it is looked at again, before any byte is written: the temporary file, under a name of its
@@ -747,12 +755,12 @@ func (t *transfers) runDownload(ctx context.Context, j *job) (string, bool, bool
 	// cut, only the bytes already on their way lost.
 	if len(created) > 0 {
 		if _, err := t.root.Lstat(local); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return t.localFailure(err, "Writing", local), true, false
+			return failed(t.localFailure(err, "Writing", local), true, false)
 		}
 	}
 	tmp, tmpName, err := t.createTemporary(local, download.Mode)
 	if err != nil {
-		return t.localFailure(err, "Writing", local), true, false
+		return failed(t.localFailure(err, "Writing", local), true, false)
 	}
 	// Whatever happens next, the temporary file goes: put in place, it is already gone, or left as
 	// a second name of the file (see place).
@@ -769,18 +777,18 @@ func (t *transfers) runDownload(ctx context.Context, j *job) (string, bool, bool
 	switch {
 	case errors.As(err, &pathErr):
 		// writing the local file failed
-		return t.localFailure(err, "Writing", local), true, false
+		return failed(t.localFailure(err, "Writing", local), true, false)
 	case err != nil:
-		return t.failureText(j, err)
+		return failed(t.failureText(j, err))
 	case !j.beginPlacing():
-		return canceledText(j), false, true
+		return failed(canceledText(j), false, true)
 	}
 	replaced, kept, refused, err := t.place(tmpName, local, j.request.overwrite)
 	switch {
 	case refused != "":
-		return refused, true, false
+		return failed(refused, true, false)
 	case err != nil:
-		return t.localFailure(err, "Writing", local), true, false
+		return failed(t.localFailure(err, "Writing", local), true, false)
 	}
 	how := "created"
 	if replaced {
@@ -792,10 +800,16 @@ func (t *transfers) runDownload(ctx context.Context, j *job) (string, bool, bool
 			connect.FormatMode(kept), connect.FormatMode(download.Mode))
 	}
 	if len(created) > 0 {
-		text += fmt.Sprintf(" Missing directories created in %s: %s. Check the path if you did not mean them.", t.dir,
-			strings.Join(created, ", "))
+		text += " " + t.createdText(created)
 	}
 	return text, false, false
+}
+
+// createdText names the directories a download created in the transfers directory (see
+// createDirectories), for an agent to catch a typo in its path.
+func (t *transfers) createdText(created []string) string {
+	return fmt.Sprintf("Missing directories created in %s: %s. Check the path if you did not mean them.", t.dir,
+		strings.Join(created, ", "))
 }
 
 // createDirectories creates dir, within the transfers directory, and its missing parents, and

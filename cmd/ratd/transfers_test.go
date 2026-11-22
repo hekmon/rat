@@ -237,8 +237,9 @@ func TestUploadNameNotUTF8(t *testing.T) {
 // overwrite it can not read, a body declared other than bytes, an existing file without
 // overwrite, a directory, a FIFO, a symbolic link (telling where it leads, even nowhere), a path
 // under a file, a denied permission naming the user, and a name too long, though its temporary
-// file, named to fit, could take the bytes, even under a directory to create. The file existing
-// stays as it was, and no temporary file is left. The endpoints answer their method only.
+// file, named to fit, could take the bytes, even under a directory to create, which it names. The
+// file existing stays as it was, and no temporary file is left. The endpoints answer their method
+// only.
 func TestUploadRefused(t *testing.T) {
 	r, client, home := transferRatd(t)
 	file := filepath.Join(home, "file")
@@ -309,7 +310,8 @@ func TestUploadRefused(t *testing.T) {
 		{"name too long", tooLong, false, nil, http.StatusBadRequest,
 			"Writing " + tooLong + " failed: file name too long."},
 		{"name too long under a directory to create", tooLongUnder, false, nil, http.StatusBadRequest,
-			"Writing " + tooLongUnder + " failed: file name too long."},
+			"Writing " + tooLongUnder + " failed: file name too long. Missing directories created: " +
+				filepath.Join(home, "new") + ". Check the path if you did not mean them."},
 	} {
 		// no permission is denied to root
 		if tc.status == http.StatusForbidden && os.Geteuid() == 0 {

@@ -149,8 +149,10 @@ put in place once complete: linked under its name without overwrite, which fails
 appeared meanwhile, renamed over the file it replaces with overwrite, the file replaced keeping
 its mode; missing directories are created, and named, and the destination looked at again once
 they are, before any byte is written: under a directory missing, the look made before the
-request could not tell a name too long. A symbolic link at the end of a local path is refused,
-telling where it leads; `os.Root` ignores `O_NOFOLLOW`, so rat looks at the file with
+request could not tell a name too long. A download failing once they were created names them
+too, leaving them; an upload cut or canceled can not name those ratd created, its answer never
+read. A symbolic link at the end of a local path is refused, telling where it leads; `os.Root`
+ignores `O_NOFOLLOW`, so rat looks at the file with
 `Root.Lstat`, then checks the file it opened is the one it looked at. An upload is stamped when
 opened and once read (`connect.Upload`): a file changing meanwhile fails the transfer, ratd
 writing nothing. A replaced file keeping permissions other than those of its source is told, as

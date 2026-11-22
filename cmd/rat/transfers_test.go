@@ -675,7 +675,8 @@ func TestDownloadFileLongName(t *testing.T) {
 // TestDownloadFileNameTooLong guards a download to a name longer than any file system takes,
 // though its temporary file, named to fit, could take the bytes: refused before any byte is
 // written, in the transfers directory before any request, and under a directory to create once
-// it is created, a look before the request stopping at it. No temporary file is left.
+// it is created, a look before the request stopping at it, the directory then named. No
+// temporary file is left.
 func TestDownloadFileNameTooLong(t *testing.T) {
 	tt := startTransfers(t)
 	remote := filepath.Join(tt.remote, "data.bin")
@@ -694,14 +695,16 @@ func TestDownloadFileNameTooLong(t *testing.T) {
 	}
 	under := filepath.Join("new", name)
 	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": under}, true,
-		"Writing "+under+" failed: file name too long.")
+		"Writing "+under+" failed: file name too long. Missing directories created in "+tt.local+": new. Check the "+
+			"path if you did not mean them.")
 	expectNoTemporary(t, tt.local)
 }
 
 // TestDownloadFileFailed guards downloads failing: refused by ratd (its sentence relayed), failed
 // by its trailer (a file changed while it read it), cut midway (the reason told, rather than
-// "<nil>", which errors.Unwrap gave of the cut connect tells), and from a ratd older than the
-// transfers, whoever runs it to be told; no file nor temporary file left.
+// "<nil>", which errors.Unwrap gave of the cut connect tells, and the directories it created
+// named, left), and from a ratd older than the transfers, whoever runs it to be told; no file nor
+// temporary file left.
 func TestDownloadFileFailed(t *testing.T) {
 	tt := startTransfers(t)
 	missing := filepath.Join(tt.remote, "missing")
@@ -715,11 +718,16 @@ func TestDownloadFileFailed(t *testing.T) {
 	tt.fake.set(func(f *fakeTransfers) { f.failWith, f.cut = "", true })
 	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": "a.bin"}, true,
 		"The copy of "+remote+" to a.bin was cut: unexpected EOF. a.bin is as it was.")
+	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": "new/a.bin"}, true,
+		"The copy of "+remote+" to new/a.bin was cut: unexpected EOF. new/a.bin is as it was. Missing directories "+
+			"created in "+tt.local+": new. Check the path if you did not mean them.")
 	tt.fake.set(func(f *fakeTransfers) { f.cut, f.old = false, true })
 	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": "a.bin"}, true,
 		"The ratd at "+tt.addr+" is older than this rat and serves no file transfers: whoever runs it must upgrade it.")
-	if _, err := os.Lstat(filepath.Join(tt.local, "a.bin")); err == nil {
-		t.Error("expected no file written")
+	for _, name := range []string{"a.bin", "new/a.bin"} {
+		if _, err := os.Lstat(filepath.Join(tt.local, name)); err == nil {
+			t.Errorf("expected no file written at %s", name)
+		}
 	}
 	expectNoTemporary(t, tt.local)
 }

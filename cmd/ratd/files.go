@@ -140,10 +140,16 @@ func (d *daemon) writeFileNow(path, content string) result {
 		text = fmt.Sprintf("Created %s (%s).", path, sizeText(len(content)))
 	}
 	if len(created) > 0 {
-		text += fmt.Sprintf(" Missing directories created: %s. Check the path if you did not mean them.",
-			strings.Join(created, ", "))
+		text += " " + createdText(created)
 	}
 	return result{text: text, attrs: []any{"created", isNew, "directories_created", len(created)}}
+}
+
+// createdText names the directories created (by createDirectories) for a file, for an agent to
+// catch a typo in its path.
+func createdText(created []string) string {
+	return fmt.Sprintf("Missing directories created: %s. Check the path if you did not mean them.",
+		strings.Join(created, ", "))
 }
 
 // createDirectories creates dir and its missing parents, as mkdir -p does, and returns the ones it

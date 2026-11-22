@@ -616,7 +616,8 @@ client checks, never through MCP: `/mcp` stays MCP only. The contract is declare
   of the file written in `Rat-Mode`, for rat to tell an agent that a replaced file kept a mode
   other than its source's: those ratd set, rather than those a look at the path finds once the
   file is placed, a file moved at once (a watcher of a spool directory) leaving the answer
-  without them. A 201 names the directories created, as `write_file` does.
+  without them. A 201 names the directories created, as `write_file` does, and so does a failure
+  once they were, which leaves them: the answer to an upload cut or canceled, nobody reads.
 - **`GET /download`**: the body of the answer is the file at the path `Rat-Path` names, with its
   permission bits in `Rat-Mode` and its size in `Rat-Size`. HEAD answers the headers alone.
 - The answers of both endpoints carry `Rat-Version`, the version of ratd: a 404 without it comes

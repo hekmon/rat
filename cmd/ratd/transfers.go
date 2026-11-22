@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -268,9 +267,17 @@ func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 	if refused != nil {
 		return refuse(w, transferStatus(refused.err), withAttrs(*refused, attrs))
 	}
+	// From now on, a failure names the directories created, which it leaves, as the answer of a
+	// file created does: an agent catches a typo the same way.
+	fail := func(status int, r result) result {
+		if len(created) > 0 {
+			r.text += " " + createdText(created)
+		}
+		return refuse(w, status, r)
+	}
 	writeFailure := func(err error) result {
 		err = targetError(err, path)
-		return refuse(w, transferStatus(err), withAttrs(d.fileFailure(err, "Writing "+path, written, false), attrs))
+		return fail(transferStatus(err), withAttrs(d.fileFailure(err, "Writing "+path, written, false), attrs))
 	}
 	// The place of the file is checked now, before any byte is sent, and again once they all came.
 	// A failure to look is refused now too, rather than met when placing the file, once all the
@@ -282,7 +289,7 @@ func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 	switch info, err := os.Lstat(path); {
 	case err == nil:
 		if r := checkReplaced(path, info, overwrite); r != nil {
-			return refuse(w, refusalStatus(r), withAttrs(*r, attrs))
+			return fail(refusalStatus(r), withAttrs(*r, attrs))
 		}
 	case !errors.Is(err, fs.ErrNotExist):
 		return writeFailure(err)
@@ -318,7 +325,7 @@ func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 	case body.err != nil:
 		// The client cut its body, rat failing it on purpose (its file changed, a cancel), or the
 		// connection was lost, or ratd stops (see cutOnStop): nobody may be left to read an answer.
-		return refuse(w, http.StatusBadRequest, result{err: d.cutError(body.err), attrs: attrs,
+		return fail(http.StatusBadRequest, result{err: d.cutError(body.err), attrs: attrs,
 			text: fmt.Sprintf("The upload to %s was cut before its end: nothing was written.", path)})
 	case err != nil:
 		return writeFailure(err)
@@ -326,7 +333,7 @@ func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 	replaced, kept, refused, err := placeFile(tmp.Name(), path, overwrite)
 	switch {
 	case refused != nil:
-		return refuse(w, refusalStatus(refused), withAttrs(*refused, attrs))
+		return fail(refusalStatus(refused), withAttrs(*refused, attrs))
 	case err != nil:
 		return writeFailure(err)
 	}
@@ -343,8 +350,7 @@ func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusCreated)
 	if len(created) > 0 {
-		_, _ = fmt.Fprintf(w, "Missing directories created: %s. Check the path if you did not mean them.",
-			strings.Join(created, ", "))
+		_, _ = io.WriteString(w, createdText(created))
 	}
 	return result{attrs: append(attrs, "status", http.StatusCreated)}
 }
