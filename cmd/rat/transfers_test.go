@@ -847,6 +847,36 @@ func TestTransferLong(t *testing.T) {
 	tt.expect(t, downloadTool, args, true, "big.bin exists: set overwrite to replace it.")
 }
 
+// TestTransferProgressSlow guards the progress of a transfer crawling: under 1 B/s, told 0 B/s and
+// no time left, rather than a time left next to 0 B/s; at a few bytes a second with a large file
+// left, a time left in hours, rather than its duration overflowing, told less than a minute or
+// negative.
+func TestTransferProgressSlow(t *testing.T) {
+	now := time.Now()
+	q := transferRequest{tool: downloadTool, local: "big.bin", remote: "/r/big.bin"}
+	for _, tc := range []struct {
+		what  string
+		moved int64
+		size  int64
+		told  string
+	}{
+		// 3 bytes in the last 30 seconds: 0.1 B/s
+		{"under 1 B/s", 3, 10 << 30, ", 0 B/s. "},
+		// 300 bytes in the last 30 seconds: 10 B/s, 1 PiB left, millions of years
+		{"10 B/s, 1 PiB left", 300, 1 << 50, " hours left. "},
+	} {
+		j := &job{request: q, started: now.Add(-2 * time.Minute), lastMoved: now.Add(-time.Second),
+			samples: []sample{{at: now.Add(-rateWindow), bytes: 100 << 20}}}
+		j.moved.Store(100<<20 + tc.moved)
+		j.size.Store(tc.size)
+		text := (&transfers{}).progressText(j, 100<<20)
+		if !strings.Contains(text, tc.told) || strings.Contains(text, "less than a minute") ||
+			strings.Contains(text, " -") {
+			t.Errorf("%s: expected %q, got %q", tc.what, tc.told, text)
+		}
+	}
+}
+
 // TestTransferRate guards the rate a progress tells: over about rateWindow for a transfer that kept
 // moving, since its first bytes for one younger, nothing before any byte moved, and nothing for one
 // that moved nothing for longer than rateWindow: neither its average since its start, nor the

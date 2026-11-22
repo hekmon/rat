@@ -955,8 +955,13 @@ func (t *transfers) progressText(j *job, before int64) string {
 	}
 	rate := j.rate(time.Now())
 	text += fmt.Sprintf(", %s/s", sizeText(int64(rate)))
-	if size > moved && rate > 0 {
-		text += ", " + leftText(time.Duration(float64(size-moved)/rate*float64(time.Second))) + " left"
+	// From a rate of 1 B/s, the least the text tells: under it, "0 B/s" would come with a time
+	// left. In seconds, capped before the conversion: a duration, an int64 of nanoseconds, holds 292
+	// years, which a large file at a few bytes a second exceeds, its overflow told "less than a
+	// minute" on some systems.
+	if size > moved && rate >= 1 {
+		left := min(float64(size-moved)/rate, float64(math.MaxInt64/int64(time.Second)))
+		text += ", " + leftText(time.Duration(left)*time.Second) + " left"
 	}
 	return text + fmt.Sprintf(". The copy goes on while you do something else: call %s again with the same paths "+
 		"for the rest, or with cancel to stop it.", j.request.tool)
