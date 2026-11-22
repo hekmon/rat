@@ -17,6 +17,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hekmon/rat/cmd/ratd/tools"
 	"github.com/hekmon/rat/connect"
@@ -547,8 +548,14 @@ func (r *relay) invalidResponseText(resp response) string {
 		text := fmt.Sprintf("ratd at %s answered HTTP %d", server, resp.status)
 		if first, _, _ := strings.Cut(strings.TrimSpace(string(resp.body)), "\n"); first != "" {
 			if len(first) > 200 {
-				// the half of a character cut, which JSON would hand the harness as U+FFFD, dropped
-				first = strings.ToValidUTF8(first[:200], "")
+				// cut at the start of a character, as package tempname cuts a name, rather than within
+				// it, which JSON would hand the harness as U+FFFD; the bytes before are kept as a
+				// shorter line keeps them, rather than every invalid one dropped (strings.ToValidUTF8)
+				n := 200
+				for back := 0; back < utf8.UTFMax-1 && !utf8.RuneStart(first[n]); back++ {
+					n--
+				}
+				first = first[:n]
 			}
 			text += ": " + first
 		}
