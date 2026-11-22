@@ -673,30 +673,45 @@ func TestTransferLong(t *testing.T) {
 }
 
 // TestTransferRate guards the rate a progress tells: over about rateWindow for a transfer that kept
-// moving, since its first bytes for one younger, near nothing for one stalled for longer than
-// rateWindow rather than its average since its start (which a transfer moving at the start of a
-// wait, then stalled, was told, with a time left), and nothing before any byte moved.
+// moving, since its first bytes for one younger, nothing before any byte moved, and nothing for one
+// that moved nothing for longer than rateWindow: neither its average since its start, nor the
+// bytes counted after its last sample over the time since, which count leaves up to a second of
+// (a transfer moving at the start of a wait, then stalled, was told a rate and a time left).
 func TestTransferRate(t *testing.T) {
 	now := time.Now()
 	ago := func(seconds int) time.Time { return now.Add(-time.Duration(seconds) * time.Second) }
 	for _, tc := range []struct {
-		what    string
-		started time.Time
-		samples []sample
-		moved   int64
-		rate    float64
+		what      string
+		started   time.Time
+		samples   []sample
+		lastMoved time.Time
+		moved     int64
+		rate      float64
 	}{
 		{"kept moving", ago(120), []sample{{ago(60), 10 << 20}, {ago(40), 20 << 20}, {ago(25), 30 << 20},
-			{ago(5), 40 << 20}}, 42 << 20, float64(12<<20) / 25},
-		{"younger", ago(12), []sample{{ago(10), 1 << 20}, {ago(1), 12 << 20}}, 12 << 20, float64(11<<20) / 10},
-		{"stalled", ago(120), []sample{{ago(100), 1 << 20}, {ago(40), 60 << 20}}, 60 << 20, 0},
-		{"nothing moved", ago(10), nil, 0, 0},
+			{ago(5), 40 << 20}}, ago(4), 42 << 20, float64(12<<20) / 25},
+		{"younger", ago(12), []sample{{ago(10), 1 << 20}, {ago(1), 12 << 20}}, ago(1), 12 << 20, float64(11<<20) / 10},
+		{"nothing moved", ago(10), nil, time.Time{}, 0, 0},
 	} {
-		j := &job{started: tc.started, samples: tc.samples}
+		j := &job{started: tc.started, samples: tc.samples, lastMoved: tc.lastMoved}
 		j.moved.Store(tc.moved)
 		if got := j.rate(now); math.Abs(got-tc.rate) > 1e-6 {
 			t.Errorf("%s: expected %.0f B/s, got %.0f", tc.what, tc.rate, got)
 		}
+	}
+	// stalled, its bytes counted by count: a sample for the first chunk, the next ones after it
+	stalled := &job{started: time.Now()}
+	for range 100 {
+		stalled.count(32 << 10)
+	}
+	const since = 40 * time.Second
+	stalled.started = stalled.started.Add(-since)
+	stalled.lastMoved = stalled.lastMoved.Add(-since)
+	for i := range stalled.samples {
+		stalled.samples[i].at = stalled.samples[i].at.Add(-since)
+	}
+	if got := stalled.rate(time.Now()); got != 0 {
+		t.Errorf("moved nothing for %s: expected 0 B/s, got %.0f", since, got)
 	}
 }
 

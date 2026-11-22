@@ -486,8 +486,10 @@ type job struct {
 	moved, size atomic.Int64
 	// mu guards the fields below
 	mu sync.Mutex
-	// samples are the bytes moved over time, one a second at most, for the rate
-	samples []sample
+	// samples are the bytes moved over time, one a second at most, for the rate; lastMoved is when
+	// bytes last moved, which a sample may come up to a second before
+	samples   []sample
+	lastMoved time.Time
 	// cancelAsked tells a cancel was asked; placing that a download is being put in place, too
 	// late to cancel
 	cancelAsked, placing bool
@@ -512,6 +514,9 @@ func (j *job) count(n int) {
 	now := time.Now()
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	if n > 0 {
+		j.lastMoved = now
+	}
 	if len(j.samples) > 0 && now.Sub(j.samples[len(j.samples)-1].at) < time.Second {
 		return
 	}
@@ -522,13 +527,17 @@ func (j *job) count(n int) {
 }
 
 // rate returns the bytes moved per second over about rateWindow, as the samples of j tell it: from
-// the oldest one within rateWindow, since its first bytes for a transfer younger; from the last one
-// when none is within it, near nothing for a transfer stalled since, rather than its average since
-// its start.
+// the oldest one within rateWindow, since its first bytes for a transfer younger, from the last one
+// when none is within it; and nothing for a transfer that moved nothing within rateWindow, stalled,
+// rather than its average since its start, or the bytes counted after its last sample over the
+// time since.
 func (j *job) rate(now time.Time) float64 {
 	moved := j.moved.Load()
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	if now.Sub(j.lastMoved) > rateWindow {
+		return 0
+	}
 	// the start, with no sample: nothing moved then
 	from := sample{at: j.started}
 	for _, s := range j.samples {
