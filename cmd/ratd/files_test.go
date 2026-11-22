@@ -128,6 +128,21 @@ func TestCopyHints(t *testing.T) {
 	}
 }
 
+// TestPathRefusalNoHome guards a path starting with ~ when the home directory of ratd's user is
+// unknown (HOME unset): told that ~ can not be resolved, with why, rather than told relative.
+func TestPathRefusalNoHome(t *testing.T) {
+	t.Setenv("HOME", "")
+	_, err := absolutePath("~/notes.txt")
+	if err == nil {
+		t.Fatal("expected ~/notes.txt refused without a home directory")
+	}
+	text := pathRefusal("~/notes.txt", err)
+	if !strings.HasPrefix(text, `Path "~/notes.txt" starts with ~, which can not be resolved: `) ||
+		!strings.HasSuffix(text, ". Give an absolute path.") {
+		t.Errorf("expected ~ told unresolved, got %q", text)
+	}
+}
+
 // TestWriteFileRefused guards what write_file does not write, telling why: a relative path, a
 // path holding a NUL byte (no directory created for it), a name too long under a directory it
 // created (which it names), a directory, a FIFO (without blocking on it), a device, a path under a

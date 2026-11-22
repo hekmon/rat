@@ -238,9 +238,10 @@ func TestUploadNameNotUTF8(t *testing.T) {
 // overwrite, a directory, a FIFO, a symbolic link (telling where it leads, even nowhere), a path
 // under a file, a denied permission naming the user, and a name too long, though its temporary
 // file, named to fit, could take the bytes, even under a directory to create, which it names, or
-// of a directory to create, naming those created before it, and a NUL byte in the path, no
-// directory created for it. The file existing stays as it was, and no temporary file is left. The
-// endpoints answer their method only.
+// of a directory to create, naming those created before it, a NUL byte in the path, no directory
+// created for it, and a link leading nowhere or looping where a directory is to be created,
+// mistakes of the client (409) rather than of ratd. The file existing stays as it was, and no
+// temporary file is left. The endpoints answer their method only.
 func TestUploadRefused(t *testing.T) {
 	r, client, home := transferRatd(t)
 	file := filepath.Join(home, "file")
@@ -256,6 +257,10 @@ func TestUploadRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.Symlink("missing", dangling); err != nil {
+		t.Fatal(err)
+	}
+	loop := filepath.Join(home, "loop")
+	if err := os.Symlink("loop", loop); err != nil {
 		t.Fatal(err)
 	}
 	locked := filepath.Join(home, "locked")
@@ -322,6 +327,10 @@ func TestUploadRefused(t *testing.T) {
 				filepath.Join(home, "made") + ". Check the path if you did not mean them."},
 		{"NUL in path", nul, false, nil, http.StatusBadRequest,
 			"Path " + strconv.Quote(nul) + " holds a NUL byte, which no file name can hold."},
+		{"under a dangling link", dangling + "/x.bin", false, nil, http.StatusConflict,
+			"Creating " + dangling + " failed: file exists."},
+		{"under a link loop", loop + "/x.bin", false, nil, http.StatusConflict,
+			"Creating " + loop + " failed: too many levels of symbolic links."},
 	} {
 		// no permission is denied to root
 		if tc.status == http.StatusForbidden && os.Geteuid() == 0 {

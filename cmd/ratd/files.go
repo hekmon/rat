@@ -48,10 +48,15 @@ func relativeText(path string) string {
 
 // pathRefusal returns the text refusing path, which absolutePath refused with err.
 func pathRefusal(path string, err error) string {
-	if errors.Is(err, errNULInPath) {
+	switch {
+	case errors.Is(err, errNULInPath):
 		return fmt.Sprintf("Path %q holds a NUL byte, which no file name can hold.", path)
+	case errors.Is(err, errRelativePath):
+		return relativeText(path)
+	default:
+		// the home directory of ratd's user unknown (HOME unset): ~ leads nowhere
+		return fmt.Sprintf("Path %q starts with ~, which can not be resolved: %v. Give an absolute path.", path, err)
 	}
-	return relativeText(path)
 }
 
 // absolutePath returns path, absolute or starting with ~/ for the home directory of ratd's user

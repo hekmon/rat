@@ -127,7 +127,10 @@ func transferStatus(err error) int {
 		return http.StatusForbidden
 	case errors.Is(err, syscall.ENOSPC), errors.Is(err, syscall.EDQUOT), errors.Is(err, syscall.EFBIG):
 		return http.StatusInsufficientStorage
-	case errors.Is(err, syscall.ENOTDIR), errors.Is(err, syscall.EISDIR):
+	case errors.Is(err, syscall.ENOTDIR), errors.Is(err, syscall.EISDIR), errors.Is(err, fs.ErrExist),
+		errors.Is(err, syscall.ELOOP):
+		// the path meets what it can not go through: a file, a link leading nowhere where a
+		// directory must be created, links looping
 		return http.StatusConflict
 	case errors.Is(err, syscall.ENAMETOOLONG), errors.Is(err, syscall.EILSEQ):
 		// the path the request names can be no file: a name too long, or one that is not UTF-8
