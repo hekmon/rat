@@ -227,7 +227,8 @@ func TestRunRenewal(t *testing.T) {
 // would be refused by TLS, the 403 telling the check of the request did it.
 func TestServeExpired(t *testing.T) {
 	pki := testpki.NewSubCA(t, "t", "")
-	expiry := time.Now().Add(time.Second)
+	// a whole second, as X.509 encodes it (see testpki.Expiring), a second away at least
+	expiry := time.Now().Truncate(time.Second).Add(2 * time.Second)
 	pki.Expiring("carol", expiry)
 	addr, logs := startRatd(t, pki.Dir, slog.LevelInfo)
 	client := httpClient(t, pki.Dir, "carol")

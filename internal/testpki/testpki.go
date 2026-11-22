@@ -80,7 +80,9 @@ func (p *PKI) Renew(name string, newKey bool) *big.Int {
 
 // Expiring issues the side name ("server" for the server) a new certificate, of the same key,
 // expiring at notAfter, and writes it in place of the one it holds (see Renew). It returns the
-// serial number of the new certificate.
+// serial number of the new certificate. X.509 encodes notAfter to the second, truncated: an
+// expiry a second from now may come at once, so a test needing time before it passes a whole
+// second.
 func (p *PKI) Expiring(name string, notAfter time.Time) *big.Int {
 	p.t.Helper()
 	s, ok := p.sides[name]

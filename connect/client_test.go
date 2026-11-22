@@ -246,7 +246,8 @@ func TestHTTPClientRenewal(t *testing.T) {
 // connection kept alive, is refused, the request failing with mtls.ErrValidity.
 func TestHTTPClientExpired(t *testing.T) {
 	pki := testpki.NewSubCA(t, "t", "")
-	expiry := time.Now().Add(time.Second)
+	// a whole second, as X.509 encodes it (see testpki.Expiring), a second away at least
+	expiry := time.Now().Truncate(time.Second).Add(2 * time.Second)
 	pki.Expiring("server", expiry)
 	serverSide, err := mtls.Load(mtls.ServerDir(pki.Dir))
 	if err != nil {
