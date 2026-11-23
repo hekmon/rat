@@ -433,17 +433,30 @@ func createTemporary(path string, mode fs.FileMode) (*os.File, error) {
 // linkFile is os.Link, a variable for tests needing a file system without hard links.
 var linkFile = os.Link
 
+// renameFile is os.Rename, a variable for tests needing a rename that fails once made.
+var renameFile = os.Rename
+
 // placeFile puts tmp, a complete temporary file next to path, in its place, and tells whether it
 // replaced a file. A file found there is replaced with overwrite only, and keeps its mode, tmp
 // taking it first, returned as kept; checkReplaced refuses the others. Without a file there, tmp
 // is linked under its name, which fails if a file appeared since it was checked, where a rename
 // would replace it; that file is then looked at again. On a file system without hard links (FAT,
-// some network ones), it is renamed: a file appearing in between is then replaced. On success, tmp
-// may remain as a second name of the file, for the caller to remove.
+// some network ones), it is renamed: a file appearing in between is then replaced. A link or a
+// rename failing is no proof: on NFS, one the server made fails all the same when its reply is lost,
+// the request sent again then failing (link(2), BUGS: "Use stat(2) to find out if the link got
+// created"); tmp found at path tells it placed. On success, tmp may remain as a second name of the
+// file, for the caller to remove.
 func placeFile(tmp, path string, overwrite bool) (replaced bool, kept fs.FileMode, refused *result, err error) {
+	tmpInfo, err := os.Lstat(tmp)
+	if err != nil {
+		return false, 0, nil, err
+	}
 	for range 2 {
 		info, err := os.Lstat(path)
 		switch {
+		case err == nil && os.SameFile(info, tmpInfo):
+			// linked, the link failing all the same
+			return false, 0, nil, nil
 		case err == nil:
 			if r := checkReplaced(path, info, overwrite); r != nil {
 				return false, 0, r, nil
@@ -452,7 +465,7 @@ func placeFile(tmp, path string, overwrite bool) (replaced bool, kept fs.FileMod
 			if err = os.Chmod(tmp, kept); err != nil {
 				return false, 0, nil, err
 			}
-			return true, kept, nil, os.Rename(tmp, path)
+			return true, kept, nil, renameInPlace(tmp, path, tmpInfo)
 		case !errors.Is(err, fs.ErrNotExist):
 			return false, 0, nil, err
 		}
@@ -466,13 +479,25 @@ func placeFile(tmp, path string, overwrite bool) (replaced bool, kept fs.FileMod
 			// a file system without hard links: FAT refuses with EPERM, FUSE without link (sshfs)
 			// with ENOSYS, others with EMLINK, ENOTSUP or EOPNOTSUPP, ENOSYS and the last two told
 			// by ErrUnsupported
-			return false, 0, nil, os.Rename(tmp, path)
+			return false, 0, nil, renameInPlace(tmp, path, tmpInfo)
 		default:
 			return false, 0, nil, err
 		}
 	}
 	r := existsRefusal(path)
 	return false, 0, &r, nil
+}
+
+// renameInPlace renames tmp, looked at as tmpInfo, over path, a rename failing with tmp found at
+// path told done (see placeFile).
+func renameInPlace(tmp, path string, tmpInfo fs.FileInfo) error {
+	err := renameFile(tmp, path)
+	if err != nil {
+		if info, lookErr := os.Lstat(path); lookErr == nil && os.SameFile(info, tmpInfo) {
+			return nil
+		}
+	}
+	return err
 }
 
 // downloadOpened is called with the path of a download once its file is opened and checked: a

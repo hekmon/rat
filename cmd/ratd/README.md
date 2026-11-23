@@ -660,7 +660,9 @@ is renamed even without overwrite, a file appearing in between then being replac
 too, on Windows with the errors of Windows (FAT, exFAT: ERROR_INVALID_FUNCTION). No fsync: all
 or nothing covers a transfer cut, not a power cut, after which a file may be lost as any other
 just written; an agent wanting it on disk runs `sync`. A ratd killed during an upload leaves its
-temporary file behind.
+temporary file behind. A link or a rename failing is no proof: on NFS, one the server made fails
+all the same when its reply is lost (link(2), BUGS), the temporary file then found in place, which
+ratd and rat both tell written.
 
 What the headers alone refuse is refused before any byte is sent: rat waits for the go-ahead of
 ratd (`Expect: 100-continue`), which Go's server gives when the handler first reads the body, for

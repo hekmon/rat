@@ -480,6 +480,51 @@ func TestUploadWithoutHardLinks(t *testing.T) {
 	expectNoTemporary(t, home)
 }
 
+// TestUploadPlacedReplyLost guards an upload put in place by a link or a rename that the system made
+// and failed all the same, as on NFS when the reply is lost and the request sent again fails
+// (link(2), BUGS): the file found in place told written, created (201) or replaced (204), rather
+// than refused as a file existing (412), or as a write failing.
+func TestUploadPlacedReplyLost(t *testing.T) {
+	// set before ratd serves, and restored once it stopped (cleanups run in reverse order)
+	link, rename := linkFile, renameFile
+	linkFile = func(oldname, newname string) error {
+		if filepath.Base(newname) == "unlinked.bin" {
+			// a file system without hard links: renamed instead
+			return &os.LinkError{Op: "link", Old: oldname, New: newname, Err: syscall.EPERM}
+		}
+		if err := link(oldname, newname); err != nil {
+			return err
+		}
+		return &os.LinkError{Op: "link", Old: oldname, New: newname, Err: syscall.EEXIST}
+	}
+	renameFile = func(oldname, newname string) error {
+		if err := rename(oldname, newname); err != nil {
+			return err
+		}
+		return &os.LinkError{Op: "rename", Old: oldname, New: newname, Err: syscall.ENOENT}
+	}
+	t.Cleanup(func() { linkFile, renameFile = link, rename })
+	r, client, home := transferRatd(t)
+	for _, upload := range []struct {
+		name, content string
+		overwrite     bool
+		status        int
+	}{
+		{"app.bin", "linked", false, http.StatusCreated},
+		{"app.bin", "renamed over it", true, http.StatusNoContent},
+		{"unlinked.bin", "renamed", false, http.StatusCreated},
+	} {
+		path := filepath.Join(home, upload.name)
+		resp, body, err := sendTransfer(client, newUpload(t, r.addr, path, &fileBody{content: []byte(upload.content)},
+			"0644", upload.overwrite))
+		if err != nil || resp.StatusCode != upload.status {
+			t.Errorf("%s %s: expected %d, got %v, %v: %s", upload.name, upload.content, upload.status, resp, err, body)
+		}
+		expectFile(t, path, upload.content, 0o644&^umask())
+	}
+	expectNoTemporary(t, home)
+}
+
 // TestUploadMovedAtOnce guards an upload whose file is moved as soon as it is placed, as a watcher
 // of a spool directory does: ratd still answers 201 with the mode it wrote the file with
 // (Rat-Mode), which it set, rather than look at the path again, where the file is gone.

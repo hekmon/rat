@@ -814,6 +814,49 @@ func TestDownloadFileWithoutHardLinks(t *testing.T) {
 	expectNoTemporary(t, tt.local)
 }
 
+// TestDownloadFilePlacedReplyLost guards a download put in place by a link or a rename that the
+// system made and failed all the same, as on NFS when the reply is lost and the request sent again
+// fails (link(2), BUGS): told downloaded, created or replaced, rather than told that the file
+// exists, or that writing it failed.
+func TestDownloadFilePlacedReplyLost(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the errors of a link without hard links are those of Unix")
+	}
+	// set before rat starts, and restored once it stopped (cleanups run in reverse order)
+	link, rename := linkLocal, renameLocal
+	linkLocal = func(root *os.Root, oldname, newname string) error {
+		if filepath.Base(newname) == "unlinked.bin" {
+			// a file system without hard links: renamed instead
+			return &os.LinkError{Op: "linkat", Old: oldname, New: newname, Err: syscall.EPERM}
+		}
+		if err := link(root, oldname, newname); err != nil {
+			return err
+		}
+		return &os.LinkError{Op: "linkat", Old: oldname, New: newname, Err: syscall.EEXIST}
+	}
+	renameLocal = func(root *os.Root, oldname, newname string) error {
+		if err := rename(root, oldname, newname); err != nil {
+			return err
+		}
+		return &os.LinkError{Op: "renameat", Old: oldname, New: newname, Err: syscall.ENOENT}
+	}
+	t.Cleanup(func() { linkLocal, renameLocal = link, rename })
+	tt := startTransfers(t)
+	remote := filepath.Join(tt.remote, "app.bin")
+	content := randomFile(t, remote, 1<<10, 0o644)
+	for _, download := range []struct {
+		local     string
+		overwrite bool
+		told      string
+	}{{"x.bin", false, "created"}, {"x.bin", true, "replaced"}, {"unlinked.bin", false, "created"}} {
+		tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": download.local,
+			"overwrite": download.overwrite}, false, "Downloaded "+remote+" to "+download.local+" (1 KiB): "+
+			download.told+".")
+		expectContent(t, filepath.Join(tt.local, download.local), content, 0o644&^umask())
+	}
+	expectNoTemporary(t, tt.local)
+}
+
 // TestDownloadFileNameTooLong guards a download to a name longer than any file system takes,
 // though its temporary file, named to fit, could take the bytes: refused before any byte is
 // written, in the transfers directory before any request, and under a directory to create once

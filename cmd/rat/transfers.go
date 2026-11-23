@@ -975,16 +975,27 @@ func (t *transfers) createTemporary(local string, mode fs.FileMode) (*os.File, s
 // linkLocal is os.Root.Link, a variable for tests needing a file system without hard links.
 var linkLocal = (*os.Root).Link
 
+// renameLocal is os.Root.Rename, a variable for tests needing a rename that fails once made.
+var renameLocal = (*os.Root).Rename
+
 // place puts tmp, a complete temporary file next to local, in its place, as ratd places an upload
 // (see placeFile in cmd/ratd): a file found there is replaced with overwrite only, keeping its
 // mode, returned; otherwise tmp is linked under its name, which fails if a file appeared since it
 // was checked, looked at again then; on a file system without hard links (see linkUnsupported),
-// renamed. refused tells what is found there and not replaced.
+// renamed; a link or a rename failing with tmp found in place, as on NFS, told done. refused tells
+// what is found there and not replaced.
 func (t *transfers) place(tmp, local string, overwrite bool) (replaced bool, kept fs.FileMode, refused string, err error) {
 	q := transferRequest{tool: downloadTool, local: local, overwrite: overwrite}
+	tmpInfo, err := t.root.Lstat(tmp)
+	if err != nil {
+		return false, 0, "", err
+	}
 	for range 2 {
 		info, err := t.root.Lstat(local)
 		switch {
+		case err == nil && os.SameFile(info, tmpInfo):
+			// linked, the link failing all the same
+			return false, 0, "", nil
 		case err == nil:
 			if refused := t.checkLocal(local, info, q); refused != "" {
 				return false, 0, refused, nil
@@ -993,7 +1004,7 @@ func (t *transfers) place(tmp, local string, overwrite bool) (replaced bool, kep
 			if err = t.root.Chmod(tmp, mode); err != nil {
 				return false, 0, "", err
 			}
-			return true, mode.Perm(), "", t.root.Rename(tmp, local)
+			return true, mode.Perm(), "", t.renameInPlace(tmp, local, tmpInfo)
 		case !errors.Is(err, fs.ErrNotExist):
 			return false, 0, "", err
 		}
@@ -1004,12 +1015,24 @@ func (t *transfers) place(tmp, local string, overwrite bool) (replaced bool, kep
 		case errors.Is(err, fs.ErrExist):
 			continue
 		case linkUnsupported(err):
-			return false, 0, "", t.root.Rename(tmp, local)
+			return false, 0, "", t.renameInPlace(tmp, local, tmpInfo)
 		default:
 			return false, 0, "", err
 		}
 	}
 	return false, 0, fmt.Sprintf("%s exists: set overwrite to replace it.", local), nil
+}
+
+// renameInPlace renames tmp, looked at as tmpInfo, over local, a rename failing with tmp found in
+// place told done, as ratd's does.
+func (t *transfers) renameInPlace(tmp, local string, tmpInfo fs.FileInfo) error {
+	err := renameLocal(t.root, tmp, local)
+	if err != nil {
+		if info, lookErr := t.root.Lstat(local); lookErr == nil && os.SameFile(info, tmpInfo) {
+			return nil
+		}
+	}
+	return err
 }
 
 // progressText tells the progress of j, still under way after a wait, before being the bytes it had
