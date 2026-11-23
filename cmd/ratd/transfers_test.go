@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/hekmon/rat/connect"
@@ -613,6 +614,32 @@ func TestUploadInPlaceCut(t *testing.T) {
 		return strings.Contains(r.logs.String(), "outcome=error") &&
 			strings.Contains(r.logs.String(), "in_place=true bytes="+strconv.Itoa(len(data))+" status=400")
 	})
+}
+
+// TestUploadInPlaceEmptiedOnFirstBytes guards when an upload in place empties its file: once the
+// body comes, its first bytes or its end. A body cut before any byte, its client failing it as
+// soon as it got the go-ahead, leaves the file as it was, as a connection lost before the
+// go-ahead does, rather than empty with the client unable to tell ratd was reached; an empty body
+// empties it, the file keeping its mode.
+func TestUploadInPlaceEmptiedOnFirstBytes(t *testing.T) {
+	r, client, home := transferRatd(t)
+	path := filepath.Join(home, "app.conf")
+	if err := os.WriteFile(path, []byte("as it was"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := sendTransfer(client, newUploadInPlace(t, r.addr, path,
+		iotest.ErrReader(errors.New("the file changed while it was read")), true)); err == nil {
+		t.Error("expected the client failing its body to fail its request")
+	}
+	eventually(t, "the upload cut logged", func() bool {
+		return strings.Contains(r.logs.String(), "in_place=true bytes=0 status=400")
+	})
+	expectFile(t, path, "as it was", 0o640)
+	resp, body, err := sendTransfer(client, newUploadInPlace(t, r.addr, path, &fileBody{}, true))
+	if err != nil || resp.StatusCode != http.StatusNoContent || resp.Header.Get(connect.HeaderMode) != "0640" {
+		t.Fatalf("an empty body: expected 204 telling the mode kept, got %v, %v: %s", resp, err, body)
+	}
+	expectFile(t, path, "", 0o640)
 }
 
 // TestUploadInPlaceRefused guards what an upload in place refuses before any byte, the file as it

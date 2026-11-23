@@ -125,17 +125,19 @@ func (f *fakeTransfers) upload(w http.ResponseWriter, r *http.Request) {
 	}
 	var received bytes.Buffer
 	var into io.Writer = &received
-	// in place, as ratd writes a file replaced: emptied first, then written into, a cut leaving it
-	// partly written
+	// in place, as ratd writes a file replaced: emptied once the body comes, then written into, a
+	// cut leaving it partly written
 	intoFile := inPlace && statErr == nil
+	var inPlaceFile *emptiedOnWrite
 	if intoFile {
-		file, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+		file, err := os.OpenFile(path, os.O_WRONLY, 0)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		defer file.Close()
-		into = file
+		inPlaceFile = &emptiedOnWrite{file: file}
+		into = inPlaceFile
 	}
 	for first := true; ; first = false {
 		_, err := io.CopyN(into, r.Body, fakeChunk)
@@ -155,6 +157,13 @@ func (f *fakeTransfers) upload(w http.ResponseWriter, r *http.Request) {
 			<-stall
 		}
 		time.Sleep(pause)
+	}
+	if intoFile {
+		// an empty body, which writes nothing: the file emptied all the same
+		if err := inPlaceFile.empty(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	if failWith != "" {
 		// as ratd failing to write a file received whole (a disk full)
@@ -192,6 +201,32 @@ func (f *fakeTransfers) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
+}
+
+// emptiedOnWrite writes into file, emptying it before its first write, as ratd writes a file in
+// place: until the body comes, the file is left as it was.
+type emptiedOnWrite struct {
+	file    *os.File
+	emptied bool
+}
+
+func (w *emptiedOnWrite) Write(p []byte) (int, error) {
+	if err := w.empty(); err != nil {
+		return 0, err
+	}
+	return w.file.Write(p)
+}
+
+// empty empties the file, once.
+func (w *emptiedOnWrite) empty() error {
+	if w.emptied {
+		return nil
+	}
+	if err := w.file.Truncate(0); err != nil {
+		return err
+	}
+	w.emptied = true
+	return nil
 }
 
 func (f *fakeTransfers) download(w http.ResponseWriter, r *http.Request) {

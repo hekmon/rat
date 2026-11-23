@@ -407,10 +407,11 @@ var inPlaceOpening = func(string) {}
 // one: the file keeps its hard links, owner, mode and extended attributes, and its directory needs
 // no write permission (a file of ratd's user in a directory of root, one of another user under the
 // sticky bit of /tmp), the file's own deciding instead, but a body cut short leaves it partly
-// written. It is opened without following a link at the end of the path nor blocking, refused if
-// what was opened is not a regular file (the path may name another file by then), and emptied only
-// then, before the first byte of the body is read: a refusal comes before the go-ahead, the file
-// as it was. fail and writeFailure are those of upload.
+// written. It is opened without following a link at the end of the path nor blocking, and refused
+// if what was opened is not a regular file (the path may name another file by then), before the
+// go-ahead: a refusal leaves the file as it was. It is emptied only once the body comes, its first
+// bytes or its end (see emptiedOnWrite): a connection lost before, the go-ahead received or not,
+// leaves it as it was too. fail and writeFailure are those of upload.
 func (d *daemon) uploadInPlace(w http.ResponseWriter, req *http.Request, path string, attrs []any,
 	fail func(int, result) result, writeFailure func(error) result) result {
 	inPlaceOpening(path)
@@ -433,21 +434,27 @@ func (d *daemon) uploadInPlace(w http.ResponseWriter, req *http.Request, path st
 	case err != nil:
 		return writeFailure(err)
 	}
-	if err := file.Truncate(0); err != nil {
-		_ = file.Close()
-		return writeFailure(err)
-	}
-	// Reading the body sends the go-ahead the client waits for.
+	// Reading the body sends the go-ahead the client waits for. Emptying the file before would leave
+	// it empty when the connection is lost before the go-ahead reaches the client, which then can
+	// not tell ratd was reached at all.
+	into := &emptiedOnWrite{file: file}
 	body := &readErrors{r: req.Body}
-	n, err := io.Copy(file, body)
+	n, err := io.Copy(into, body)
+	if err == nil {
+		// an empty body, which writes nothing: the file emptied all the same, its new content
+		err = into.empty()
+	}
 	// a network file system may only report a failed write when closing
 	if closeErr := file.Close(); err == nil {
 		err = closeErr
 	}
 	attrs = append(attrs, "bytes", n)
 	switch {
-	case body.err != nil:
+	case body.err != nil && !into.emptied:
 		// as for a file put in place, nobody may be left to read the answer (see upload)
+		return fail(http.StatusBadRequest, result{err: d.cutError(body.err), attrs: attrs,
+			text: fmt.Sprintf("The upload to %s was cut before its end: nothing was written.", path)})
+	case body.err != nil:
 		return fail(http.StatusBadRequest, result{err: d.cutError(body.err), attrs: attrs, text: fmt.Sprintf(
 			"The upload to %s was cut before its end: written in place, it is partly written (%s).", path,
 			sizeText(int(n)))})
@@ -458,6 +465,32 @@ func (d *daemon) uploadInPlace(w http.ResponseWriter, req *http.Request, path st
 	w.Header().Set(connect.HeaderMode, connect.FormatMode(opened.Mode()))
 	w.WriteHeader(http.StatusNoContent)
 	return result{attrs: append(attrs, "replaced", true, "status", http.StatusNoContent)}
+}
+
+// emptiedOnWrite writes into file, written in place, emptying it before its first write: until the
+// body of the upload comes, the file is left as it was.
+type emptiedOnWrite struct {
+	file    *os.File
+	emptied bool
+}
+
+func (w *emptiedOnWrite) Write(p []byte) (int, error) {
+	if err := w.empty(); err != nil {
+		return 0, err
+	}
+	return w.file.Write(p)
+}
+
+// empty empties the file, once.
+func (w *emptiedOnWrite) empty() error {
+	if w.emptied {
+		return nil
+	}
+	if err := w.file.Truncate(0); err != nil {
+		return err
+	}
+	w.emptied = true
+	return nil
 }
 
 // checkReplaced refuses an upload replacing the file at path, described by info (from Lstat): a
