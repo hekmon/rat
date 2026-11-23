@@ -892,7 +892,8 @@ func (t *transfers) runUpload(ctx context.Context, j *job, source *os.File) (str
 	// set before the job ends, read once it ended (see job.done)
 	j.newFile = up.Replaced && !j.request.writesInPlace()
 	text := fmt.Sprintf("Uploaded %s to %s (%s): %s.", j.request.local, j.request.remote, sizeText(up.Sent), how)
-	if modesTold && up.Replaced && up.Mode != info.Mode().Perm() {
+	// told only from a mode ratd told: an answer without one is the file written all the same
+	if modesTold && up.ModeTold && up.Replaced && up.Mode != info.Mode().Perm() {
 		text += fmt.Sprintf(" It kept its permissions (%s), not those of your file (%s): change them in a terminal "+
 			"(chmod) if it needs yours.", connect.FormatMode(up.Mode), connect.FormatMode(info.Mode()))
 	}

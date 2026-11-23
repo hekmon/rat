@@ -164,23 +164,48 @@ func TestUpload(t *testing.T) {
 	})
 	up, err := Upload(context.Background(), nil, client, server, &testFile{content: content, mode: 0o750},
 		"~/my dir/app.bin", UploadOptions{})
-	if err != nil || *up != (Uploaded{Mode: 0o640, Sent: int64(len(content)), Note: "Missing directories created: /x."}) {
+	if err != nil || *up != (Uploaded{Mode: 0o640, ModeTold: true, Sent: int64(len(content)),
+		Note: "Missing directories created: /x."}) {
 		t.Errorf("expected the file created, got %+v, %v", up, err)
 	}
 	up, err = Upload(context.Background(), nil, client, server, &testFile{content: content, mode: 0o750},
 		"~/my dir/app.bin", UploadOptions{Overwrite: true})
-	if err != nil || *up != (Uploaded{Replaced: true, Mode: 0o600, Sent: int64(len(content))}) {
+	if err != nil || *up != (Uploaded{Replaced: true, Mode: 0o600, ModeTold: true, Sent: int64(len(content))}) {
 		t.Errorf("expected the file replaced, got %+v, %v", up, err)
 	}
 	up, err = Upload(context.Background(), nil, client, server, &testFile{content: content, mode: 0o750},
 		"~/my dir/app.bin", UploadOptions{Overwrite: true, InPlace: true})
-	if err != nil || *up != (Uploaded{Replaced: true, Mode: 0o600, Sent: int64(len(content))}) {
+	if err != nil || *up != (Uploaded{Replaced: true, Mode: 0o600, ModeTold: true, Sent: int64(len(content))}) {
 		t.Errorf("expected the file replaced in place, got %+v, %v", up, err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	if strings.Join(inPlace, " ") != "false false true" {
 		t.Errorf("expected Rat-In-Place false, false, then true, got %q", inPlace)
+	}
+}
+
+// TestUploadModeUnreadable guards an answer telling the file written (201, 204) whose mode can not
+// be read, missing or not octal: the upload written all the same, as its status tells, the mode not
+// told, rather than failing, which a caller would tell as the file not written.
+func TestUploadModeUnreadable(t *testing.T) {
+	server, client := fakeRatd(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		if r.Header.Get(HeaderOverwrite) == "true" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Header().Set(HeaderMode, "rw-r--r--")
+		w.WriteHeader(http.StatusCreated)
+	})
+	content := []byte("data")
+	for _, options := range []UploadOptions{{}, {Overwrite: true}} {
+		up, err := Upload(context.Background(), nil, client, server, &testFile{content: content, mode: 0o644}, "/x",
+			options)
+		if err != nil || *up != (Uploaded{Replaced: options.Overwrite, Sent: int64(len(content))}) {
+			t.Errorf("overwrite %v: expected the file written, its mode not told, got %+v, %v", options.Overwrite, up,
+				err)
+		}
 	}
 }
 

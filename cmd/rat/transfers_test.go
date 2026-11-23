@@ -38,8 +38,8 @@ const fakeChunk = 32 << 10
 // after its first chunk until stall is closed, failing with the sentence failWith (a download in
 // its trailer, an upload once received whole, writing nothing but what it wrote in place), cutting
 // a transfer after its first chunk, losing the answer to an upload it received whole (dropAnswer),
-// or calling meanwhile as a download comes, before answering it, as another transfer acting in
-// between. It is for what a test must provoke: what ratd does by itself, successes and refusals,
+// answering an upload written without the mode of the file (noMode), or calling meanwhile as a
+// download comes, before answering it, as another transfer acting in between. It is for what a test must provoke: what ratd does by itself, successes and refusals,
 // is tested against ratd (see ratd_unix_test.go), and the answers the tests of the fake go through
 // are those of ratd, which TestRealRatdAnswersAsFake checks, TestRealRatdEmptiesInPlaceAsFake
 // when a file written in place is emptied.
@@ -53,6 +53,7 @@ type fakeTransfers struct {
 	failWith   string
 	cut        bool
 	dropAnswer bool
+	noMode     bool
 	meanwhile  func()
 	// inPlace is the in place of each upload received
 	inPlace []bool
@@ -196,8 +197,13 @@ func (f *fakeTransfers) upload(w http.ResponseWriter, r *http.Request) {
 	if f.answerLost(w) {
 		return
 	}
-	written, _ := os.Stat(path)
-	w.Header().Set(connect.HeaderMode, connect.FormatMode(written.Mode()))
+	f.mu.Lock()
+	noMode := f.noMode
+	f.mu.Unlock()
+	if !noMode {
+		written, _ := os.Stat(path)
+		w.Header().Set(connect.HeaderMode, connect.FormatMode(written.Mode()))
+	}
 	if replaced {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -743,6 +749,22 @@ func TestUploadStopAfterCancelTooLate(t *testing.T) {
 	if logs := tt.rat.logs.String(); strings.Contains(logs, "outcome=canceled") ||
 		!strings.Contains(logs, "outcome=error") {
 		t.Errorf("expected the upload logged failing, not canceled:\n%s", logs)
+	}
+}
+
+// TestUploadModeNotTold guards an upload replacing a file, ratd answering it written without the
+// mode of the file (noMode): told replaced, nothing said of permissions rat does not know, rather
+// than permissions 0000 kept, or the upload failed.
+func TestUploadModeNotTold(t *testing.T) {
+	tt := startTransfers(t)
+	tt.fake.set(func(f *fakeTransfers) { f.noMode = true })
+	randomFile(t, filepath.Join(tt.local, "up.bin"), 1<<10, 0o644)
+	remote := filepath.Join(tt.remote, "app.bin")
+	randomFile(t, remote, 10, 0o640)
+	told := "Uploaded up.bin to " + remote + " (1 KiB): replaced."
+	if text := tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote,
+		"overwrite": true}, false, told); text != told {
+		t.Errorf("expected %q alone, got %q", told, text)
 	}
 }
 

@@ -1356,8 +1356,8 @@ func TestTransferClient(t *testing.T) {
 	remote := filepath.Join(home, "sub", "app.bin")
 	mode := 0o640 &^ umask()
 	up, err := upload("~/sub/app.bin", false)
-	if err != nil || *up != (connect.Uploaded{Mode: mode, Sent: int64(len(content)), Note: "Missing directories created: " +
-		filepath.Join(home, "sub") + ". Check the path if you did not mean them."}) {
+	if err != nil || *up != (connect.Uploaded{Mode: mode, ModeTold: true, Sent: int64(len(content)),
+		Note: "Missing directories created: " + filepath.Join(home, "sub") + ". Check the path if you did not mean them."}) {
 		t.Fatalf("expected the file created, got %+v, %v", up, err)
 	}
 	expectFile(t, remote, string(content), mode)
