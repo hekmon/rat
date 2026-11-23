@@ -525,6 +525,146 @@ func TestUploadPlacedReplyLost(t *testing.T) {
 	expectNoTemporary(t, home)
 }
 
+// newUploadInPlace returns the request uploading content to path in place (Rat-In-Place), with
+// overwrite, as newUpload does.
+func newUploadInPlace(t *testing.T, addr, path string, body io.Reader, overwrite bool) *http.Request {
+	t.Helper()
+	req := newUpload(t, addr, path, body, "0644", overwrite)
+	req.Header.Set(connect.HeaderInPlace, "true")
+	return req
+}
+
+// TestUploadInPlace guards an upload in place (Rat-In-Place) replacing a file: written into it, the
+// file keeps its hard links and mode, even in a directory ratd's user can not write (a file of that
+// user in a directory of root), where a file put in place can not be created; 204 telling the mode
+// kept, no temporary file. Without overwrite, the file is refused as existing; a missing file is
+// created all or nothing, as without in place.
+func TestUploadInPlace(t *testing.T) {
+	r, client, home := transferRatd(t)
+	dir := filepath.Join(home, "conf")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "app.yml")
+	if err := os.WriteFile(path, []byte("old"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(home, "app.link")
+	if err := os.Link(path, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if os.Geteuid() != 0 {
+		// root writes anywhere
+		resp, body, err := sendTransfer(client, newUpload(t, r.addr, path, &fileBody{content: []byte("new")}, "0644",
+			true))
+		if err != nil || resp.StatusCode != http.StatusForbidden {
+			t.Errorf("not in place, in a directory refusing new files: expected 403, got %v, %v: %s", resp, err, body)
+		}
+	}
+	resp, body, err := sendTransfer(client, newUploadInPlace(t, r.addr, path, &fileBody{content: []byte("in place")},
+		true))
+	if err != nil || resp.StatusCode != http.StatusNoContent || resp.Header.Get(connect.HeaderMode) != "0640" {
+		t.Fatalf("expected 204 telling the mode kept, got %v, %v: %s", resp, err, body)
+	}
+	expectFile(t, path, "in place", 0o640)
+	expectFile(t, link, "in place", 0o640)
+	resp, body, err = sendTransfer(client, newUploadInPlace(t, r.addr, path, &fileBody{content: []byte("again")},
+		false))
+	expectRefused(t, "without overwrite", resp, body, err, http.StatusPreconditionFailed,
+		path+" exists: set overwrite to replace it.")
+	expectFile(t, path, "in place", 0o640)
+	missing := filepath.Join(home, "new.bin")
+	resp, body, err = sendTransfer(client, newUploadInPlace(t, r.addr, missing, &fileBody{content: []byte("created")},
+		true))
+	if err != nil || resp.StatusCode != http.StatusCreated {
+		t.Errorf("a missing file: expected 201, got %v, %v: %s", resp, err, body)
+	}
+	expectFile(t, missing, "created", 0o644&^umask())
+	expectNoTemporary(t, home)
+}
+
+// TestUploadInPlaceCut guards an upload in place whose body is cut short (its client failing it, as
+// rat does when its file changed): the file is left partly written, the beginning of the new
+// content, rather than as it was, the log telling the bytes written in place.
+func TestUploadInPlaceCut(t *testing.T) {
+	r, client, home := transferRatd(t)
+	path := filepath.Join(home, "app.bin")
+	if err := os.WriteFile(path, bytes.Repeat([]byte("o"), 1<<20), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	content := bytes.Repeat([]byte("n"), 1<<20)
+	if _, _, err := sendTransfer(client, newUploadInPlace(t, r.addr, path, &fileBody{content: content,
+		failAt: 256 << 10}, true)); err == nil {
+		t.Error("expected the client failing its body to fail its request")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) >= len(content) || !bytes.Equal(data, content[:len(data)]) {
+		t.Errorf("expected the file partly written with the new content, got %d bytes, %q…", len(data),
+			data[:min(len(data), 8)])
+	}
+	eventually(t, "the log telling the bytes written in place", func() bool {
+		return strings.Contains(r.logs.String(), "outcome=error") &&
+			strings.Contains(r.logs.String(), "in_place=true bytes="+strconv.Itoa(len(data))+" status=400")
+	})
+}
+
+// TestUploadInPlaceRefused guards what an upload in place refuses before any byte, the file as it
+// was: a symbolic link put at its path between the look and the open, never written through (409);
+// a file ratd's user can not write, which the answer names with that user (403); a header that is
+// neither true nor false (400).
+func TestUploadInPlaceRefused(t *testing.T) {
+	r, client, home := transferRatd(t)
+	path := filepath.Join(home, "app.bin")
+	victim := filepath.Join(home, "victim.bin")
+	for _, file := range []string{path, victim} {
+		if err := os.WriteFile(file, []byte("as it was"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// set before the request, and restored once the test ended
+	hook := inPlaceOpening
+	inPlaceOpening = func(opening string) {
+		if opening == path {
+			if err := os.Remove(path); err != nil {
+				t.Error(err)
+			}
+			if err := os.Symlink(victim, path); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+	t.Cleanup(func() { inPlaceOpening = hook })
+	resp, body, err := sendTransfer(client, newUploadInPlace(t, r.addr, path, &fileBody{content: []byte("new")}, true))
+	expectRefused(t, "a link put there", resp, body, err, http.StatusConflict,
+		path+" is a symbolic link to "+victim+", which transfers do not follow: use that path instead.")
+	expectFile(t, victim, "as it was", 0o644)
+	if os.Geteuid() != 0 {
+		// root writes anything
+		locked := filepath.Join(home, "locked.bin")
+		if err := os.WriteFile(locked, []byte("as it was"), 0o444); err != nil {
+			t.Fatal(err)
+		}
+		resp, body, err = sendTransfer(client, newUploadInPlace(t, r.addr, locked, &fileBody{content: []byte("new")},
+			true))
+		expectRefused(t, "not writable", resp, body, err, http.StatusForbidden,
+			"Permission denied: "+locked+" can not be written by "+r.d.user+", the user the terminals run as.")
+		expectFile(t, locked, "as it was", 0o444)
+	}
+	req := newUpload(t, r.addr, victim, &fileBody{content: []byte("new")}, "0644", true)
+	req.Header.Set(connect.HeaderInPlace, "yes")
+	resp, body, err = sendTransfer(client, req)
+	expectRefused(t, "a header neither true nor false", resp, body, err, http.StatusBadRequest,
+		"invalid header Rat-In-Place \"yes\": expected true or false.")
+	expectFile(t, victim, "as it was", 0o644)
+}
+
 // TestUploadMovedAtOnce guards an upload whose file is moved as soon as it is placed, as a watcher
 // of a spool directory does: ratd still answers 201 with the mode it wrote the file with
 // (Rat-Mode), which it set, rather than look at the path again, where the file is gone.

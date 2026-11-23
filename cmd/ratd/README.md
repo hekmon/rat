@@ -614,12 +614,14 @@ client checks, never through MCP: `/mcp` stays MCP only. The contract is declare
 
 - **`POST /upload`**: the body is the file, written at the path `Rat-Path` names. `Rat-Mode`
   holds its permission bits, `Rat-Overwrite` whether an existing file may be replaced (false when
-  absent, the safe side). The answer is 201 (created) or 204 (replaced), with the permission bits
-  of the file written in `Rat-Mode`, for rat to tell an agent that a replaced file kept a mode
-  other than its source's: those ratd set, rather than those a look at the path finds once the
-  file is placed, a file moved at once (a watcher of a spool directory) leaving the answer
-  without them. A 201 names the directories created, as `write_file` does, and so does a failure
-  leaving some, creating them included: the answer to an upload cut or canceled, nobody reads.
+  absent, the safe side), `Rat-In-Place` whether a file replaced is written into rather than
+  replaced by a new one (false when absent: see In place). The answer is 201 (created) or 204
+  (replaced), with the permission bits of the file written in `Rat-Mode`, for rat to tell an agent
+  that a replaced file kept a mode other than its source's: those ratd set, rather than those a
+  look at the path finds once the file is placed, a file moved at once (a watcher of a spool
+  directory) leaving the answer without them. A 201 names the directories created, as `write_file`
+  does, and so does a failure leaving some, creating them included: the answer to an upload cut or
+  canceled, nobody reads.
 - **`GET /download`**: the body of the answer is the file at the path `Rat-Path` names, with its
   permission bits in `Rat-Mode` and its size in `Rat-Size`. HEAD answers the headers alone.
 - The answers of both endpoints carry `Rat-Version`, the version of ratd: a 404 without it comes
@@ -664,6 +666,17 @@ just written; an agent wanting it on disk runs `sync`. A ratd killed during an u
 temporary file behind. A link or a rename failing is no proof: on NFS, one the server made fails
 all the same when its reply is lost (link(2), BUGS), the temporary file then found in place, which
 ratd and rat both tell written.
+
+**In place.** With `Rat-In-Place`, an upload replacing a file writes into it instead, as `cp` does:
+the file keeps the hard links, extended attributes and owner the rename loses, and its directory
+needs no write permission (a file of ratd's user in a directory of root, one of another user under
+the sticky bit of `/tmp`), where a temporary file can not be created: the permission of the file
+decides instead, a read-only file refused (403), which the rename replaces. The price: a body cut
+short leaves the file partly written, the beginning of the new content, as `cp` leaves it, which an
+agent asks for knowingly. A missing file is created all or nothing whatever the header says: in
+place would only lose there. The file is opened without following a link at the end of the path nor
+blocking, refused if it is not a regular file, and emptied only then, before the go-ahead: a
+refusal (a link put there meanwhile, a file ratd's user can not write) leaves it as it was.
 
 What the headers alone refuse is refused before any byte is sent: rat waits for the go-ahead of
 ratd (`Expect: 100-continue`), which Go's server gives when the handler first reads the body, for

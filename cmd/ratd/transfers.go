@@ -256,7 +256,8 @@ func transferNotRegular(path string, info fs.FileInfo, way direction) *result {
 // what is not a regular file, a path the system fails to look at (a name too long), a body that is
 // not bytes. A body cut short (the client failing it, its file having changed, or the connection
 // lost) leaves no file. Missing directories are created, as write_file does, and named in the
-// answer, a 201 or a failure leaving them, for an agent to catch a typo.
+// answer, a 201 or a failure leaving them, for an agent to catch a typo. With Rat-In-Place, a file
+// replaced is written into instead (see uploadInPlace).
 func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 	// No Content-Type reads as bytes (RFC 9110). Another one is refused: a client sending a form
 	// (curl -d @file strips the new lines of the file) must find out.
@@ -272,6 +273,10 @@ func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 	}
 	attrs := []any{"path", path}
 	overwrite, err := connect.ParseOverwrite(req.Header.Get(connect.HeaderOverwrite))
+	if err != nil {
+		return refuse(w, http.StatusBadRequest, result{err: err, attrs: attrs, text: err.Error() + "."})
+	}
+	inPlace, err := connect.ParseInPlace(req.Header.Get(connect.HeaderInPlace))
 	if err != nil {
 		return refuse(w, http.StatusBadRequest, result{err: err, attrs: attrs, text: err.Error() + "."})
 	}
@@ -306,6 +311,9 @@ func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 	case err == nil:
 		if r := checkReplaced(path, info, overwrite); r != nil {
 			return fail(refusalStatus(r), withAttrs(*r, attrs))
+		}
+		if inPlace {
+			return d.uploadInPlace(w, req, path, attrs, fail, writeFailure)
 		}
 	case !errors.Is(err, fs.ErrNotExist):
 		return writeFailure(err)
@@ -369,6 +377,68 @@ func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 		_, _ = io.WriteString(w, createdText(created))
 	}
 	return result{attrs: append(attrs, "status", http.StatusCreated)}
+}
+
+// inPlaceOpening is called with the path of an upload in place once looked at, before it is
+// opened: a hook for tests, which replace the file there.
+var inPlaceOpening = func(string) {}
+
+// uploadInPlace writes the body of req into the file at path, an existing regular file an upload
+// with overwrite replaces, rather than put a new file in its place (Rat-In-Place), as cp writes
+// one: the file keeps its hard links, owner, mode and extended attributes, and its directory needs
+// no write permission (a file of ratd's user in a directory of root, one of another user under the
+// sticky bit of /tmp), the file's own deciding instead, but a body cut short leaves it partly
+// written. It is opened without following a link at the end of the path nor blocking, refused if
+// what was opened is not a regular file (the path may name another file by then), and emptied only
+// then, before the first byte of the body is read: a refusal comes before the go-ahead, the file
+// as it was. fail and writeFailure are those of upload.
+func (d *daemon) uploadInPlace(w http.ResponseWriter, req *http.Request, path string, attrs []any,
+	fail func(int, result) result, writeFailure func(error) result) result {
+	inPlaceOpening(path)
+	attrs = append(attrs, "in_place", true)
+	// O_NOFOLLOW refuses a link as the last part of the path only (ELOOP), following those above
+	file, err := os.OpenFile(path, os.O_WRONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, syscall.ELOOP) {
+		if info, lookErr := os.Lstat(path); lookErr == nil && info.Mode()&fs.ModeSymlink != 0 {
+			return fail(http.StatusConflict, withAttrs(*linkRefusal(path, upload), attrs))
+		}
+	}
+	if err != nil {
+		return writeFailure(err)
+	}
+	opened, err := checkOpened(file)
+	var notRegular *notRegularError
+	switch {
+	case errors.As(err, &notRegular):
+		return fail(http.StatusConflict, withAttrs(*transferNotRegular(path, notRegular.info, upload), attrs))
+	case err != nil:
+		return writeFailure(err)
+	}
+	if err := file.Truncate(0); err != nil {
+		_ = file.Close()
+		return writeFailure(err)
+	}
+	// Reading the body sends the go-ahead the client waits for.
+	body := &readErrors{r: req.Body}
+	n, err := io.Copy(file, body)
+	// a network file system may only report a failed write when closing
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	attrs = append(attrs, "bytes", n)
+	switch {
+	case body.err != nil:
+		// as for a file put in place, nobody may be left to read the answer (see upload)
+		return fail(http.StatusBadRequest, result{err: d.cutError(body.err), attrs: attrs, text: fmt.Sprintf(
+			"The upload to %s was cut before its end: written in place, it is partly written (%s).", path,
+			sizeText(int(n)))})
+	case err != nil:
+		err = targetError(err, path)
+		return fail(transferStatus(err), withAttrs(d.fileFailure(err, "Writing "+path, written, true), attrs))
+	}
+	w.Header().Set(connect.HeaderMode, connect.FormatMode(opened.Mode()))
+	w.WriteHeader(http.StatusNoContent)
+	return result{attrs: append(attrs, "replaced", true, "status", http.StatusNoContent)}
 }
 
 // checkReplaced refuses an upload replacing the file at path, described by info (from Lstat): a

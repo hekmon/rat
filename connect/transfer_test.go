@@ -3,6 +3,7 @@ package connect
 import (
 	"errors"
 	"io/fs"
+	"strings"
 	"testing"
 )
 
@@ -89,17 +90,20 @@ func TestMode(t *testing.T) {
 	}
 }
 
-// TestOverwrite guards the overwrite of an upload: true or false, false when absent, the safe
-// side; anything else refused rather than guessed.
-func TestOverwrite(t *testing.T) {
-	for value, expected := range map[string]bool{"": false, "false": false, "true": true} {
-		if overwrite, err := ParseOverwrite(value); err != nil || overwrite != expected {
-			t.Errorf("%q: expected %v, got %v, %v", value, expected, overwrite, err)
+// TestUploadFlags guards the flags of an upload, its overwrite and in place: true or false, false
+// when absent, the safe side; anything else refused rather than guessed, naming the header.
+func TestUploadFlags(t *testing.T) {
+	for header, parse := range map[string]func(string) (bool, error){HeaderOverwrite: ParseOverwrite,
+		HeaderInPlace: ParseInPlace} {
+		for value, expected := range map[string]bool{"": false, "false": false, "true": true} {
+			if flag, err := parse(value); err != nil || flag != expected {
+				t.Errorf("%s %q: expected %v, got %v, %v", header, value, expected, flag, err)
+			}
 		}
-	}
-	for _, value := range []string{"TRUE", "1", "yes", "t"} {
-		if _, err := ParseOverwrite(value); !errors.Is(err, ErrHeader) {
-			t.Errorf("%q: expected ErrHeader, got %v", value, err)
+		for _, value := range []string{"TRUE", "1", "yes", "t"} {
+			if _, err := parse(value); !errors.Is(err, ErrHeader) || !strings.Contains(err.Error(), header) {
+				t.Errorf("%s %q: expected ErrHeader naming it, got %v", header, value, err)
+			}
 		}
 	}
 }

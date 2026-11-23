@@ -32,6 +32,12 @@ const (
 	// HeaderOverwrite tells whether an upload may replace an existing file: true or false, false
 	// when absent, the safe side.
 	HeaderOverwrite = "Rat-Overwrite"
+	// HeaderInPlace tells whether an upload replacing a file writes into it, rather than put a new
+	// file in its place: true or false, false when absent, the all or nothing side. Written into,
+	// the file keeps its hard links, owner and extended attributes, and its directory needs no
+	// write permission, the file's own deciding instead, but a body cut short leaves it partly
+	// written. A missing file is created all or nothing whatever it says.
+	HeaderInPlace = "Rat-In-Place"
 	// HeaderMode holds permission bits in octal ([FormatMode]): of the file sent, in an upload and
 	// in the answer to a download; of the file as written, in the answer to an upload.
 	HeaderMode = "Rat-Mode"
@@ -241,11 +247,22 @@ func ParseMode(value string) (fs.FileMode, error) {
 // ParseOverwrite returns what [HeaderOverwrite] carries in value: true or false, false when
 // absent.
 func ParseOverwrite(value string) (bool, error) {
+	return parseFlag(HeaderOverwrite, value)
+}
+
+// ParseInPlace returns what [HeaderInPlace] carries in value: true or false, false when absent.
+func ParseInPlace(value string) (bool, error) {
+	return parseFlag(HeaderInPlace, value)
+}
+
+// parseFlag returns what the header name carries in value: true or false, false when absent,
+// anything else refused rather than guessed.
+func parseFlag(name, value string) (bool, error) {
 	switch value {
 	case "", "false":
 		return false, nil
 	case "true":
 		return true, nil
 	}
-	return false, fmt.Errorf("%w %s %q: expected true or false", ErrHeader, HeaderOverwrite, value)
+	return false, fmt.Errorf("%w %s %q: expected true or false", ErrHeader, name, value)
 }
