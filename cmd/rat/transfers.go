@@ -83,7 +83,7 @@ type uploadInput struct {
 	LocalPath  string `json:"local_path" jsonschema:"the file to copy, relative to the transfers directory"`
 	RemotePath string `json:"remote_path" jsonschema:"where to write it on the machine of the terminals: absolute, or starting with ~/"`
 	Overwrite  bool   `json:"overwrite,omitempty" jsonschema:"true replaces an existing file; false, the default, refuses it"`
-	InPlace    bool   `json:"in_place,omitempty" jsonschema:"false, the default, copies into a new file put in place of the old one once whole: never partly written, but the disk must hold both meanwhile. true, with overwrite, writes into the file itself: no room needed for a second copy, nor write permission on its directory (the file's own decides), the file keeping its hard links, owner and attributes; but a copy cut or canceled leaves it partly written, harmless for a file nothing uses until it is uploaded whole. A missing file is created as usual. Never into the very file you upload, when the terminals run on your machine: it would be emptied before being read"`
+	InPlace    bool   `json:"in_place,omitempty" jsonschema:"false, the default, copies into a new file put in place of the old one once whole: never partly written, but the disk must hold both meanwhile. true, with overwrite, writes into the file itself: no room needed for a second copy, nor write permission on its directory (the file's own decides), the file keeping its hard links, owner and attributes; but a copy cut or canceled leaves it partly written, harmless for a file nothing uses until it is uploaded whole. A missing file is created as usual. Never into the very file you upload, when the terminals run on your machine: emptied as it is read, it would be lost"`
 	Cancel     bool   `json:"cancel,omitempty" jsonschema:"true stops the transfer of these paths under way, leaving the destination as it was (written in place, partly written), unless too late"`
 }
 
@@ -1143,12 +1143,20 @@ func agoText(d time.Duration) string {
 	case d < time.Second:
 		return "under a second"
 	case d < time.Minute:
-		return fmt.Sprintf("%d seconds", int(d.Seconds()))
+		return countText(int(d.Seconds()), "second")
 	case d < time.Hour:
-		return fmt.Sprintf("%d minutes", int(d.Minutes()))
+		return countText(int(d.Minutes()), "minute")
 	default:
-		return fmt.Sprintf("%d hours", int(d.Hours()))
+		return countText(int(d.Hours()), "hour")
 	}
+}
+
+// countText tells n of unit, unit taking an s but for one.
+func countText(n int, unit string) string {
+	if n == 1 {
+		return "1 " + unit
+	}
+	return fmt.Sprintf("%d %ss", n, unit)
 }
 
 // sizeText tells a size in bytes as ratd tells sizes: in its largest binary unit, with a decimal

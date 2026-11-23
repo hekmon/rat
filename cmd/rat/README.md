@@ -158,17 +158,17 @@ file possibly written), before a download is put in place. An upload with `in_pl
 the file it replaces (see In place in the README of ratd): a cut or a cancel may then leave it
 partly written, which rat tells, not knowing whether ratd found the file to write into, a missing
 one being created all or nothing. Written in place into the very file uploaded, rat and ratd
-sharing a machine, a file would be emptied before being read: the description of `in_place` warns
-against it. Rejected: detecting it, which rat could only do by the path, wrongly through a tunnel
-showing a remote ratd on a loopback address, the same paths on both machines. Rejected: a call
-joining the job of its paths whatever its `in_place`, as changing how the file is written rather
-than what is copied: a call setting it was then told, as its own outcome, the refusal of the
-transfer without it, which told to set `in_place`. Rejected: job identifiers, with tools to wait
-for, list and cancel jobs, which a context compaction loses, more tools for small models to juggle;
-a parameter for the wait, or a size choosing between waiting and a job, the speed of the link being
-unknown; MCP tasks (experimental in protocol 2025-11-25, an extension from 2026-07-28 on, unknown
-to the SDK), which harnesses would have to support, and which could only add to this, never replace
-it.
+sharing a machine, a file would be emptied as it is read, lost but for its first bytes: the
+description of `in_place` warns against it. Rejected: detecting it, which rat could only do by the
+path, wrongly through a tunnel showing a remote ratd on a loopback address, the same paths on both
+machines. Rejected: a call joining the job of its paths whatever its `in_place`, as changing how
+the file is written rather than what is copied: a call setting it was then told, as its own
+outcome, the refusal of the transfer without it, which told to set `in_place`. Rejected: job
+identifiers, with tools to wait for, list and cancel jobs, which a context compaction loses, more
+tools for small models to juggle; a parameter for the wait, or a size choosing between waiting and
+a job, the speed of the link being unknown; MCP tasks (experimental in protocol 2025-11-25, an
+extension from 2026-07-28 on, unknown to the SDK), which harnesses would have to support, and which
+could only add to this, never replace it.
 
 **The local side mirrors ratd's.** A download goes to a temporary file next to its destination,
 put in place once complete: linked under its name without overwrite, which fails if a file

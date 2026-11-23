@@ -551,8 +551,8 @@ transfer. In the harness, with its client directory:
   the user of ratd in a directory of root), and needing no room for a second copy (a large file on
   a disk short of room); a transfer cut or canceled then leaves it partly written, which the agent
   is told, unless rat itself stops (see Long transfers). Written in place into the very file
-  uploaded, rat and ratd sharing a machine, a file would be emptied before being read: the
-  description of `in_place` warns agents against it.
+  uploaded, rat and ratd sharing a machine, a file would be emptied as it is read, lost but for
+  its first bytes: the description of `in_place` warns agents against it.
 - **Permissions, as `scp` copies them.** A new file gets the permission bits of its source, minus
   the umask; a replaced file keeps its own, the agent told when they differ from those of the
   source. On Windows, whose files have no permission bits, rat sees 0666, or 0444 for a read-only

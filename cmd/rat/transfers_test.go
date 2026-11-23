@@ -1254,6 +1254,26 @@ func TestTransferProgressSlow(t *testing.T) {
 	}
 }
 
+// TestAgoText guards how long ago a transfer ended, as a call finding it ended tells it: in the
+// singular for one unit, rather than "1 minutes ago".
+func TestAgoText(t *testing.T) {
+	for d, told := range map[time.Duration]string{
+		500 * time.Millisecond:  "under a second",
+		time.Second:             "1 second",
+		1900 * time.Millisecond: "1 second",
+		2 * time.Second:         "2 seconds",
+		time.Minute:             "1 minute",
+		90 * time.Second:        "1 minute",
+		2 * time.Minute:         "2 minutes",
+		time.Hour:               "1 hour",
+		3 * time.Hour:           "3 hours",
+	} {
+		if got := agoText(d); got != told {
+			t.Errorf("%v: expected %q, got %q", d, told, got)
+		}
+	}
+}
+
 // TestTransferRate guards the rate a progress tells: over about rateWindow for a transfer that kept
 // moving, since its first bytes for one younger, nothing before any byte moved, and nothing for one
 // that moved nothing for longer than rateWindow: neither its average since its start, nor the

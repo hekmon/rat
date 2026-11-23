@@ -460,7 +460,9 @@ func (d *daemon) uploadInPlace(w http.ResponseWriter, req *http.Request, path st
 			sizeText(int(n)))})
 	case err != nil:
 		err = targetError(err, path)
-		return fail(transferStatus(err), withAttrs(d.fileFailure(err, "Writing "+path, written, true), attrs))
+		// partial once emptied only: a failure to empty it leaves it as it was
+		return fail(transferStatus(err), withAttrs(d.fileFailure(err, "Writing "+path, written, into.emptied),
+			attrs))
 	}
 	w.Header().Set(connect.HeaderMode, connect.FormatMode(opened.Mode()))
 	w.WriteHeader(http.StatusNoContent)
@@ -486,12 +488,16 @@ func (w *emptiedOnWrite) empty() error {
 	if w.emptied {
 		return nil
 	}
-	if err := w.file.Truncate(0); err != nil {
+	if err := truncateFile(w.file, 0); err != nil {
 		return err
 	}
 	w.emptied = true
 	return nil
 }
+
+// truncateFile is (*os.File).Truncate, a variable for tests needing a file that fails to be
+// emptied, which hardly happens once it is open for writing.
+var truncateFile = (*os.File).Truncate
 
 // checkReplaced refuses an upload replacing the file at path, described by info (from Lstat): a
 // symbolic link, what is not a regular file, or a regular file without overwrite.

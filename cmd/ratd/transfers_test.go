@@ -651,6 +651,30 @@ func TestUploadInPlaceEmptiedOnFirstBytes(t *testing.T) {
 	expectFile(t, path, "", 0o640)
 }
 
+// TestUploadInPlaceNotEmptied guards an upload in place whose file fails to be emptied as its
+// body comes (truncateFile failing): the failure told as the system tells it, without the file
+// told partial, which is as it was.
+func TestUploadInPlaceNotEmptied(t *testing.T) {
+	// set before ratd serves, and restored once it stopped (cleanups run in reverse order)
+	truncate := truncateFile
+	truncateFile = func(f *os.File, size int64) error {
+		return &fs.PathError{Op: "truncate", Path: f.Name(), Err: syscall.EIO}
+	}
+	t.Cleanup(func() { truncateFile = truncate })
+	r, client, home := transferRatd(t)
+	path := filepath.Join(home, "app.conf")
+	if err := os.WriteFile(path, []byte("as it was"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resp, body, err := sendTransfer(client, newUploadInPlace(t, r.addr, path, &fileBody{content: []byte("new")}, true))
+	expectRefused(t, "a file failing to be emptied", resp, body, err, http.StatusInternalServerError,
+		"Writing "+path+" failed: input/output error.")
+	if strings.Contains(body, "partial") {
+		t.Errorf("expected the file not told partial, got %q", body)
+	}
+	expectFile(t, path, "as it was", 0o644)
+}
+
 // TestUploadInPlaceRefused guards what an upload in place refuses before any byte, the file as it
 // was: a symbolic link put at its path between the look and the open, never written through (409);
 // a file ratd's user can not write, which the answer names with that user (403); a header that is
