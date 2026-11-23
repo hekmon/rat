@@ -190,9 +190,6 @@ func TestHTTPClientRefusesBeforeSending(t *testing.T) {
 	}
 }
 
-// TestHTTPClientRenewal guards that a client whose certificate is renewed presents the renewed one
-// at its next request, rather than the one replaced on a connection kept alive, which a client in
-// constant use keeps for hours, past the expiry of the certificate it presented.
 // TestHTTPClientWaitsForGoAhead guards that the client sends the body of an upload only once ratd
 // gave its go-ahead, however long ratd takes to look at its path (a file system slow to answer):
 // past Go's default wait of a second, the body would leave unasked, a refusal then coming once
@@ -253,6 +250,9 @@ func TestHTTPClientWaitsForGoAhead(t *testing.T) {
 	}
 }
 
+// TestHTTPClientRenewal guards that a client whose certificate is renewed presents the renewed one
+// at its next request, rather than the one replaced on a connection kept alive, which a client in
+// constant use keeps for hours, past the expiry of the certificate it presented.
 func TestHTTPClientRenewal(t *testing.T) {
 	pki := testpki.NewSubCA(t, "t", "")
 	serverSide, err := mtls.Load(mtls.ServerDir(pki.Dir))

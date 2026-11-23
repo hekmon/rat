@@ -748,9 +748,9 @@ func TestUploadStopAfterCancelTooLate(t *testing.T) {
 
 // TestUploadFileInPlace guards an upload with in_place and overwrite: sent with Rat-In-Place, ratd
 // (the fake, as ratd does) writing into the file replaced, its hard link following, told replaced
-// as any upload; a call with the same paths, in_place left out, joining the job of its paths, as
-// in_place changes how the file is written, not what is copied; a cancel telling the file, written
-// in place, may be partly written, rather than as it was. Without overwrite, in_place asks nothing.
+// as any upload; a call with the same paths, in_place left out, joining the job of its paths, as a
+// call without overwrite joins any job, asking nothing more; a cancel telling the file, written in
+// place, may be partly written, rather than as it was. Without overwrite, in_place asks nothing.
 func TestUploadFileInPlace(t *testing.T) {
 	shortWait(t, 300*time.Millisecond)
 	tt := startTransfers(t)
@@ -793,10 +793,11 @@ func TestUploadFileInPlace(t *testing.T) {
 // TestTransferLeftInPlace guards what an upload in place with overwrite tells it left of its
 // destination when it fails before its end, rat not knowing whether ratd wrote into it: partly
 // written maybe, for a cut, a read failing, a change, and an answer lost once all of it was sent,
-// which ratd may not have received whole, the old content gone all the same. Without in place, or
-// without overwrite, a missing file being created all or nothing: as it was, or written or not for
-// an answer lost. The reason of the answer lost loses its final period, as Windows ends its
-// messages with one.
+// which ratd may not have received whole, the old content gone all the same, told to call again
+// with overwrite and in_place, rather than with overwrite, read as without in_place. Without in
+// place, or without overwrite, a missing file being created all or nothing: as it was, or written
+// or not for an answer lost. The reason of the answer lost loses its final period, as Windows ends
+// its messages with one.
 func TestTransferLeftInPlace(t *testing.T) {
 	tr := &transfers{ctx: context.Background()}
 	for _, q := range []transferRequest{
@@ -806,10 +807,12 @@ func TestTransferLeftInPlace(t *testing.T) {
 	} {
 		left := "/r/up.bin is as it was."
 		lost := "/r/up.bin may be written or not."
+		again := "overwrite"
 		changed := ""
 		if q.inPlace && q.overwrite {
 			left = "/r/up.bin, written in place, may be partly written."
 			lost = left
+			again = "overwrite and in_place"
 			changed = " " + left
 		}
 		j := &job{request: q}
@@ -823,7 +826,7 @@ func TestTransferLeftInPlace(t *testing.T) {
 			&connect.TransferError{Kind: connect.ErrAnswerLost, Reason: errors.New("wsarecv: An existing connection " +
 				"was forcibly closed by the remote host.")}: "The answer of ratd to the copy of up.bin to /r/up.bin " +
 				"was lost once all of it was sent (wsarecv: An existing connection was forcibly closed by the remote " +
-				"host): " + lost + " Check it before using it, or call upload_file again with overwrite.",
+				"host): " + lost + " Check it before using it, or call upload_file again with " + again + ".",
 		} {
 			if got, _, _ := tr.failureText(j, err); got != told {
 				t.Errorf("overwrite %v, in place %v, %v: expected %q, got %q", q.overwrite, q.inPlace, err, told, got)

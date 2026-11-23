@@ -563,9 +563,9 @@ transfer. In the harness, with its client directory:
   its progress, and finds it again by calling with the same paths. Stopping rat (the harness
   quitting) or ratd cuts the transfers under way, removing their temporary files: only a file
   already received whole may still be written, an upload by ratd, a download by rat. A file
-  written in place is left partly written, which nobody tells the agent when rat itself stopped.
-  A transfers directory on a file system that stops answering (a stale NFS mount) holds the exit
-  of rat until it answers.
+  written in place may be left partly written, which nobody tells the agent when rat itself
+  stopped. A transfers directory on a file system that stops answering (a stale NFS mount) holds
+  the exit of rat until it answers.
 - **Through the same door.** Transfers reach the port of ratd with the same client certificate,
   through the proxy of the environment if any: nothing else to open. Both sides log one line per
   transfer (the paths and the size, never the content), and `systemctl status` counts the

@@ -76,7 +76,7 @@ not fail the startup of the harness, the first request tells.
   would read then, canceled or not: the context of `connect.Upload` cuts it whatever was sent,
   apart from the cancel of the agent, a context being done once. It waits for them to remove
   their temporary files; an upload ratd already received whole may still be written, one written
-  in place is left partly written, nobody left to tell the agent, and a download rat received
+  in place may be left partly written, nobody left to tell the agent, and a download rat received
   whole is still put in place, a cancel of the agent alone stopping it then (see Cancellation). A
   file system that stops answering in the transfers directory (a stale NFS mount) holds the
   transfers reading or writing it, and so the stop, until it answers: no call waits for it longer

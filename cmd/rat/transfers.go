@@ -822,15 +822,16 @@ func (t *transfers) failureText(j *job, err error) (string, bool, bool) {
 	var failed *connect.TransferError
 	switch {
 	case errors.Is(err, connect.ErrAnswerLost) && errors.As(err, &failed):
-		left := j.request.destination() + " may be written or not"
+		left, again := j.request.destination()+" may be written or not", "overwrite"
 		if j.request.writesInPlace() {
 			// written into as the body came, which ratd may not have received whole: whatever it
-			// received, the old content is gone
-			left = destinationText(j)
+			// received, the old content is gone; called again in place too, rather than read as
+			// called without it
+			left, again = destinationText(j), "overwrite and in_place"
 		}
 		return fmt.Sprintf("The answer of ratd to the copy of %s to %s was lost once all of it was sent (%s): %s. "+
-			"Check it before using it, or call %s again with overwrite.", j.request.source(),
-			j.request.destination(), sentence(failed.Reason), left, j.request.tool), true, false
+			"Check it before using it, or call %s again with %s.", j.request.source(), j.request.destination(),
+			sentence(failed.Reason), left, j.request.tool, again), true, false
 	case errors.As(err, &refused):
 		return refused.Text, true, false
 	case j.cancelWasAsked() && t.ctx.Err() == nil:
