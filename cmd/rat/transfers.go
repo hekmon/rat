@@ -783,8 +783,8 @@ func canceledText(j *job) string {
 
 // destinationText tells what j, cut or canceled before the end of its file, left of its
 // destination: as it was, all or nothing, unless an upload in place with overwrite was writing into
-// it, which may leave it partly written (or emptied: ratd empties it before the first byte). rat
-// does not know whether that file existed, a missing one being created all or nothing.
+// it, which may leave it partly written (ratd empties it as the first bytes come). rat does not
+// know whether that file existed, a missing one being created all or nothing.
 func destinationText(j *job) string {
 	if j.request.inPlace && j.request.overwrite {
 		return fmt.Sprintf("%s, written in place, may be partly written", j.request.destination())

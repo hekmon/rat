@@ -36,8 +36,8 @@ const fakeChunk = 32 << 10
 // fakeTransfers serves the file transfers as ratd does, at paths of the machine of the test, with
 // what a test needs of a ratd: older than the transfers, slow (a pause between chunks), stalling
 // after its first chunk until stall is closed, failing with the sentence failWith (a download in
-// its trailer, an upload once received whole, writing nothing), cutting a transfer after its first
-// chunk, losing the answer to an upload it received whole (dropAnswer),
+// its trailer, an upload once received whole, writing nothing but what it wrote in place), cutting
+// a transfer after its first chunk, losing the answer to an upload it received whole (dropAnswer),
 // or calling meanwhile as a download comes, before answering it, as another transfer acting in
 // between. It is for what a test must provoke: what ratd does by itself, successes and refusals,
 // is tested against ratd (see ratd_unix_test.go), and the answers the tests of the fake go through
@@ -146,7 +146,7 @@ func (f *fakeTransfers) upload(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if err != nil {
-			// cut: nothing written
+			// cut: nothing written, but what was written in place
 			return
 		}
 		if first && cut {

@@ -31,8 +31,9 @@
 // download_file of rat, which copy files by path between the machine of a harness and this one,
 // their bytes never going through MCP: an upload is the body of a POST to /upload, a download the
 // body of the answer to a GET of /download, the path and the permission bits travelling in
-// headers (package connect holds the contract). Both are all or nothing, refuse a symbolic link at
-// the end of their path, and fail a file that changed while it was read (package internal/stamp).
+// headers (package connect holds the contract). Both are all or nothing, but an upload asked in
+// place (Rat-In-Place), which writes into the file it replaces; both refuse a symbolic link at the
+// end of their path, and fail a file that changed while it was read (package internal/stamp).
 //
 // # tmux server
 //

@@ -717,8 +717,9 @@ acts on what is not a regular file. It releases a command waiting to write into 
 write then fails once the refusal closes it, and a device may act on it (a tape rewinds). The file
 opened is checked again, as it may have been replaced in between: opened with `O_NOFOLLOW`, which
 refuses a link as the last part of the path only, and without blocking. An upload looks at its
-target with `Lstat`, before and after its bytes come, and opens only a temporary file of its own,
-but in place: it then opens its target as a download does, and checks it again (see In place).
+target with `Lstat` before its bytes come and once they came, and opens only a temporary file of
+its own; in place, it looks before only, then opens its target as a download does, and checks it
+again (see In place).
 
 **The change check.** The side reading the file compares its size, modification time and change
 time when opening it and once read (package `internal/stamp`), as GNU tar does: a file still being
@@ -756,7 +757,8 @@ has a shell. Rejected as well: HTTP/3, which a single bulk stream gains
 nothing from, and which Go 1.27 does not offer publicly.
 
 Transfers have no size limit nor timeout: a full disk fails the transfer (507), its temporary file
-removed, and a transfer on a slow link may take hours. Stopping ratd cuts them at once (see
+removed, or a file written in place left partly written, and a transfer on a slow link may take
+hours. Stopping ratd cuts them at once (see
 Shutdown).
 
 ## MCP instructions
