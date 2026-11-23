@@ -642,30 +642,29 @@ where a header says, which is what POST means; PUT would claim to replace `/uplo
 headers of rat are prefixed `Rat-`: `Rat-Overwrite` rather than WebDAV's `Overwrite`, whose
 absence means overwrite, the opposite of ours.
 
-**All or nothing.** An upload goes to a temporary file next to its target (`.NAME.rat-RANDOM`,
-with the permission bits sent minus the umask), put in its place once complete: an upload cut
-midway leaves the previous version whole. Its path, absolute, is 14 bytes longer than the
-target's for a name of 200 bytes or less: a target within 14 bytes of the longest path the system
-takes (`PATH_MAX`: 1024 bytes on macOS, 4096 on Linux) is refused as a name too long, though
-`write_file` writes it. Left as it is, for paths that long: working relative to the directory, as
-rat does with `os.Root`, would take the whole placing of the file with it. `write_file` makes the
-opposite choice (see Files), for content it holds whole; a file arriving for minutes, half
-replaced, would be worse than none.
-Without overwrite, the temporary file is linked under the name of the target, which fails if a
-file appeared meanwhile (412), where a rename would replace it; with overwrite, it takes the mode
-of the file it replaces, then is renamed over it. Permissions follow `scp`: a new file gets those
-of its source minus the umask, a replaced file keeps its own, and setuid, setgid and sticky never
-travel. The price of the rename: hard links to a replaced file are broken, its extended
-attributes lost, and its owner becomes ratd's user (rat runs as a user of its own on each side,
-as the manual recommends). On a file system without hard links (FAT, some network ones, FUSE
-without link as sshfs, whatever error its link gives: EPERM, EMLINK, ENOSYS, ENOTSUP), the file
-is renamed even without overwrite, a file appearing in between then being replaced; rat does so
-too, on Windows with the errors of Windows (FAT, exFAT: ERROR_INVALID_FUNCTION). No fsync: all
-or nothing covers a transfer cut, not a power cut, after which a file may be lost as any other
-just written; an agent wanting it on disk runs `sync`. A ratd killed during an upload leaves its
-temporary file behind. A link or a rename failing is no proof: on NFS, one the server made fails
-all the same when its reply is lost (link(2), BUGS), the temporary file then found in place, which
-ratd and rat both tell written.
+**All or nothing.** Unless asked in place (see In place), an upload goes to a temporary file next
+to its target (`.NAME.rat-RANDOM`, with the permission bits sent minus the umask), put in its place
+once complete: an upload cut midway leaves the previous version whole. Its path, absolute, is 14
+bytes longer than the target's for a name of 200 bytes or less: a target within 14 bytes of the
+longest path the system takes (`PATH_MAX`: 1024 bytes on macOS, 4096 on Linux) is refused as a name
+too long, though `write_file` writes it. Left as it is, for paths that long: working relative to
+the directory, as rat does with `os.Root`, would take the whole placing of the file with it.
+`write_file` makes the opposite choice (see Files), for content it holds whole; a file arriving for
+minutes, half replaced, would be worse than none. Without overwrite, the temporary file is linked
+under the name of the target, which fails if a file appeared meanwhile (412), where a rename would
+replace it; with overwrite, it takes the mode of the file it replaces, then is renamed over it.
+Permissions follow `scp`: a new file gets those of its source minus the umask, a replaced file
+keeps its own, and setuid, setgid and sticky never travel. The price of the rename: hard links to a
+replaced file are broken, its extended attributes lost, and its owner becomes ratd's user (rat runs
+as a user of its own on each side, as the manual recommends). On a file system without hard links
+(FAT, some network ones, FUSE without link as sshfs, whatever error its link gives: EPERM, EMLINK,
+ENOSYS, ENOTSUP), the file is renamed even without overwrite, a file appearing in between then
+being replaced; rat does so too, on Windows with the errors of Windows (FAT, exFAT:
+ERROR_INVALID_FUNCTION). No fsync: all or nothing covers a transfer cut, not a power cut, after
+which a file may be lost as any other just written; an agent wanting it on disk runs `sync`. A ratd
+killed during an upload leaves its temporary file behind. A link or a rename failing is no proof:
+on NFS, one the server made fails all the same when its reply is lost (link(2), BUGS), the
+temporary file then found in place, which ratd and rat both tell written.
 
 **In place.** With `Rat-In-Place`, an upload replacing a file writes into it instead, as `cp` does:
 the file keeps the hard links, extended attributes and owner the rename loses, and its directory
@@ -715,7 +714,8 @@ acts on what is not a regular file. It releases a command waiting to write into 
 write then fails once the refusal closes it, and a device may act on it (a tape rewinds). The file
 opened is checked again, as it may have been replaced in between: opened with `O_NOFOLLOW`, which
 refuses a link as the last part of the path only, and without blocking. An upload looks at its
-target with `Lstat`, before and after its bytes come, and only opens a temporary file of its own.
+target with `Lstat`, before and after its bytes come, and opens only a temporary file of its own,
+but in place: it then opens its target as a download does, and checks it again (see In place).
 
 **The change check.** The side reading the file compares its size, modification time and change
 time when opening it and once read (package `internal/stamp`), as GNU tar does: a file still being
@@ -731,17 +731,18 @@ a first read giving bytes before anything is sent; ending before its size, uncha
 trailer. Rejected: reading it to its end, as `read_file` does, before its headers, a second way of
 reading in ratd for files a terminal copies. A change in an upload is
 rat's to find: it ends the body with an error instead of its last chunk, and ratd, seeing the body
-cut, drops its temporary file; a file read past the size it had when opened is cut at once, rather
-than sent for as long as it grows. A cancel ends it the same way, until the last chunk is sent: past
-it, ratd may be writing the file, and the client waits for its answer rather than leave unknown
-whether it was written, unless it stops, nobody reading that answer any more (`connect.Upload`
-holds the client side). No digest: TLS authenticates every record, so a byte altered on the way
-cuts the connection, and the bytes go from file to socket through the standard library alone. A
-digest computed on the stream at both ends would check the same bytes again, and miss a
-file changing while read, both ends hashing the same torn bytes; one computed by a first read of
-the file would catch it, at the price of reading it twice, which the change check spares. A
-trailer only follows a chunked body in HTTP/1.1, which carries no `Content-Length` (Go silently
-drops a trailer sent next to one): the size of a download travels in `Rat-Size`.
+cut, drops its temporary file, or leaves a file written in place partly written; a file read past
+the size it had when opened is cut at once, rather than sent for as long as it grows. A cancel ends
+it the same way, until the last chunk is sent: past it, ratd may be writing the file, and the
+client waits for its answer rather than leave unknown whether it was written, unless it stops,
+nobody reading that answer any more (`connect.Upload` holds the client side). No digest: TLS
+authenticates every record, so a byte altered on the way cuts the connection, and the bytes go from
+file to socket through the standard library alone. A digest computed on the stream at both ends
+would check the same bytes again, and miss a file changing while read, both ends hashing the same
+torn bytes; one computed by a first read of the file would catch it, at the price of reading it
+twice, which the change check spares. A trailer only follows a chunked body in HTTP/1.1, which
+carries no `Content-Length` (Go silently drops a trailer sent next to one): the size of a download
+travels in `Rat-Size`.
 
 **Bytes as they are.** `application/octet-stream` both ways, never a charset nor a conversion,
 which FTP's ASCII mode taught. No compression: a content coding changes what the length and any
@@ -921,8 +922,8 @@ returns at once, the first telling ratd stops:
 `http.Server` cancels no call when shutting down, it waits for them, and a wait would hold the
 door open for the whole grace, then be cut. A file transfer is cut at once as well, the read and
 write deadlines of its connection set to the moment ratd stops (`http.ResponseController`), as it
-may last hours: an upload cut drops its temporary file. The kill switch does not depend on what
-agents wait for, nor on what they copy.
+may last hours: an upload cut drops its temporary file, or leaves a file written in place partly
+written. The kill switch does not depend on what agents wait for, nor on what they copy.
 
 The controller terminates its server when the context it was started with ends: ratd starts it
 with a context the signal does not cancel, which would otherwise stop the terminals with the

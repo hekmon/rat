@@ -46,7 +46,8 @@ type UploadOptions struct {
 // bytes are counted by its own reads, for a caller wrapping it to tell progress.
 //
 // It is all or nothing on ratd's side, unless options.InPlace writes into a file it replaces: ratd
-// writes the file once received whole, and writes nothing of an upload cut before its end. What
+// writes the file once received whole, and writes nothing of an upload cut before its end, where
+// one in place leaves the file partly written. What
 // its headers alone refuse is refused before any byte is sent, client waiting for the go-ahead of
 // ratd ([HTTPClient] waits a second for it). A refusal or failure of ratd is a [Refusal], with the
 // sentence ratd wrote for the agent; [ErrNoTransfers] tells a ratd older than the transfers; a
@@ -56,23 +57,23 @@ type UploadOptions struct {
 //
 // src is stamped when opened and once read (see package stamp): a file that changed meanwhile (a
 // log still written, a build output) ends the body with an error instead of its end, and Upload
-// fails with [ErrChanged], ratd writing nothing. A file read past its size when opened fails so
+// fails with [ErrChanged], the upload cut. A file read past its size when opened fails so
 // at once, rather than once it stops growing: one written faster than the link would otherwise be
 // sent for as long as it grows, filling the disk of ratd. A read of src failing, or the look at it
 // once read, ends it so too, Upload failing with a [TransferError] of kind [ErrRead], its reason
 // that error.
 //
-// Two signals stop an upload. Closing cancel (unless nil), as an agent cancels, cuts it, ratd
-// writing nothing, Upload returning [context.Canceled], unless the whole file was sent: from then
-// on, ratd may be writing it, and Upload waits for its answer and returns it, so that a cancel
-// never leaves unknown whether the file was written. The choice is made at one point, when the end
-// of the file is about to be sent. Cancelling ctx cuts the upload whatever was sent, a cancel
-// having come first or not, returning its cause: nobody waits for the answer any more (a client
-// stopping); once ratd answered the file written, it is too late, and Upload returns that answer.
-// One signal would not do: a context is done once, and a cancel waiting for the answer would leave
-// a stop coming next unseen. Either cuts the connection at once, even stalled, but net/http
-// returns from a request only once the read of its body under way returns: a read of src blocked
-// (a file system not answering) delays it.
+// Two signals stop an upload. Closing cancel (unless nil), as an agent cancels, cuts it, Upload
+// returning [context.Canceled], unless the whole file was sent: from then on, ratd may be writing
+// it, and Upload waits for its answer and returns it, so that a cancel never leaves unknown
+// whether the file was written. The choice is made at one point, when the end of the file is about
+// to be sent. Cancelling ctx cuts the upload whatever was sent, a cancel having come first or not,
+// returning its cause: nobody waits for the answer any more (a client stopping); once ratd
+// answered the file written, it is too late, and Upload returns that answer. One signal would not
+// do: a context is done once, and a cancel waiting for the answer would leave a stop coming next
+// unseen. Either cuts the connection at once, even stalled, but net/http returns from a request
+// only once the read of its body under way returns: a read of src blocked (a file system not
+// answering) delays it.
 func Upload(ctx context.Context, cancel <-chan struct{}, client *http.Client, server string, src fs.File,
 	path string, options UploadOptions) (*Uploaded, error) {
 	info, err := src.Stat()
@@ -133,7 +134,8 @@ func Upload(ctx context.Context, cancel <-chan struct{}, client *http.Client, se
 		// have told
 		return nil, &TransferError{Kind: ErrAnswerLost, Reason: innermost(err)}
 	case err != nil && answered.Load():
-		// lost once ratd gave its go-ahead, before the end of the file: cut, ratd writing nothing
+		// lost once ratd gave its go-ahead, before the end of the file: cut, ratd writing nothing,
+		// or part of the file in place
 		return nil, &TransferError{Kind: ErrCut, Reason: innermost(err)}
 	case err != nil:
 		// ratd not reached, or lost before its go-ahead
@@ -170,8 +172,9 @@ func afterClosed(c <-chan struct{}, f func()) (stop func()) {
 
 // uploadBody is the body of an upload: src, read to its end, whose end is told only if the file
 // is as it was when opened, and the upload not cancelled. Otherwise the body ends with the error
-// telling why, and ratd, seeing it cut, writes nothing. Once its end is told, the whole file is
-// sent: a cancel cuts the upload no more, its context still does (see Upload).
+// telling why, and ratd, seeing it cut, writes nothing, or leaves a file written in place partly
+// written. Once its end is told, the whole file is sent: a cancel cuts the upload no more, its
+// context still does (see Upload).
 type uploadBody struct {
 	src    fs.File
 	opened stamp.Stamp

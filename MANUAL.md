@@ -548,20 +548,24 @@ transfer. In the harness, with its client directory:
   (`SIGKILL`, a crash) leaves its temporary file behind, which can be removed. One exception, asked
   for: `upload_file` with `in_place` and `overwrite` writes into the file it replaces, keeping its
   hard links, owner and extended attributes, where its directory may refuse a new file (a file of
-  the user of ratd in a directory of root); a transfer cut or canceled then leaves it partly
-  written, which the agent is told.
+  the user of ratd in a directory of root), and needing no room for a second copy (a large file on
+  a disk short of room); a transfer cut or canceled then leaves it partly written, which the agent
+  is told, unless rat itself stops (see Long transfers). Written in place into the very file
+  uploaded, rat and ratd sharing a machine, a file would be emptied before being read: the
+  description of `in_place` warns agents against it.
 - **Permissions, as `scp` copies them.** A new file gets the permission bits of its source, minus
   the umask; a replaced file keeps its own, the agent told when they differ from those of the
   source. On Windows, whose files have no permission bits, rat sees 0666, or 0444 for a read-only
   file: a file it uploads gets those, minus the umask, and it tells no difference. A replaced file
-  is a new file in its place: it belongs to the user that wrote it, and its hard links and
-  extended attributes are lost.
+  is a new file in its place, unless written in place: it belongs to the user that wrote it, and
+  its hard links and extended attributes are lost.
 - **Long transfers.** A call waits 50 seconds at most; a longer copy goes on in rat, the agent told
   its progress, and finds it again by calling with the same paths. Stopping rat (the harness
   quitting) or ratd cuts the transfers under way, removing their temporary files: only a file
-  already received whole may still be written, an upload by ratd, a download by rat. A transfers
-  directory on a file system that stops answering (a stale NFS mount) holds the exit of rat until
-  it answers.
+  already received whole may still be written, an upload by ratd, a download by rat. A file
+  written in place is left partly written, which nobody tells the agent when rat itself stopped.
+  A transfers directory on a file system that stops answering (a stale NFS mount) holds the exit
+  of rat until it answers.
 - **Through the same door.** Transfers reach the port of ratd with the same client certificate,
   through the proxy of the environment if any: nothing else to open. Both sides log one line per
   transfer (the paths and the size, never the content), and `systemctl status` counts the

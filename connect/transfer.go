@@ -67,22 +67,22 @@ var (
 	// ErrNoTransfers is the error of a transfer to a ratd older than the transfers.
 	ErrNoTransfers = errors.New("ratd serves no file transfers: it is older than them")
 	// ErrChanged is the error of an upload whose file changed while it was read: ratd wrote
-	// nothing.
+	// nothing, or, writing in place ([UploadOptions]), part of it.
 	ErrChanged = errors.New("the file changed while it was read")
 	// ErrRead is the kind of a [TransferError] of an upload whose file failed to read (a disk
 	// failing, a file system gone), or to be looked at once read, its reason that error: ratd wrote
-	// nothing. A failure on the side of the caller, told apart from the connection lost or ratd
-	// failing.
+	// nothing, or, writing in place, part of it. A failure on the side of the caller, told apart
+	// from the connection lost or ratd failing.
 	ErrRead = errors.New("reading the file failed")
 	// ErrCut is the kind of a [TransferError] of a transfer cut before its end once ratd answered:
 	// a download whose body was cut short; an upload whose connection was lost once ratd gave its
-	// go-ahead (100), before the end of the file, ratd then writing nothing of it. Lost before any
-	// answer of ratd, a transfer fails with the error of net/http; once the file of an upload was
-	// sent whole, with [ErrAnswerLost].
+	// go-ahead (100), before the end of the file, ratd then writing nothing of it, or, writing in
+	// place, part of it. Lost before any answer of ratd, a transfer fails with the error of
+	// net/http; once the file of an upload was sent whole, with [ErrAnswerLost].
 	ErrCut = errors.New("transfer cut")
 	// ErrAnswerLost is the kind of a [TransferError] of an upload whose connection was lost once
-	// its whole file was sent, before ratd answered: ratd may have written the file, which only its
-	// answer would have told.
+	// its whole file was sent, before ratd answered: ratd may have written the file, or, writing in
+	// place, part of it, which only its answer would have told.
 	ErrAnswerLost = errors.New("the answer of ratd lost once the file was sent whole")
 )
 

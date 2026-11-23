@@ -154,9 +154,10 @@ itself, in every session, or miss:
   range cut to the read budget tells where to continue.
 - **Files moved by path.** With `--transfers-dir`, rat adds `upload_file` and `download_file`,
   copying files of any size, binary included, between a directory of the machine of the harness
-  and the machine of ratd, their content never entering the context of the model. All or nothing:
-  a copy cut leaves the previous version whole, and a file still being written is refused rather
-  than copied torn. A copy longer than a call goes on, the agent told its progress.
+  and the machine of ratd, their content never entering the context of the model. All or nothing,
+  unless the agent asks to write a file in place: a copy cut leaves the previous version whole,
+  and a file still being written is refused rather than copied torn. A copy longer than a call
+  goes on, the agent told its progress.
 - **Every answer tells what happened, and what to do next.** Errors included: an agent never
   gets a bare error code nor a tmux message to decipher, but a sentence saying what was done or
   not, why, and how to go on, naming the tool or the parameter to use. An unknown key lists the
@@ -209,8 +210,9 @@ transfers](MANUAL.md#file-transfers)):
 | `download_file` | `remote_path`, `local_path`, `overwrite` (optional, false), `cancel` (optional, false) | Copies a file of the machine of ratd into the transfers directory, its content never entering the context of the agent. |
 
 A transfer call waits 50 seconds at most: a longer copy goes on, the call telling its progress,
-and the same call again waits for the rest; `cancel` stops it, leaving the destination as it was,
-unless it comes too late, as the copy ends, the call then telling how it ended.
+and the same call again waits for the rest; `cancel` stops it, leaving the destination as it was
+(an upload in place, partly written), unless it comes too late, as the copy ends, the call then
+telling how it ended.
 Local paths are relative to the transfers directory, and stay within it.
 
 Paths are absolute or start with `~/`. What `read_window` and `read_file` return is bounded by
