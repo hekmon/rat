@@ -34,10 +34,13 @@ const fakeChunk = 32 << 10
 
 // fakeTransfers serves the file transfers as ratd does, at paths of the machine of the test, with
 // what a test needs of a ratd: older than the transfers, slow (a pause between chunks), stalling
-// after its first chunk until stall is closed, failing a download in its trailer, cutting a
-// transfer after its first chunk, losing the answer to an upload it received whole (dropAnswer),
+// after its first chunk until stall is closed, failing with the sentence failWith (a download in
+// its trailer, an upload once received whole, writing nothing), cutting a transfer after its first
+// chunk, losing the answer to an upload it received whole (dropAnswer),
 // or calling meanwhile as a download comes, before answering it, as another transfer acting in
-// between.
+// between. It is for what a test must provoke: what ratd does by itself, successes and refusals,
+// is tested against ratd (see ratd_unix_test.go), and the answers the tests of the fake go through
+// are those of ratd, which TestRealRatdAnswersAsFake checks.
 type fakeTransfers struct {
 	// mu guards the fields below
 	mu         sync.Mutex
@@ -102,7 +105,7 @@ func hangUp(w http.ResponseWriter) {
 }
 
 func (f *fakeTransfers) upload(w http.ResponseWriter, r *http.Request) {
-	old, pause, stall, _, cut := f.take()
+	old, pause, stall, failWith, cut := f.take()
 	if old {
 		http.NotFound(w, r)
 		return
@@ -153,12 +156,28 @@ func (f *fakeTransfers) upload(w http.ResponseWriter, r *http.Request) {
 		}
 		time.Sleep(pause)
 	}
+	if failWith != "" {
+		// as ratd failing to write a file received whole (a disk full)
+		http.Error(w, failWith, http.StatusInsufficientStorage)
+		return
+	}
 	replaced := statErr == nil
 	if replaced {
 		mode = info.Mode().Perm()
 	}
 	if !intoFile {
-		if err := os.WriteFile(path, received.Bytes(), mode); err != nil {
+		// as ratd writes a file not in place: a new file put in place of the one replaced, whose
+		// hard links keep their content, rather than written into
+		tmp := filepath.Join(filepath.Dir(path), ".fake-"+filepath.Base(path))
+		err := os.WriteFile(tmp, received.Bytes(), mode)
+		if err == nil && replaced {
+			// the mode of the file replaced, which the umask takes nothing from
+			err = os.Chmod(tmp, mode)
+		}
+		if err == nil {
+			err = os.Rename(tmp, path)
+		}
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -749,20 +768,21 @@ func TestTransferLeftInPlace(t *testing.T) {
 }
 
 // TestUploadCancelTooLateRefused guards a cancel coming once all of an upload was sent, too late to
-// cut it, ratd then failing the upload (the fake failing to write into a directory that does not
-// exist, 500): told with the sentence of ratd first, then the cancel too late, rather than
-// canceled, its reason lost, or behind "Too late to cancel", which reads as a copy done.
+// cut it, ratd then failing the upload (failWith, a disk full: 507): told with the sentence of ratd
+// first, then the cancel too late, rather than canceled, its reason lost, or behind "Too late to
+// cancel", which reads as a copy done.
 func TestUploadCancelTooLateRefused(t *testing.T) {
 	shortWait(t, time.Second)
 	tt := startTransfers(t)
 	stall := make(chan struct{})
 	release := sync.OnceFunc(func() { close(stall) })
 	t.Cleanup(release)
-	// the fake reads a first chunk, then stalls, the rest in the buffers of the connection; once
-	// released, it fails to write the file
-	tt.fake.set(func(f *fakeTransfers) { f.stall = stall })
 	randomFile(t, filepath.Join(tt.local, "up.bin"), 64<<10, 0o644)
-	remote := filepath.Join(tt.remote, "missing", "up.bin")
+	remote := filepath.Join(tt.remote, "up.bin")
+	failure := "Writing " + remote + " failed: no space left on device."
+	// the fake reads a first chunk, then stalls, the rest in the buffers of the connection; once
+	// released, it fails the upload
+	tt.fake.set(func(f *fakeTransfers) { f.stall, f.failWith = stall, failure })
 	args := map[string]any{"local_path": "up.bin", "remote_path": remote}
 	tt.expect(t, uploadTool, args, false, "Still copying up.bin to "+remote+": 64 KiB of 64 KiB")
 	// sent whole: the cancel comes too late, ratd failing the upload meanwhile
@@ -771,10 +791,7 @@ func TestUploadCancelTooLateRefused(t *testing.T) {
 		release()
 	}()
 	args["cancel"] = true
-	text := tt.expect(t, uploadTool, args, true, "open ")
-	if !strings.HasSuffix(text, "missing/up.bin: no such file or directory The cancel came too late to stop it.") {
-		t.Errorf("expected the sentence of ratd, then the cancel too late, got %q", text)
-	}
+	tt.expect(t, uploadTool, args, true, failure+" The cancel came too late to stop it.")
 	if _, err := os.Lstat(remote); err == nil {
 		t.Error("expected no remote file written")
 	}
