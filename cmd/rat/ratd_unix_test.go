@@ -372,21 +372,39 @@ func TestRealRatdAnswersAsFake(t *testing.T) {
 	}
 }
 
-// unreadable is a file whose reads fail, as a file of rat failing to read: Stat tells the regular
-// file it is, of its size.
-type unreadable struct{ *os.File }
+// unreadable is a file whose reads fail once after of its bytes were read, as a file of rat failing
+// to read: Stat tells the regular file it is, of its size. Past bytes read, the read failing waits
+// a little first, as a disk failing after a while would, for these bytes to reach ratd.
+type unreadable struct {
+	*os.File
+	after, read int64
+}
 
-func (unreadable) Read([]byte) (int, error) { return 0, errors.New("input/output error") }
+func (u *unreadable) Read(p []byte) (int, error) {
+	if u.read >= u.after {
+		if u.after > 0 {
+			time.Sleep(100 * time.Millisecond)
+		}
+		return 0, errors.New("input/output error")
+	}
+	n, err := u.File.Read(p[:min(int64(len(p)), u.after-u.read)])
+	u.read += int64(n)
+	return n, err
+}
 
-// TestRealRatdEmptiesInPlaceAsFake guards when the fake ratd empties a file written in place,
-// against ratd itself: once the body comes. An upload in place whose body fails before its first
-// byte, its source failing at its first read, leaves the file as it was against both. The calls
-// of TestRealRatdAnswersAsFake write in place whole, which would not tell a fake emptying the file
-// before its body came, as it did before ratd changed.
+// TestRealRatdEmptiesInPlaceAsFake guards when the fake ratd empties a file written in place, and
+// writes into it, against ratd itself: as the body comes. An upload in place whose body fails
+// before its first byte, its source failing at its first read, leaves the file as it was against
+// both; one whose body fails once 64 KiB of it were read leaves the beginning of the new content
+// against both, where a fake writing only once the body came whole would leave the old one. The
+// calls of TestRealRatdAnswersAsFake write in place whole, which would tell neither. Each upload has
+// a deadline: the go-ahead awaited with no limit, a side holding it would hang the test rather than
+// fail it.
 func TestRealRatdEmptiesInPlaceAsFake(t *testing.T) {
-	// left returns what an upload in place failing before its first byte leaves, through the ratd
-	// at addr serving the tenant of bundle
-	left := func(t *testing.T, bundle, addr string) string {
+	old, content := bytes.Repeat([]byte("o"), 1<<20), bytes.Repeat([]byte("n"), 1<<20)
+	// left returns what an upload in place whose source fails once after of its bytes were read
+	// leaves, through the ratd at addr serving the tenant of bundle
+	left := func(t *testing.T, bundle, addr string, after int64) string {
 		t.Helper()
 		side, err := mtls.Load(mtls.ClientDir(bundle, "alice"))
 		if err != nil {
@@ -401,10 +419,10 @@ func TestRealRatdEmptiesInPlaceAsFake(t *testing.T) {
 			t.Fatal(err)
 		}
 		target, source := filepath.Join(dir, "app.conf"), filepath.Join(dir, "source.bin")
-		if err := os.WriteFile(target, []byte("as it was"), 0o644); err != nil {
+		if err := os.WriteFile(target, old, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(source, bytes.Repeat([]byte("n"), 1<<10), 0o644); err != nil {
+		if err := os.WriteFile(source, content, 0o644); err != nil {
 			t.Fatal(err)
 		}
 		file, err := os.Open(source)
@@ -412,26 +430,55 @@ func TestRealRatdEmptiesInPlaceAsFake(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer file.Close()
-		_, err = connect.Upload(context.Background(), nil, client, addr, unreadable{file}, target,
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, err = connect.Upload(ctx, nil, client, addr, &unreadable{File: file, after: after}, target,
 			connect.UploadOptions{Overwrite: true, InPlace: true})
+		// once the side wrote what it received, which it may still be doing as the client returns
+		beginning := func(data []byte) bool {
+			return len(data) > 0 && int64(len(data)) <= after && bytes.Equal(data, content[:len(data)])
+		}
 		data, readErr := os.ReadFile(target)
-		return fmt.Sprintf("read failing %v; the file holding %q, %v", errors.Is(err, connect.ErrRead), data, readErr)
+		for deadline := time.Now().Add(5 * time.Second); after > 0 && !beginning(data) && time.Now().Before(deadline); {
+			time.Sleep(20 * time.Millisecond)
+			data, readErr = os.ReadFile(target)
+		}
+		holds := "other content"
+		switch {
+		case readErr != nil:
+			holds = readErr.Error()
+		case bytes.Equal(data, old):
+			holds = "the old content"
+		case beginning(data):
+			holds = "a beginning of the new content"
+		}
+		return fmt.Sprintf("read failing %v; the file holding %s", errors.Is(err, connect.ErrRead), holds)
 	}
 	bundle := newBundle(t)
 	fake := &fakeTransfers{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+connect.UploadPath, fake.upload)
-	fakeLeft := left(t, bundle, fakeRatd(t, bundle, mux, nil))
-	bundle = filepath.Join(t.TempDir(), "bundle")
-	if _, err := mtls.Generate(bundle, "test-rat-emptied", []string{"alice"}); err != nil {
+	fakeAddr := fakeRatd(t, bundle, mux, nil)
+	ratdBundle := filepath.Join(t.TempDir(), "bundle")
+	if _, err := mtls.Generate(ratdBundle, "test-rat-emptied", []string{"alice"}); err != nil {
 		t.Fatal(err)
 	}
 	home, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	ratdLeft := left(t, bundle, startRealRatd(t, buildRatd(t), bundle, home))
-	if want := `read failing true; the file holding "as it was", <nil>`; fakeLeft != want || ratdLeft != want {
-		t.Errorf("expected the file left as it was against both:\nfake: %s\nratd: %s", fakeLeft, ratdLeft)
+	ratdAddr := startRealRatd(t, buildRatd(t), ratdBundle, home)
+	for _, tc := range []struct {
+		after int64
+		want  string
+	}{
+		{0, "read failing true; the file holding the old content"},
+		{64 << 10, "read failing true; the file holding a beginning of the new content"},
+	} {
+		fakeLeft, ratdLeft := left(t, bundle, fakeAddr, tc.after), left(t, ratdBundle, ratdAddr, tc.after)
+		if fakeLeft != tc.want || ratdLeft != tc.want {
+			t.Errorf("a body failing after %d bytes: expected %q against both:\nfake: %s\nratd: %s", tc.after,
+				tc.want, fakeLeft, ratdLeft)
+		}
 	}
 }
