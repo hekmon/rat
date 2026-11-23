@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -590,7 +591,10 @@ func TestUploadInPlace(t *testing.T) {
 
 // TestUploadInPlaceCut guards an upload in place whose body is cut short (its client failing it, as
 // rat does when its file changed): the file is left partly written, the beginning of the new
-// content, rather than as it was, the log telling the bytes written in place.
+// content, rather than as it was, the log telling the bytes written in place. The file is read
+// once ratd logged the upload: the client fails its request as it fails its body, while ratd may
+// still be writing the bytes it received (an upload cut at 256 KiB read 98,304 bytes then, on
+// Linux, one time in four).
 func TestUploadInPlaceCut(t *testing.T) {
 	r, client, home := transferRatd(t)
 	path := filepath.Join(home, "app.bin")
@@ -602,18 +606,23 @@ func TestUploadInPlaceCut(t *testing.T) {
 		failAt: 256 << 10}, true)); err == nil {
 		t.Error("expected the client failing its body to fail its request")
 	}
+	logged := regexp.MustCompile(`outcome=error .*in_place=true bytes=(\d+) status=400`)
+	written := -1
+	eventually(t, "the log telling the bytes written in place", func() bool {
+		if m := logged.FindStringSubmatch(r.logs.String()); m != nil {
+			written, _ = strconv.Atoi(m[1])
+			return true
+		}
+		return false
+	})
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(data) >= len(content) || !bytes.Equal(data, content[:len(data)]) {
-		t.Errorf("expected the file partly written with the new content, got %d bytes, %q…", len(data),
-			data[:min(len(data), 8)])
+	if written <= 0 || written >= len(content) || len(data) != written || !bytes.Equal(data, content[:written]) {
+		t.Errorf("expected the file partly written with the new content, the %d bytes logged, got %d bytes, %q…",
+			written, len(data), data[:min(len(data), 8)])
 	}
-	eventually(t, "the log telling the bytes written in place", func() bool {
-		return strings.Contains(r.logs.String(), "outcome=error") &&
-			strings.Contains(r.logs.String(), "in_place=true bytes="+strconv.Itoa(len(data))+" status=400")
-	})
 }
 
 // TestUploadInPlaceEmptiedOnFirstBytes guards when an upload in place empties its file: once the
@@ -647,15 +656,9 @@ func TestUploadInPlaceEmptiedOnFirstBytes(t *testing.T) {
 // a file ratd's user can not write, which the answer names with that user (403); a header that is
 // neither true nor false (400).
 func TestUploadInPlaceRefused(t *testing.T) {
-	r, client, home := transferRatd(t)
-	path := filepath.Join(home, "app.bin")
-	victim := filepath.Join(home, "victim.bin")
-	for _, file := range []string{path, victim} {
-		if err := os.WriteFile(file, []byte("as it was"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// set before the request, and restored once the test ended
+	// set before ratd serves, and restored once it stopped (cleanups run in reverse order): as the
+	// upload opens path, its file is replaced by a link to victim
+	var path, victim string
 	hook := inPlaceOpening
 	inPlaceOpening = func(opening string) {
 		if opening == path {
@@ -668,6 +671,14 @@ func TestUploadInPlaceRefused(t *testing.T) {
 		}
 	}
 	t.Cleanup(func() { inPlaceOpening = hook })
+	r, client, home := transferRatd(t)
+	path = filepath.Join(home, "app.bin")
+	victim = filepath.Join(home, "victim.bin")
+	for _, file := range []string{path, victim} {
+		if err := os.WriteFile(file, []byte("as it was"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	resp, body, err := sendTransfer(client, newUploadInPlace(t, r.addr, path, &fileBody{content: []byte("new")}, true))
 	expectRefused(t, "a link put there", resp, body, err, http.StatusConflict,
 		path+" is a symbolic link to "+victim+", which transfers do not follow: use that path instead.")
