@@ -47,13 +47,13 @@ type UploadOptions struct {
 //
 // It is all or nothing on ratd's side, unless options.InPlace writes into a file it replaces: ratd
 // writes the file once received whole, and writes nothing of an upload cut before its end, where
-// one in place leaves the file partly written. What
-// its headers alone refuse is refused before any byte is sent, client waiting for the go-ahead of
-// ratd ([HTTPClient] waits a second for it). A refusal or failure of ratd is a [Refusal], with the
-// sentence ratd wrote for the agent; [ErrNoTransfers] tells a ratd older than the transfers; a
-// [TransferError] of kind [ErrCut] the connection lost once ratd gave its go-ahead, before the end
-// of the file; of kind [ErrAnswerLost] lost once the file was sent whole, before ratd answered,
-// ratd then possibly writing it.
+// one in place leaves the file partly written. What its headers alone refuse is refused before any
+// byte is sent, client waiting for the go-ahead of ratd ([HTTPClient] waits for it however long
+// ratd takes). A refusal or failure of ratd is a [Refusal], with the sentence ratd wrote for the
+// agent; [ErrNoTransfers] tells a ratd older than the transfers; a [TransferError] of kind
+// [ErrCut] the connection lost once ratd gave its go-ahead, before the end of the file; of kind
+// [ErrAnswerLost] lost once the file was sent whole, before ratd answered, ratd then possibly
+// writing it.
 //
 // src is stamped when opened and once read (see package stamp): a file that changed meanwhile (a
 // log still written, a build output) ends the body with an error instead of its end, and Upload

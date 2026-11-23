@@ -1,11 +1,13 @@
 package connect
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -191,6 +193,66 @@ func TestHTTPClientRefusesBeforeSending(t *testing.T) {
 // TestHTTPClientRenewal guards that a client whose certificate is renewed presents the renewed one
 // at its next request, rather than the one replaced on a connection kept alive, which a client in
 // constant use keeps for hours, past the expiry of the certificate it presented.
+// TestHTTPClientWaitsForGoAhead guards that the client sends the body of an upload only once ratd
+// gave its go-ahead, however long ratd takes to look at its path (a file system slow to answer):
+// past Go's default wait of a second, the body would leave unasked, a refusal then coming once
+// bytes left, and a file written in place emptied by bytes whose go-ahead may never reach the
+// client. Behind a look of a second and a half, a refusal comes before any byte is read, and an
+// upload goes on once ratd reads it.
+func TestHTTPClientWaitsForGoAhead(t *testing.T) {
+	bundle := filepath.Join(t.TempDir(), "bundle")
+	if _, err := mtls.Generate(bundle, "t", []string{"alice"}); err != nil {
+		t.Fatal(err)
+	}
+	serverSide, err := mtls.Load(mtls.ServerDir(bundle))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := mtls.ServerConfig(serverSide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ratd := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		// slower than Go's default wait for the go-ahead
+		time.Sleep(1500 * time.Millisecond)
+		w.Header().Set(HeaderVersion, "test")
+		if req.Header.Get(HeaderPath) == "/refused" {
+			http.Error(w, "/refused can not be written.", http.StatusForbidden)
+			return
+		}
+		// reading the body sends the go-ahead
+		_, _ = io.Copy(io.Discard, req.Body)
+		w.Header().Set(HeaderMode, "0644")
+		w.WriteHeader(http.StatusCreated)
+	}))
+	ratd.TLS = config
+	ratd.StartTLS()
+	defer ratd.Close()
+	alice, err := mtls.Load(mtls.ClientDir(bundle, "alice"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := HTTPClient(alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := ratd.Listener.Addr().String()
+	file := &testFile{content: bytes.Repeat([]byte("x"), 1<<20), mode: 0o644}
+	_, err = Upload(context.Background(), nil, client, server, file, "/refused", UploadOptions{})
+	var refused *Refusal
+	if !errors.As(err, &refused) || refused.Status != http.StatusForbidden {
+		t.Errorf("expected the refusal, got %v", err)
+	}
+	if taken := file.taken(); taken != 0 {
+		t.Errorf("a refusal behind a slow look: expected it before any byte was read, %d were", taken)
+	}
+	file = &testFile{content: bytes.Repeat([]byte("x"), 1<<20), mode: 0o644}
+	if up, err := Upload(context.Background(), nil, client, server, file, "/created", UploadOptions{}); err != nil ||
+		up.Sent != 1<<20 {
+		t.Errorf("an upload behind a slow look: expected it sent whole, got %+v, %v", up, err)
+	}
+}
+
 func TestHTTPClientRenewal(t *testing.T) {
 	pki := testpki.NewSubCA(t, "t", "")
 	serverSide, err := mtls.Load(mtls.ServerDir(pki.Dir))

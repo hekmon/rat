@@ -2,13 +2,25 @@ package connect
 
 import (
 	"errors"
+	"math"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/hekmon/rat/mtls"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// goAheadWait is how long a client waits for the go-ahead of ratd (Expect: 100-continue) before
+// sending the body of an upload unasked: however long ratd takes to look at its path (a file
+// system slow to answer). Past Go's default, a second, the body would leave before the go-ahead:
+// a refusal would come once bytes left, and a file written in place could be emptied by bytes
+// whose go-ahead never reached the client, which would then tell ratd unreachable. Waiting costs
+// nothing: ratd reads no body before its go-ahead, the bytes sent early only filling buffers; a
+// ratd stuck holds the upload either way, a cancel or a stop cutting it. Zero would send the body
+// at once.
+const goAheadWait = time.Duration(math.MaxInt64)
 
 // HTTPClient returns an HTTP client presenting the certificate of side, a client directory of a
 // bundle, and checking ratd as package mtls does, the CRL of its CA on every request (see
@@ -16,7 +28,8 @@ import (
 // request on. Its transport is its own, cloned from the default one: setting the
 // configuration on http.DefaultTransport would change a global of the process, and a bare
 // http.Transport loses the defaults (proxy from the environment, dial and handshake timeouts). It
-// has no timeout: callers bound each request.
+// has no timeout: callers bound each request. It sends the body of an upload only once ratd gave
+// its go-ahead, however long ratd takes (see goAheadWait).
 func HTTPClient(side mtls.Source) (*http.Client, error) {
 	config, err := mtls.ClientConfig(side)
 	if err != nil {
@@ -28,6 +41,7 @@ func HTTPClient(side mtls.Source) (*http.Client, error) {
 	}
 	transport := defaultTransport.Clone()
 	transport.TLSClientConfig = config
+	transport.ExpectContinueTimeout = goAheadWait
 	// The trailer of a download (HeaderError) must fit whole in the read buffer of its connection,
 	// 4 KiB by default, beyond which Go fails the body ("suspiciously long trailer"), the download
 	// then told cut: its sentence names a path of up to 4 KiB (PATH_MAX on Linux), twice for a file

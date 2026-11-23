@@ -692,15 +692,18 @@ rename, once the body came: ratd does not predict it, which would copy rules of 
 vary (`CAP_FOWNER`, the ACLs of macOS).
 
 What the headers alone refuse is refused before any byte is sent: rat waits for the go-ahead of
-ratd (`Expect: 100-continue`), which Go's server gives when the handler first reads the body, for
-a second at most (the default of Go's client, which `connect.HTTPClient` keeps): checks slower
-than that, a file system slow to answer, refuse once bytes have left. The headers alone refuse an
-existing file without overwrite (412), a symbolic link or what is not a regular file (409), a
-relative path or a header ratd can not read (400), a path naming a directory by its form (a final
-slash, or a last part `.` or `..`, which cleaning would turn into the name of a file: 400), a body
-declared other than bytes (415: `curl -d @file`, for one, strips the new lines of the file), and a
-path the system fails to look at or refuses, told as it tells it (a name too long, or not UTF-8 on
-APFS: 400). Measured: without the go-ahead, a refusal came once 384 KiB of the file had left.
+ratd (`Expect: 100-continue`), which Go's server gives when the handler first reads the body,
+however long the checks take: `connect.HTTPClient` waits with no limit, rather than the second of
+Go's default, past which the body would leave unasked, a check slower than that (a file system slow
+to answer) then refusing once bytes had left, and a file written in place emptied by bytes whose
+go-ahead never reached rat, which would tell ratd unreachable. Waiting costs nothing: ratd reads no
+body before its go-ahead. The headers alone refuse an existing file without overwrite (412), a
+symbolic link or what is not a regular file (409), a relative path or a header ratd can not read
+(400), a path naming a directory by its form (a final slash, or a last part `.` or `..`, which
+cleaning would turn into the name of a file: 400), a body declared other than bytes (415:
+`curl -d @file`, for one, strips the new lines of the file), and a path the system fails to look at
+or refuses, told as it tells it (a name too long, or not UTF-8 on APFS: 400). Measured: without the
+go-ahead, a refusal came once 384 KiB of the file had left.
 
 **Symbolic links.** A link at the end of the path is refused, naming its target, every link
 resolved (for a link leading nowhere, its target as written): a rename would replace the link

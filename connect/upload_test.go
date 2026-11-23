@@ -15,14 +15,15 @@ import (
 )
 
 // fakeRatd serves handler over TLS as a ratd would, until the test ends, and returns its address
-// and a client of it built as HTTPClient builds one: from the default transport, waiting a second
-// for the go-ahead of a server before sending a body.
+// and a client of it built as HTTPClient builds one: from the default transport, waiting for the
+// go-ahead of a server however long before sending a body.
 func fakeRatd(t *testing.T, handler http.HandlerFunc) (string, *http.Client) {
 	t.Helper()
 	srv := httptest.NewTLSServer(handler)
 	t.Cleanup(srv.Close)
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = srv.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	transport.ExpectContinueTimeout = goAheadWait
 	return srv.Listener.Addr().String(), &http.Client{Transport: transport}
 }
 
