@@ -362,16 +362,16 @@ func (t *transfers) request(tool string, arguments json.RawMessage) (transferReq
 // join returns the job of q: the one of its paths doing what q asks, or a new one, which checks
 // the local file first (see run). A call joins the job of its paths whatever its overwrite and
 // in_place, as told to call again with the same paths, unless the call sets one the job does not
-// (in_place counting with overwrite alone, see writesInPlace):
-// refused while that job runs, which may refuse a file existing (without overwrite) or be refused
-// where writing in place would not (without in_place, its new file denied a place); joined once it
-// wrote its file (a call setting in_place then told, by call, of the new file put in place of the
-// old one); forgotten otherwise (refused, failed or canceled), the call starting the copy
-// asked, rather than told an outcome of another request as its own (a file existing, refused
-// without overwrite, to a call setting it; to set in_place, to a call setting it). Another source
-// to the same destination is refused while its job runs, and
-// once it ended, its outcome not told yet, told that outcome instead, the job forgotten: the next
-// call starts the transfer asked.
+// (in_place counting with overwrite alone, see writesInPlace). Such a call is refused while the
+// job runs, which may refuse a file existing (without overwrite) or be refused where writing in
+// place would not (without in_place, its new file denied a place), the refusal naming what the job
+// was not asked; joined once it wrote its file (a call writing in place then told, by call, when
+// that file replaced another, of the new file put in place of the old one); forgotten otherwise
+// (refused, failed or canceled), the call starting the copy asked, rather than told an outcome of
+// another request as its own (a file existing, refused without overwrite, to a call setting it; to
+// set in_place, to a call setting it). Another source to the same destination is refused while its
+// job runs, and once it ended, its outcome not told yet, told that outcome instead, the job
+// forgotten: the next call starts the transfer asked.
 func (t *transfers) join(q transferRequest) (*job, string) {
 	t.jobsMu.Lock()
 	defer t.jobsMu.Unlock()
@@ -383,12 +383,14 @@ func (t *transfers) join(q transferRequest) (*job, string) {
 		joinLooked(j)
 		// its file written: what a call asking more asks too
 		wrote := ended && !j.isError && !j.canceled
-		// what the call sets that the job does not
+		// What the call sets that the job does not: in_place counts with overwrite alone (see
+		// writesInPlace), but is named only when the job was not asked it, rather than told missing
+		// from a job asked it without overwrite, which lacks overwrite, named instead.
 		var missing []string
 		if q.overwrite && !j.request.overwrite {
 			missing = append(missing, "overwrite")
 		}
-		if q.writesInPlace() && !j.request.writesInPlace() {
+		if q.writesInPlace() && !j.request.inPlace {
 			missing = append(missing, "in_place")
 		}
 		switch {

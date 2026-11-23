@@ -1531,6 +1531,31 @@ func TestTransferInPlaceAloneJoins(t *testing.T) {
 		"Still copying up.bin to "+remote+": 0 B")
 }
 
+// TestTransferUnderWayNamesWhatItLacks guards a call setting overwrite and in_place met by the
+// running job of its paths asked in_place alone: refused as asking overwrite, which the job lacks,
+// and told that alone, rather than "without overwrite and in_place", in_place being asked already;
+// told to call again without overwrite, which joins it.
+func TestTransferUnderWayNamesWhatItLacks(t *testing.T) {
+	shortWait(t, 300*time.Millisecond)
+	held := make(chan struct{})
+	release := sync.OnceFunc(func() { close(held) })
+	// set before rat starts, and restored once it stopped (cleanups run in reverse order)
+	hookPreparing := preparing
+	preparing = func(transferRequest) { <-held }
+	t.Cleanup(func() { preparing = hookPreparing })
+	tt := startTransfers(t)
+	// released before rat stops, which waits for its transfers
+	t.Cleanup(release)
+	randomFile(t, filepath.Join(tt.local, "up.bin"), 1<<10, 0o644)
+	remote := filepath.Join(tt.remote, "up.bin")
+	alone := map[string]any{"local_path": "up.bin", "remote_path": remote, "in_place": true}
+	tt.expect(t, uploadTool, alone, false, "Still copying up.bin to "+remote+": 0 B")
+	tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote, "overwrite": true,
+		"in_place": true}, true, "A transfer to "+remote+" from up.bin is under way without overwrite: wait for "+
+		"it, calling again without overwrite, or stop it with cancel.")
+	tt.expect(t, uploadTool, alone, false, "Still copying up.bin to "+remote+": 0 B")
+}
+
 // TestTransferJoinedNotInPlace guards a call setting in_place joining the job of its paths without
 // it, once that job wrote its file: told that the copy put a new file in place of the old one,
 // its hard links, owner and attributes not kept, which "replaced" alone would leave the agent to
