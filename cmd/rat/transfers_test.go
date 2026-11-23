@@ -1137,6 +1137,48 @@ func TestTransferOverwriteLeftOut(t *testing.T) {
 	}
 }
 
+// TestTransferJoinLooksOnce guards a call setting overwrite met by a job without it, which writes
+// its file just as the call looks at it: decided on that one look, the job running, the call
+// refused as under way and the job kept for the next call to tell, rather than looked at again,
+// found ended, and forgotten untold, its copy started again.
+func TestTransferJoinLooksOnce(t *testing.T) {
+	without := transferRequest{tool: downloadTool, local: "x.bin", remote: "/r/x.bin"}
+	with := without
+	with.overwrite = true
+	j := &job{request: without, started: time.Now(), cancel: func() {}, done: make(chan struct{})}
+	// set before join runs, and restored once the test ended
+	hook := joinLooked
+	joinLooked = func(looked *job) {
+		if looked == j && !j.hasEnded() {
+			j.text, j.ended = "Downloaded /r/x.bin to x.bin (1 KiB): created.", time.Now()
+			close(j.done)
+		}
+	}
+	t.Cleanup(func() { joinLooked = hook })
+	// a directory at the destination: a copy started again ends at once, refused by its local side
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "x.bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close() })
+	tr := &transfers{logger: slog.New(slog.DiscardHandler), root: root, dir: dir, jobs: map[string]*job{without.key(): j}}
+	tr.ctx, tr.stop = context.WithCancel(context.Background())
+	t.Cleanup(tr.stop)
+	got, refused := tr.join(with)
+	tr.running.Wait()
+	if got != nil || refused != "A transfer to x.bin from /r/x.bin is under way without overwrite: wait for it, "+
+		"calling again without overwrite, or stop it with cancel." {
+		t.Errorf("expected the call refused as under way, got a job (its own: %v), %q", got == j, refused)
+	}
+	if tr.jobs[without.key()] != j {
+		t.Error("expected the job kept for the next call to tell how it ended")
+	}
+}
+
 // TestTransferCancelDuringPrepare guards a cancel coming as a transfer checks its local side, which
 // then refuses it (a file existing without overwrite): told the refusal alone, before any request,
 // rather than "the cancel came too late", nothing having run for it to stop.

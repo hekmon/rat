@@ -347,19 +347,23 @@ func (t *transfers) join(q transferRequest) (*job, string) {
 	defer t.jobsMu.Unlock()
 	if j := t.jobs[q.key()]; j != nil {
 		sameSource := j.request.source() == q.source()
+		// Looked at once: a job writing its file between two looks would be running for the first
+		// and ended for the second, forgotten untold and its copy started again.
+		ended := j.hasEnded()
+		joinLooked(j)
 		// its file written without overwrite: what a call setting it asks too
-		wrote := j.hasEnded() && !j.isError && !j.canceled
+		wrote := ended && !j.isError && !j.canceled
 		switch {
 		case sameSource && (!q.overwrite || j.request.overwrite || wrote):
 			return j, ""
-		case sameSource && j.hasEnded():
+		case sameSource && ended:
 			// ended without writing its file (refused, failed or canceled): forgotten, the copy asked
 			// starting
 			delete(t.jobs, q.key())
 		case sameSource:
 			return nil, fmt.Sprintf("A transfer to %s from %s is under way without overwrite: wait for it, calling "+
 				"again without overwrite, or stop it with cancel.", q.destination(), q.source())
-		case j.hasEnded():
+		case ended:
 			delete(t.jobs, q.key())
 			return nil, endedText(j) + fmt.Sprintf(" Nothing was copied from %s: call again to copy it.", q.source())
 		default:
@@ -374,6 +378,10 @@ func (t *transfers) join(q transferRequest) (*job, string) {
 	go t.run(ctx, j)
 	return j, ""
 }
+
+// joinLooked is called with the job of the paths of a call once join looked whether it ended: a
+// hook for tests, which end it there.
+var joinLooked = func(*job) {}
 
 // preparing is called with the request of a job as it checks its local side (see prepare): a hook
 // for tests, which hold it as a file system not answering would.
