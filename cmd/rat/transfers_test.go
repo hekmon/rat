@@ -771,8 +771,11 @@ func TestUploadFileInPlace(t *testing.T) {
 
 // TestTransferLeftInPlace guards what an upload in place with overwrite tells it left of its
 // destination when it fails before its end, rat not knowing whether ratd wrote into it: partly
-// written maybe, for a cut, a read failing and a change; as it was without in place, or without
-// overwrite, a missing file being created all or nothing.
+// written maybe, for a cut, a read failing, a change, and an answer lost once all of it was sent,
+// which ratd may not have received whole, the old content gone all the same. Without in place, or
+// without overwrite, a missing file being created all or nothing: as it was, or written or not for
+// an answer lost. The reason of the answer lost loses its final period, as Windows ends its
+// messages with one.
 func TestTransferLeftInPlace(t *testing.T) {
 	tr := &transfers{ctx: context.Background()}
 	for _, q := range []transferRequest{
@@ -781,9 +784,11 @@ func TestTransferLeftInPlace(t *testing.T) {
 		{tool: uploadTool, local: "up.bin", remote: "/r/up.bin", inPlace: true},
 	} {
 		left := "/r/up.bin is as it was."
+		lost := "/r/up.bin may be written or not."
 		changed := ""
 		if q.inPlace && q.overwrite {
 			left = "/r/up.bin, written in place, may be partly written."
+			lost = left
 			changed = " " + left
 		}
 		j := &job{request: q}
@@ -794,6 +799,10 @@ func TestTransferLeftInPlace(t *testing.T) {
 				"failed: input/output error. " + left,
 			connect.ErrChanged: "up.bin changed while it was read: it may still be written. Upload it again once it " +
 				"is complete." + changed,
+			&connect.TransferError{Kind: connect.ErrAnswerLost, Reason: errors.New("wsarecv: An existing connection " +
+				"was forcibly closed by the remote host.")}: "The answer of ratd to the copy of up.bin to /r/up.bin " +
+				"was lost once all of it was sent (wsarecv: An existing connection was forcibly closed by the remote " +
+				"host): " + lost + " Check it before using it, or call upload_file again with overwrite.",
 		} {
 			if got, _, _ := tr.failureText(j, err); got != told {
 				t.Errorf("overwrite %v, in place %v, %v: expected %q, got %q", q.overwrite, q.inPlace, err, told, got)

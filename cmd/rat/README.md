@@ -203,7 +203,8 @@ that rat offers its transfers, for ratd to write its texts accordingly, a header
   for the agent: ratd's, relayed, or rat's (the local side, a ratd older than the transfers,
   ratd unreachable, told as for a call; or the transfer cut once ratd answered, told so with the
   reason the system gave, which `connect.ErrCut` tells apart; or an upload whose answer was lost
-  once all of it was sent, told possibly written, which `connect.ErrAnswerLost` tells apart).
+  once all of it was sent, told possibly written, or partly when written in place, which
+  `connect.ErrAnswerLost` tells apart).
 - **Transport failures**: no JSON-RPC response exists, while the harness waits for one matching
   its request. rat answers with a JSON-RPC error of its own, code -32050 (in the range JSON-RPC
   leaves to implementations, apart from the codes of MCP and its SDKs), telling what failed:

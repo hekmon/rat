@@ -779,7 +779,7 @@ func destinationText(j *job) string {
 }
 
 // failureText tells j failing with err: its answer lost once all of it was sent, ratd possibly
-// having written it, a cancel coming then too late to cut it; refused or failed by ratd (its
+// having written it (partly, written in place), a cancel coming then too late to cut it; refused or failed by ratd (its
 // sentence), an answer of ratd, which a cancel never brings, cutting the connection first: a cancel
 // came too late then; canceled (whatever the error the cut gave), unless rat is stopping, which
 // cuts an upload whatever was sent, ratd possibly writing it; ratd older than the transfers or
@@ -790,9 +790,15 @@ func (t *transfers) failureText(j *job, err error) (string, bool, bool) {
 	var failed *connect.TransferError
 	switch {
 	case errors.Is(err, connect.ErrAnswerLost) && errors.As(err, &failed):
-		return fmt.Sprintf("The answer of ratd to the copy of %[1]s to %[2]s was lost once all of it was sent "+
-			"(%[3]v): %[2]s may be written or not. Check it before using it, or call %[4]s again with overwrite.",
-			j.request.source(), j.request.destination(), failed.Reason, j.request.tool), true, false
+		left := j.request.destination() + " may be written or not"
+		if j.request.inPlace && j.request.overwrite {
+			// written into as the body came, which ratd may not have received whole: whatever it
+			// received, the old content is gone
+			left = destinationText(j)
+		}
+		return fmt.Sprintf("The answer of ratd to the copy of %s to %s was lost once all of it was sent (%s): %s. "+
+			"Check it before using it, or call %s again with overwrite.", j.request.source(),
+			j.request.destination(), sentence(failed.Reason), left, j.request.tool), true, false
 	case errors.As(err, &refused):
 		return refused.Text, true, false
 	case j.cancelWasAsked() && t.ctx.Err() == nil:
