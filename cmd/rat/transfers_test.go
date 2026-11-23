@@ -41,7 +41,8 @@ const fakeChunk = 32 << 10
 // or calling meanwhile as a download comes, before answering it, as another transfer acting in
 // between. It is for what a test must provoke: what ratd does by itself, successes and refusals,
 // is tested against ratd (see ratd_unix_test.go), and the answers the tests of the fake go through
-// are those of ratd, which TestRealRatdAnswersAsFake checks.
+// are those of ratd, which TestRealRatdAnswersAsFake checks, TestRealRatdEmptiesInPlaceAsFake
+// when a file written in place is emptied.
 type fakeTransfers struct {
 	// mu guards the fields below
 	mu         sync.Mutex

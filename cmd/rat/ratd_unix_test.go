@@ -4,9 +4,12 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/user"
@@ -18,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hekmon/rat/connect"
 	"github.com/hekmon/rat/mtls"
 )
 
@@ -365,5 +369,69 @@ func TestRealRatdAnswersAsFake(t *testing.T) {
 		if fake[i] != real[i] {
 			t.Errorf("the fake answers otherwise than ratd:\nfake: %s\nratd: %s", fake[i], real[i])
 		}
+	}
+}
+
+// unreadable is a file whose reads fail, as a file of rat failing to read: Stat tells the regular
+// file it is, of its size.
+type unreadable struct{ *os.File }
+
+func (unreadable) Read([]byte) (int, error) { return 0, errors.New("input/output error") }
+
+// TestRealRatdEmptiesInPlaceAsFake guards when the fake ratd empties a file written in place,
+// against ratd itself: once the body comes. An upload in place whose body fails before its first
+// byte, its source failing at its first read, leaves the file as it was against both. The calls
+// of TestRealRatdAnswersAsFake write in place whole, which would not tell a fake emptying the file
+// before its body came, as it did before ratd changed.
+func TestRealRatdEmptiesInPlaceAsFake(t *testing.T) {
+	// left returns what an upload in place failing before its first byte leaves, through the ratd
+	// at addr serving the tenant of bundle
+	left := func(t *testing.T, bundle, addr string) string {
+		t.Helper()
+		side, err := mtls.Load(mtls.ClientDir(bundle, "alice"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		client, err := connect.HTTPClient(side)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir, err := filepath.EvalSymlinks(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		target, source := filepath.Join(dir, "app.conf"), filepath.Join(dir, "source.bin")
+		if err := os.WriteFile(target, []byte("as it was"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(source, bytes.Repeat([]byte("n"), 1<<10), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		file, err := os.Open(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer file.Close()
+		_, err = connect.Upload(context.Background(), nil, client, addr, unreadable{file}, target,
+			connect.UploadOptions{Overwrite: true, InPlace: true})
+		data, readErr := os.ReadFile(target)
+		return fmt.Sprintf("read failing %v; the file holding %q, %v", errors.Is(err, connect.ErrRead), data, readErr)
+	}
+	bundle := newBundle(t)
+	fake := &fakeTransfers{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST "+connect.UploadPath, fake.upload)
+	fakeLeft := left(t, bundle, fakeRatd(t, bundle, mux, nil))
+	bundle = filepath.Join(t.TempDir(), "bundle")
+	if _, err := mtls.Generate(bundle, "test-rat-emptied", []string{"alice"}); err != nil {
+		t.Fatal(err)
+	}
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ratdLeft := left(t, bundle, startRealRatd(t, buildRatd(t), bundle, home))
+	if want := `read failing true; the file holding "as it was", <nil>`; fakeLeft != want || ratdLeft != want {
+		t.Errorf("expected the file left as it was against both:\nfake: %s\nratd: %s", fakeLeft, ratdLeft)
 	}
 }
