@@ -83,7 +83,8 @@ type uploadInput struct {
 	LocalPath  string `json:"local_path" jsonschema:"the file to copy, relative to the transfers directory"`
 	RemotePath string `json:"remote_path" jsonschema:"where to write it on the machine of the terminals: absolute, or starting with ~/"`
 	Overwrite  bool   `json:"overwrite,omitempty" jsonschema:"true replaces an existing file; false, the default, refuses it"`
-	Cancel     bool   `json:"cancel,omitempty" jsonschema:"true stops the transfer of these paths under way, leaving the destination as it was, unless too late"`
+	InPlace    bool   `json:"in_place,omitempty" jsonschema:"true, with overwrite, writes into the file replaced rather than replacing it by a new one: the file keeps its hard links, owner and attributes, and its directory needs no write permission (the file's own decides), but a copy cut or canceled leaves it partly written. A missing file is created as usual"`
+	Cancel     bool   `json:"cancel,omitempty" jsonschema:"true stops the transfer of these paths under way, leaving the destination as it was (written in place, partly written), unless too late"`
 }
 
 // downloadInput is the input of download_file.
@@ -118,6 +119,8 @@ type transferRequest struct {
 	tool              string
 	local, remote     string
 	overwrite, cancel bool
+	// inPlace writes an upload into the file it replaces (connect.UploadOptions)
+	inPlace bool
 }
 
 // upload tells whether the request copies a file to the machine of ratd.
@@ -312,6 +315,7 @@ func (t *transfers) request(tool string, arguments json.RawMessage) (transferReq
 		var in uploadInput
 		err = json.Unmarshal(arguments, &in)
 		q.local, q.remote, q.overwrite, q.cancel = in.LocalPath, in.RemotePath, in.Overwrite, in.Cancel
+		q.inPlace = in.InPlace
 	} else {
 		var in downloadInput
 		err = json.Unmarshal(arguments, &in)
@@ -752,14 +756,26 @@ func (t *transfers) run(ctx context.Context, j *job) {
 	close(j.done)
 }
 
-// canceledText tells j canceled, its destination left as it was.
+// canceledText tells j canceled, its destination left as it was, or partly written in place (see
+// destinationText).
 func canceledText(j *job) string {
 	text := fmt.Sprintf("Canceled the copy of %s to %s after %s", j.request.source(), j.request.destination(),
 		sizeText(j.moved.Load()))
 	if size := j.size.Load(); size > 0 {
 		text += " of " + sizeText(size)
 	}
-	return text + fmt.Sprintf(": %s is as it was.", j.request.destination())
+	return text + ": " + destinationText(j) + "."
+}
+
+// destinationText tells what j, cut or canceled before the end of its file, left of its
+// destination: as it was, all or nothing, unless an upload in place with overwrite was writing into
+// it, which may leave it partly written (or emptied: ratd empties it before the first byte). rat
+// does not know whether that file existed, a missing one being created all or nothing.
+func destinationText(j *job) string {
+	if j.request.inPlace && j.request.overwrite {
+		return fmt.Sprintf("%s, written in place, may be partly written", j.request.destination())
+	}
+	return fmt.Sprintf("%s is as it was", j.request.destination())
 }
 
 // failureText tells j failing with err: its answer lost once all of it was sent, ratd possibly
@@ -785,14 +801,17 @@ func (t *transfers) failureText(j *job, err error) (string, bool, bool) {
 		return fmt.Sprintf("The ratd at %s is older than this rat and serves no file transfers: whoever runs it must "+
 			"upgrade it.", t.server), true, false
 	case errors.Is(err, connect.ErrChanged):
-		return fmt.Sprintf("%s changed while it was read: it may still be written. Upload it again once it is "+
-			"complete.", j.request.local), true, false
+		text := fmt.Sprintf("%s changed while it was read: it may still be written. Upload it again once it is "+
+			"complete.", j.request.local)
+		if j.request.inPlace && j.request.overwrite {
+			text += " " + destinationText(j) + "."
+		}
+		return text, true, false
 	case errors.Is(err, connect.ErrRead) && errors.As(err, &failed):
-		return t.localFailure(failed.Reason, "Reading", j.request.local) + fmt.Sprintf(" %s is as it was.",
-			j.request.destination()), true, false
+		return t.localFailure(failed.Reason, "Reading", j.request.local) + " " + destinationText(j) + ".", true, false
 	case errors.Is(err, connect.ErrCut) && errors.As(err, &failed):
-		return fmt.Sprintf("The copy of %s to %s was cut: %s. %s is as it was.", j.request.source(),
-			j.request.destination(), sentence(failed.Reason), j.request.destination()), true, false
+		return fmt.Sprintf("The copy of %s to %s was cut: %s. %s.", j.request.source(), j.request.destination(),
+			sentence(failed.Reason), destinationText(j)), true, false
 	default:
 		return t.reachText(err), true, false
 	}
@@ -821,7 +840,7 @@ func (t *transfers) runUpload(ctx context.Context, j *job, source *os.File) (str
 	}
 	j.size.Store(info.Size())
 	up, err := connect.Upload(t.ctx, ctx.Done(), t.client, t.server, countedFile{File: source, job: j},
-		j.request.remote, connect.UploadOptions{Overwrite: j.request.overwrite})
+		j.request.remote, connect.UploadOptions{Overwrite: j.request.overwrite, InPlace: j.request.inPlace})
 	if err != nil {
 		return t.failureText(j, err)
 	}

@@ -545,7 +545,11 @@ transfer. In the harness, with its client directory:
   transfer rather than being copied torn. A symbolic link at the end of a path is refused, naming
   where it leads. Neither side syncs to disk: after a power cut, a file just copied may be lost, as
   any file just written; run `sync` where it matters. A rat or a ratd killed during a transfer
-  (`SIGKILL`, a crash) leaves its temporary file behind, which can be removed.
+  (`SIGKILL`, a crash) leaves its temporary file behind, which can be removed. One exception, asked
+  for: `upload_file` with `in_place` and `overwrite` writes into the file it replaces, keeping its
+  hard links, owner and extended attributes, where its directory may refuse a new file (a file of
+  the user of ratd in a directory of root); a transfer cut or canceled then leaves it partly
+  written, which the agent is told.
 - **Permissions, as `scp` copies them.** A new file gets the permission bits of its source, minus
   the umask; a replaced file keeps its own, the agent told when they differ from those of the
   source. On Windows, whose files have no permission bits, rat sees 0666, or 0444 for a read-only

@@ -205,7 +205,7 @@ transfers](MANUAL.md#file-transfers)):
 
 | Tool | Parameters | What it does |
 |---|---|---|
-| `upload_file` | `local_path`, `remote_path`, `overwrite` (optional, false), `cancel` (optional, false) | Copies a file of the transfers directory to the machine of ratd, its content never entering the context of the agent: any size, binary included. |
+| `upload_file` | `local_path`, `remote_path`, `overwrite` (optional, false), `in_place` (optional, false), `cancel` (optional, false) | Copies a file of the transfers directory to the machine of ratd, its content never entering the context of the agent: any size, binary included. |
 | `download_file` | `remote_path`, `local_path`, `overwrite` (optional, false), `cancel` (optional, false) | Copies a file of the machine of ratd into the transfers directory, its content never entering the context of the agent. |
 
 A transfer call waits 50 seconds at most: a longer copy goes on, the call telling its progress,

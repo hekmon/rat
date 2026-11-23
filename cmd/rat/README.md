@@ -153,7 +153,11 @@ than cleaned into the name of a file. Canceling a call (the harness giving
 up on it) ends its wait, not the transfer. `cancel` with the same paths stops it, leaving the
 destination as it was, decided at one point: before the last chunk of an upload (past it, ratd
 may be writing the file, and the call tells its answer, or that it was lost, the file possibly
-written), before a download is put in place.
+written), before a download is put in place. An upload with `in_place` writes into the file it
+replaces (see In place in the README of ratd): a cut or a cancel may then leave it partly written,
+which rat tells, not knowing whether ratd found the file to write into, a missing one being created
+all or nothing. A call joins the job of its paths whatever its `in_place`, which changes how the
+file is written, not what is copied.
 Rejected: job identifiers, with tools to wait for, list and cancel jobs, which a context
 compaction loses, more tools for small models to juggle; a parameter for the wait, or a size
 choosing between waiting and a job, the speed of the link being unknown; MCP tasks (experimental

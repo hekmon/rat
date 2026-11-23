@@ -49,6 +49,8 @@ type fakeTransfers struct {
 	cut        bool
 	dropAnswer bool
 	meanwhile  func()
+	// inPlace is the in place of each upload received
+	inPlace []bool
 }
 
 // take counts a transfer request, and returns how to answer it.
@@ -57,6 +59,13 @@ func (f *fakeTransfers) take() (old bool, pause time.Duration, stall chan struct
 	defer f.mu.Unlock()
 	f.requests++
 	return f.old, f.pause, f.stall, f.failWith, f.cut
+}
+
+// inPlaces returns the in place of each upload received.
+func (f *fakeTransfers) inPlaces() []bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]bool(nil), f.inPlace...)
 }
 
 // count returns the transfer requests received.
@@ -101,6 +110,10 @@ func (f *fakeTransfers) upload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set(connect.HeaderVersion, "test")
 	path, _ := connect.DecodePath(r.Header.Get(connect.HeaderPath))
 	overwrite, _ := connect.ParseOverwrite(r.Header.Get(connect.HeaderOverwrite))
+	inPlace, _ := connect.ParseInPlace(r.Header.Get(connect.HeaderInPlace))
+	f.mu.Lock()
+	f.inPlace = append(f.inPlace, inPlace)
+	f.mu.Unlock()
 	mode, _ := connect.ParseMode(r.Header.Get(connect.HeaderMode))
 	info, statErr := os.Stat(path)
 	if statErr == nil && !overwrite {
@@ -108,8 +121,21 @@ func (f *fakeTransfers) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var received bytes.Buffer
+	var into io.Writer = &received
+	// in place, as ratd writes a file replaced: emptied first, then written into, a cut leaving it
+	// partly written
+	intoFile := inPlace && statErr == nil
+	if intoFile {
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer file.Close()
+		into = file
+	}
 	for first := true; ; first = false {
-		_, err := io.CopyN(&received, r.Body, fakeChunk)
+		_, err := io.CopyN(into, r.Body, fakeChunk)
 		if err == io.EOF {
 			break
 		}
@@ -131,9 +157,11 @@ func (f *fakeTransfers) upload(w http.ResponseWriter, r *http.Request) {
 	if replaced {
 		mode = info.Mode().Perm()
 	}
-	if err := os.WriteFile(path, received.Bytes(), mode); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	if !intoFile {
+		if err := os.WriteFile(path, received.Bytes(), mode); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	if f.answerLost(w) {
 		return
@@ -640,6 +668,83 @@ func TestUploadStopAfterCancelTooLate(t *testing.T) {
 	if logs := tt.rat.logs.String(); strings.Contains(logs, "outcome=canceled") ||
 		!strings.Contains(logs, "outcome=error") {
 		t.Errorf("expected the upload logged failing, not canceled:\n%s", logs)
+	}
+}
+
+// TestUploadFileInPlace guards an upload with in_place and overwrite: sent with Rat-In-Place, ratd
+// (the fake, as ratd does) writing into the file replaced, its hard link following, told replaced
+// as any upload; a call with the same paths, in_place left out, joining the job of its paths, as
+// in_place changes how the file is written, not what is copied; a cancel telling the file, written
+// in place, may be partly written, rather than as it was. Without overwrite, in_place asks nothing.
+func TestUploadFileInPlace(t *testing.T) {
+	shortWait(t, 300*time.Millisecond)
+	tt := startTransfers(t)
+	remote := filepath.Join(tt.remote, "app.bin")
+	randomFile(t, remote, 10, 0o640)
+	link := filepath.Join(tt.remote, "app.link")
+	if err := os.Link(remote, link); err != nil {
+		t.Fatal(err)
+	}
+	content := randomFile(t, filepath.Join(tt.local, "up.bin"), 1<<10, 0o644)
+	tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote, "overwrite": true,
+		"in_place": true}, false, "Uploaded up.bin to "+remote+" (1 KiB): replaced.")
+	expectContent(t, link, content, 0o640)
+	tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote, "in_place": true}, true,
+		remote+" exists: set overwrite to replace it.")
+	// stalled after its first chunk, the rest of the file far more than the buffers of the connection
+	stall := make(chan struct{})
+	t.Cleanup(func() { close(stall) })
+	tt.fake.set(func(f *fakeTransfers) { f.stall = stall })
+	if err := os.WriteFile(filepath.Join(tt.local, "big.bin"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(filepath.Join(tt.local, "big.bin"), 64<<20); err != nil {
+		t.Fatal(err)
+	}
+	big := map[string]any{"local_path": "big.bin", "remote_path": remote, "overwrite": true, "in_place": true}
+	tt.expect(t, uploadTool, big, false, "Still copying big.bin to "+remote+": ")
+	tt.expect(t, uploadTool, map[string]any{"local_path": "big.bin", "remote_path": remote, "overwrite": true}, false,
+		"Still copying big.bin to "+remote+": ")
+	big["cancel"] = true
+	text := tt.expect(t, uploadTool, big, false, "Canceled the copy of big.bin to "+remote+" after ")
+	if !strings.HasSuffix(text, ": "+remote+", written in place, may be partly written.") {
+		t.Errorf("expected the cancel to tell the file may be partly written, got %q", text)
+	}
+	if got := tt.fake.inPlaces(); len(got) != 3 || !got[0] || !got[1] || !got[2] {
+		t.Errorf("expected Rat-In-Place true for each upload, got %v", got)
+	}
+}
+
+// TestTransferLeftInPlace guards what an upload in place with overwrite tells it left of its
+// destination when it fails before its end, rat not knowing whether ratd wrote into it: partly
+// written maybe, for a cut, a read failing and a change; as it was without in place, or without
+// overwrite, a missing file being created all or nothing.
+func TestTransferLeftInPlace(t *testing.T) {
+	tr := &transfers{ctx: context.Background()}
+	for _, q := range []transferRequest{
+		{tool: uploadTool, local: "up.bin", remote: "/r/up.bin", overwrite: true, inPlace: true},
+		{tool: uploadTool, local: "up.bin", remote: "/r/up.bin", overwrite: true},
+		{tool: uploadTool, local: "up.bin", remote: "/r/up.bin", inPlace: true},
+	} {
+		left := "/r/up.bin is as it was."
+		changed := ""
+		if q.inPlace && q.overwrite {
+			left = "/r/up.bin, written in place, may be partly written."
+			changed = " " + left
+		}
+		j := &job{request: q}
+		for err, told := range map[error]string{
+			&connect.TransferError{Kind: connect.ErrCut, Reason: errors.New("broken pipe")}: "The copy of up.bin to " +
+				"/r/up.bin was cut: broken pipe. " + left,
+			&connect.TransferError{Kind: connect.ErrRead, Reason: errors.New("input/output error")}: "Reading up.bin " +
+				"failed: input/output error. " + left,
+			connect.ErrChanged: "up.bin changed while it was read: it may still be written. Upload it again once it " +
+				"is complete." + changed,
+		} {
+			if got, _, _ := tr.failureText(j, err); got != told {
+				t.Errorf("overwrite %v, in place %v, %v: expected %q, got %q", q.overwrite, q.inPlace, err, told, got)
+			}
+		}
 	}
 }
 
