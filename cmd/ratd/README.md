@@ -671,15 +671,18 @@ ratd and rat both tell written.
 the file keeps the hard links, extended attributes and owner the rename loses, and its directory
 needs no write permission (a file of ratd's user in a directory of root, one of another user under
 the sticky bit of `/tmp`), where a new file can not be put in its place: the permission of the file
-decides instead, a read-only file refused (403), which the rename replaces. The price: a body cut
-short leaves the file partly written, the beginning of the new content, as `cp` leaves it, which an
-agent asks for knowingly. A missing file is created all or nothing whatever the header says: in
-place would only lose there. The file is opened without following a link at the end of the path nor
-blocking, and refused if it is not a regular file, before the go-ahead: a refusal (a link put there
-meanwhile, a file ratd's user can not write) leaves it as it was. It is emptied only once the body
-comes, its first bytes or its end: a connection lost before, the go-ahead received or not, leaves
-it as it was too. Emptied before the go-ahead, it would be left empty by a connection lost before
-the go-ahead reached rat, which then can not tell ratd was reached at all.
+decides instead, a read-only file refused (403), which the rename replaces. Nor does the disk need
+room for a second copy, which a new file takes until it is renamed over the old one: a large file
+on a disk short of room can be replaced in place. The price: a body cut short leaves the file
+partly written, the beginning of the new content, as `cp` leaves it, which an agent asks for
+knowingly, harmless for a file nothing uses until it is uploaded whole. A missing file is created
+all or nothing whatever the header says: in place would only lose there. The file is opened without
+following a link at the end of the path nor blocking, and refused if it is not a regular file,
+before the go-ahead: a refusal (a link put there meanwhile, a file ratd's user can not write)
+leaves it as it was. It is emptied only once the body comes, its first bytes or its end: a
+connection lost before, the go-ahead received or not, leaves it as it was too. Emptied before the
+go-ahead, it would be left empty by a connection lost before the go-ahead reached rat, which then
+can not tell ratd was reached at all.
 
 Without `Rat-In-Place`, an upload denied a new file in place of one ratd's user can write
 (`access(2)`) is refused telling the agent to set `in_place`, the parameter of `upload_file`

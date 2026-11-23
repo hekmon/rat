@@ -83,7 +83,7 @@ type uploadInput struct {
 	LocalPath  string `json:"local_path" jsonschema:"the file to copy, relative to the transfers directory"`
 	RemotePath string `json:"remote_path" jsonschema:"where to write it on the machine of the terminals: absolute, or starting with ~/"`
 	Overwrite  bool   `json:"overwrite,omitempty" jsonschema:"true replaces an existing file; false, the default, refuses it"`
-	InPlace    bool   `json:"in_place,omitempty" jsonschema:"true, with overwrite, writes into the file replaced rather than replacing it by a new one: the file keeps its hard links, owner and attributes, and its directory needs no write permission (the file's own decides), but a copy cut or canceled leaves it partly written. A missing file is created as usual"`
+	InPlace    bool   `json:"in_place,omitempty" jsonschema:"false, the default, copies into a new file put in place of the old one once whole: never partly written, but the disk must hold both meanwhile. true, with overwrite, writes into the file itself: no room needed for a second copy, nor write permission on its directory (the file's own decides), the file keeping its hard links, owner and attributes; but a copy cut or canceled leaves it partly written, harmless for a file nothing uses until it is uploaded whole. A missing file is created as usual. Never into the very file you upload, when the terminals run on your machine: it would be emptied before being read"`
 	Cancel     bool   `json:"cancel,omitempty" jsonschema:"true stops the transfer of these paths under way, leaving the destination as it was (written in place, partly written), unless too late"`
 }
 
@@ -96,14 +96,15 @@ type downloadInput struct {
 }
 
 // transferDescription tells what both tools do, after their first sentence: dir is the transfers
-// directory, and other the side whose permissions a new file takes.
+// directory, other the side whose permissions a new file takes, and inPlace what a cancel leaves
+// of a file written in place, which upload_file alone writes.
 const transferDescription = "Its content never enters your context, whatever its size, binary included. local_path " +
 	"is relative to %s, the only directory rat copies files from and to on your machine; remote_path is absolute or " +
 	"starts with ~/. Missing directories are created. An existing file is replaced only with overwrite, and keeps " +
 	"its permissions; a new one gets those of %s. A symbolic link at the end of a path is refused, naming its target, " +
 	"and a file changing while it is copied fails the transfer: copy it once complete. The call waits up to %d " +
 	"seconds: a longer copy goes on in the background, the call telling its progress, and calling again with the " +
-	"same paths waits for the rest, or tells how it ended; cancel stops it, leaving the destination as it was, " +
+	"same paths waits for the rest, or tells how it ended; cancel stops it, leaving the destination as it was%s, " +
 	"unless it comes too late, as the copy ends."
 
 // toolDefinition is a tool as tools/list tells it.
@@ -214,21 +215,23 @@ func newTransfers(logger *slog.Logger, client *http.Client, server, dir string, 
 		jobs: map[string]*job{}}
 	t.ctx, t.stop = context.WithCancel(context.Background())
 	for _, tool := range []struct {
-		name, first, other string
-		input              reflect.Type
+		name, first, other, inPlace string
+		input                       reflect.Type
 	}{
 		{uploadTool, "Copy a file from your filesystem to the machine of the terminals, by path.", "your file",
-			reflect.TypeFor[uploadInput]()},
+			" (written in place, partly written)", reflect.TypeFor[uploadInput]()},
 		{downloadTool, "Copy a file from the machine of the terminals to your filesystem, by path.", "the remote file",
-			reflect.TypeFor[downloadInput]()},
+			"", reflect.TypeFor[downloadInput]()},
 	} {
 		schema, err := jsonschema.ForType(tool.input, &jsonschema.ForOptions{})
 		if err != nil {
 			return nil, fmt.Errorf("input schema of %s: %w", tool.name, err)
 		}
+		description := tool.first + " " + fmt.Sprintf(transferDescription, absolute, tool.other,
+			tools.MaxWaitSeconds, tool.inPlace)
 		definition, err := json.Marshal(toolDefinition{
 			Name:        tool.name,
-			Description: tool.first + " " + fmt.Sprintf(transferDescription, absolute, tool.other, tools.MaxWaitSeconds),
+			Description: description,
 			InputSchema: schema,
 			Annotations: map[string]any{"destructiveHint": true, "openWorldHint": false},
 		})

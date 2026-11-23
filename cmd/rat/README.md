@@ -156,8 +156,11 @@ may be writing the file, and the call tells its answer, or that it was lost, the
 written), before a download is put in place. An upload with `in_place` writes into the file it
 replaces (see In place in the README of ratd): a cut or a cancel may then leave it partly written,
 which rat tells, not knowing whether ratd found the file to write into, a missing one being created
-all or nothing. A call joins the job of its paths whatever its `in_place`, which changes how the
-file is written, not what is copied.
+all or nothing. Written in place into the very file uploaded, rat and ratd sharing a machine, a
+file would be emptied before being read: the description of `in_place` warns against it.
+Rejected: detecting it, which rat could only do by the path, wrongly through a tunnel showing a
+remote ratd on a loopback address, the same paths on both machines. A call joins the job of its
+paths whatever its `in_place`, which changes how the file is written, not what is copied.
 Rejected: job identifiers, with tools to wait for, list and cancel jobs, which a context
 compaction loses, more tools for small models to juggle; a parameter for the wait, or a size
 choosing between waiting and a job, the speed of the link being unknown; MCP tasks (experimental

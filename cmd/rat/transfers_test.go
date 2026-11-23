@@ -410,7 +410,10 @@ func shortWait(t *testing.T, wait time.Duration) {
 
 // TestTransferTools guards the tools rat offers: none of its own without a transfers directory;
 // with one, upload_file and download_file next to the tools of ratd, their descriptions naming the
-// directory, their paths required; and a transfers directory that is not one fails the start.
+// directory and what a cancel leaves (a file written in place partly written, upload_file alone
+// writing in place), in_place telling what each choice costs (room for a second copy, or a file
+// partly written) and warning against writing into the file uploaded itself, their paths
+// required; and a transfers directory that is not one fails the start.
 func TestTransferTools(t *testing.T) {
 	bundle := newBundle(t)
 	addr := fakeRatd(t, bundle, newMCPServer().handler, nil)
@@ -451,6 +454,22 @@ func TestTransferTools(t *testing.T) {
 		schema, _ := tool.InputSchema.(map[string]any)
 		if required, _ := schema["required"].([]any); len(required) != 2 {
 			t.Errorf("%s: expected the two paths required, got %v", name, schema)
+		}
+		left := "cancel stops it, leaving the destination as it was, unless"
+		if name == uploadTool {
+			left = "cancel stops it, leaving the destination as it was (written in place, partly written), unless"
+			properties, _ := schema["properties"].(map[string]any)
+			inPlace, _ := properties["in_place"].(map[string]any)
+			description, _ := inPlace["description"].(string)
+			for _, told := range []string{"the disk must hold both meanwhile", "no room needed for a second copy",
+				"Never into the very file you upload, when the terminals run on your machine"} {
+				if !strings.Contains(description, told) {
+					t.Errorf("expected in_place telling %q, got %q", told, description)
+				}
+			}
+		}
+		if !strings.Contains(tool.Description, left) {
+			t.Errorf("%s: expected what a cancel leaves told, got %q", name, tool.Description)
 		}
 	}
 	if !strings.Contains(p.logs.String(), "transfers="+dir) {
