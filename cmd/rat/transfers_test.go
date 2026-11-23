@@ -1528,6 +1528,63 @@ func TestTransferInPlaceAloneJoins(t *testing.T) {
 		"Still copying up.bin to "+remote+": 0 B")
 }
 
+// TestTransferJoinedNotInPlace guards a call setting in_place joining the job of its paths without
+// it, once that job wrote its file: told that the copy put a new file in place of the old one,
+// its hard links, owner and attributes not kept, which "replaced" alone would leave the agent to
+// believe kept, as in place was asked to; nothing added for a file the job created, which in place
+// would have created all the same.
+func TestTransferJoinedNotInPlace(t *testing.T) {
+	shortWait(t, 300*time.Millisecond)
+	held := make(chan struct{})
+	release := sync.OnceFunc(func() { close(held) })
+	// set before rat starts, and restored once it stopped (cleanups run in reverse order)
+	hookPreparing := preparing
+	preparing = func(q transferRequest) {
+		if !q.inPlace {
+			<-held
+		}
+	}
+	t.Cleanup(func() { preparing = hookPreparing })
+	tt := startTransfers(t)
+	// released before rat stops, which waits for its transfers
+	t.Cleanup(release)
+	randomFile(t, filepath.Join(tt.local, "up.bin"), 1<<10, 0o644)
+	replaced, created := filepath.Join(tt.remote, "replaced.bin"), filepath.Join(tt.remote, "created.bin")
+	old := randomFile(t, replaced, 10, 0o644)
+	link := filepath.Join(tt.remote, "replaced.link")
+	if err := os.Link(replaced, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, remote := range []string{replaced, created} {
+		tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote, "overwrite": true}, false,
+			"Still copying up.bin to "+remote+": 0 B")
+	}
+	release()
+	told := map[string]string{}
+	for _, remote := range []string{replaced, created} {
+		call := map[string]any{"local_path": "up.bin", "remote_path": remote, "overwrite": true, "in_place": true}
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+			if told[remote], _ = tt.call(t, uploadTool, call); !strings.Contains(told[remote], "is under way") {
+				break
+			}
+		}
+	}
+	note := " That copy, asked without in_place, put a new file in place of the old one: its hard links, owner " +
+		"and attributes were not kept."
+	if text := told[replaced]; !strings.HasPrefix(text, "Uploaded up.bin to "+replaced+" (1 KiB): replaced. It ended ") ||
+		!strings.HasSuffix(text, note) {
+		t.Errorf("expected the file replaced told put in place as a new one, got %q", text)
+	}
+	expectContent(t, link, old, 0o644)
+	if text := told[created]; !strings.HasPrefix(text, "Uploaded up.bin to "+created+" (1 KiB): created. It ended ") ||
+		strings.Contains(text, "in_place") {
+		t.Errorf("expected the file created told with nothing added, got %q", text)
+	}
+	if n := tt.fake.count(); n != 2 {
+		t.Errorf("expected the two uploads joined, %d made", n)
+	}
+}
+
 // TestTransferOverwriteLeftOut guards a transfer with overwrite called again with its paths,
 // overwrite left out, as its progress tells to call again with the same paths: joined while it
 // runs, its progress told, and once it ended, told how, rather than refused, or told to copy again.

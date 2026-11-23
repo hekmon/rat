@@ -309,7 +309,14 @@ func (t *transfers) call(ctx context.Context, tool string, arguments json.RawMes
 	if refused != "" {
 		return refused, true
 	}
-	return t.await(ctx, j, called)
+	text, isError := t.await(ctx, j, called)
+	if text != "" && q.writesInPlace() && !j.request.writesInPlace() && j.hasEnded() && j.newFile {
+		// joined once it wrote its file (see join): what in place was asked to keep is gone, which
+		// "replaced" alone would leave the agent to believe kept
+		text += " That copy, asked without in_place, put a new file in place of the old one: its hard links, " +
+			"owner and attributes were not kept."
+	}
+	return text, isError
 }
 
 // request reads the call of tool with arguments, or tells why it is refused. A path holding a NUL
@@ -358,7 +365,8 @@ func (t *transfers) request(tool string, arguments json.RawMessage) (transferReq
 // (in_place counting with overwrite alone, see writesInPlace):
 // refused while that job runs, which may refuse a file existing (without overwrite) or be refused
 // where writing in place would not (without in_place, its new file denied a place); joined once it
-// wrote its file; forgotten otherwise (refused, failed or canceled), the call starting the copy
+// wrote its file (a call setting in_place then told, by call, of the new file put in place of the
+// old one); forgotten otherwise (refused, failed or canceled), the call starting the copy
 // asked, rather than told an outcome of another request as its own (a file existing, refused
 // without overwrite, to a call setting it; to set in_place, to a call setting it). Another source
 // to the same destination is refused while its job runs, and
@@ -652,6 +660,9 @@ type job struct {
 	canceled bool
 	refused  bool
 	ended    time.Time
+	// newFile tells an upload put a new file in place of the one it replaced, rather than wrote
+	// into it: its hard links, owner and attributes gone
+	newFile bool
 }
 
 // sample is the bytes a transfer moved, at a moment.
@@ -875,6 +886,8 @@ func (t *transfers) runUpload(ctx context.Context, j *job, source *os.File) (str
 	if up.Replaced {
 		how = "replaced"
 	}
+	// set before the job ends, read once it ended (see job.done)
+	j.newFile = up.Replaced && !j.request.writesInPlace()
 	text := fmt.Sprintf("Uploaded %s to %s (%s): %s.", j.request.local, j.request.remote, sizeText(up.Sent), how)
 	if modesTold && up.Replaced && up.Mode != info.Mode().Perm() {
 		text += fmt.Sprintf(" It kept its permissions (%s), not those of your file (%s): change them in a terminal "+
