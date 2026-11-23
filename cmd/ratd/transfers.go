@@ -21,6 +21,7 @@ import (
 	"github.com/hekmon/rat/internal/tempname"
 	"github.com/hekmon/rat/internal/version"
 	"github.com/hekmon/rat/mtls"
+	"golang.org/x/sys/unix"
 )
 
 // The file transfers of rat copy files by path between the machine of a harness and this one (see
@@ -257,7 +258,10 @@ func transferNotRegular(path string, info fs.FileInfo, way direction) *result {
 // not bytes. A body cut short (the client failing it, its file having changed, or the connection
 // lost) leaves no file. Missing directories are created, as write_file does, and named in the
 // answer, a 201 or a failure leaving them, for an agent to catch a typo. With Rat-In-Place, a file
-// replaced is written into instead (see uploadInPlace).
+// replaced is written into instead (see uploadInPlace); without it, one ratd's user can write but
+// not replace by a new file (its directory refusing a new file, the sticky bit a file of another
+// user) is refused telling the agent to set in_place: before any byte is sent when the temporary
+// file can not be created, once they all came when the rename is refused.
 func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 	// No Content-Type reads as bytes (RFC 9110). Another one is refused: a client sending a form
 	// (curl -d @file strips the new lines of the file) must find out.
@@ -300,6 +304,21 @@ func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 		err = targetError(err, path)
 		return fail(transferStatus(err), withAttrs(d.fileFailure(err, "Writing "+path, written, false), attrs))
 	}
+	// A new file denied a place at path (its directory refusing a new file, the sticky bit refusing
+	// to replace a file of another user) does not mean that the file there can not be written, which
+	// writeFailure would tell of any permission denied: ratd's user may write into it, which
+	// access(2) checks, a missing file failing it. The agent is then told to ask for that
+	// (in_place), rather than told a falsehood it would believe. A file its own permission refuses
+	// too is told so: in_place would only bring a second refusal.
+	placeFailure := func(err error) result {
+		if !errors.Is(err, fs.ErrPermission) || unix.Access(path, unix.W_OK) != nil {
+			return writeFailure(err)
+		}
+		return fail(http.StatusForbidden, result{err: err, attrs: attrs, text: fmt.Sprintf(
+			"Permission denied: an upload puts a new file in place of %[1]s, which %[2]s refuses to %[3]s, the "+
+				"user the terminals run as: set in_place to write into %[1]s itself, which a copy cut or canceled "+
+				"leaves partly written.", path, filepath.Dir(path), d.user)})
+	}
 	// The place of the file is checked now, before any byte is sent, and again once they all came.
 	// A failure to look is refused now too, rather than met when placing the file, once all the
 	// bytes came: the temporary file, under a name of its own, may not meet it (a name too long,
@@ -320,7 +339,7 @@ func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 	}
 	tmp, err := createTemporary(path, mode)
 	if err != nil {
-		return writeFailure(err)
+		return placeFailure(err)
 	}
 	// Whatever happens next, the temporary file goes: put in place, it is already gone, or left
 	// as a second name of the file (see placeFile).
@@ -359,7 +378,7 @@ func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 	case refused != nil:
 		return fail(refusalStatus(refused), withAttrs(*refused, attrs))
 	case err != nil:
-		return writeFailure(err)
+		return placeFailure(err)
 	}
 	modeSet := tmpInfo.Mode()
 	if replaced {

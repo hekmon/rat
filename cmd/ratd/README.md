@@ -670,13 +670,21 @@ ratd and rat both tell written.
 **In place.** With `Rat-In-Place`, an upload replacing a file writes into it instead, as `cp` does:
 the file keeps the hard links, extended attributes and owner the rename loses, and its directory
 needs no write permission (a file of ratd's user in a directory of root, one of another user under
-the sticky bit of `/tmp`), where a temporary file can not be created: the permission of the file
+the sticky bit of `/tmp`), where a new file can not be put in its place: the permission of the file
 decides instead, a read-only file refused (403), which the rename replaces. The price: a body cut
 short leaves the file partly written, the beginning of the new content, as `cp` leaves it, which an
 agent asks for knowingly. A missing file is created all or nothing whatever the header says: in
 place would only lose there. The file is opened without following a link at the end of the path nor
 blocking, refused if it is not a regular file, and emptied only then, before the go-ahead: a
 refusal (a link put there meanwhile, a file ratd's user can not write) leaves it as it was.
+
+Without `Rat-In-Place`, an upload denied a new file in place of one ratd's user can write
+(`access(2)`) is refused telling the agent to set `in_place`, the parameter of `upload_file`
+sending the header, rather than told, as of any permission denied, that the file can not be
+written, which it would believe. A file that user can not write either is told so, in place being
+refused too. A directory refusing a new file is met before the go-ahead, the sticky bit only by the
+rename, once the body came: ratd does not predict it, which would copy rules of the kernel that
+vary (`CAP_FOWNER`, the ACLs of macOS).
 
 What the headers alone refuse is refused before any byte is sent: rat waits for the go-ahead of
 ratd (`Expect: 100-continue`), which Go's server gives when the handler first reads the body, for

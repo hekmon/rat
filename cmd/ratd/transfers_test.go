@@ -665,6 +665,71 @@ func TestUploadInPlaceRefused(t *testing.T) {
 	expectFile(t, victim, "as it was", 0o644)
 }
 
+// TestUploadReplacementRefused guards an upload whose new file ratd's user can not put in place of
+// the file it replaces: its directory refusing a new file, before any byte is sent, or the rename
+// refused once they all came, as the sticky bit refuses to replace a file of another user. For a
+// file that user can write, the refusal tells to write it in place (in_place), rather than that it
+// can not be written; for one it can not write either, it tells so. The file is left as it was.
+func TestUploadReplacementRefused(t *testing.T) {
+	// set before ratd serves, and restored once it stopped (cleanups run in reverse order)
+	rename := renameFile
+	renameFile = func(oldname, newname string) error {
+		if strings.HasPrefix(filepath.Base(newname), "sticky") {
+			// the sticky bit refusing to replace a file of another user, which a test can not create
+			return &os.LinkError{Op: "rename", Old: oldname, New: newname, Err: syscall.EPERM}
+		}
+		return rename(oldname, newname)
+	}
+	t.Cleanup(func() { renameFile = rename })
+	r, client, home := transferRatd(t)
+	locked := filepath.Join(home, "locked")
+	if err := os.Mkdir(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		what    string
+		path    string
+		mode    fs.FileMode
+		suggest bool
+		early   bool
+	}{
+		{"a directory refusing a new file", filepath.Join(locked, "app.yml"), 0o644, true, true},
+		{"a directory refusing a new file, the file read-only", filepath.Join(locked, "ro.yml"), 0o444, false, true},
+		{"the rename refused", filepath.Join(home, "sticky.yml"), 0o644, true, false},
+		{"the rename refused, the file read-only", filepath.Join(home, "sticky-ro.yml"), 0o444, false, false},
+	}
+	for _, tc := range cases {
+		if err := os.WriteFile(tc.path, []byte("as it was"), tc.mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(locked, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	for _, tc := range cases {
+		// root writes anything: only the refused rename of a file it can write holds for it
+		if os.Geteuid() == 0 && (tc.early || !tc.suggest) {
+			continue
+		}
+		text := "Permission denied: " + tc.path + " can not be written by " + r.d.user +
+			", the user the terminals run as."
+		if tc.suggest {
+			text = "Permission denied: an upload puts a new file in place of " + tc.path + ", which " +
+				filepath.Dir(tc.path) + " refuses to " + r.d.user + ", the user the terminals run as: set " +
+				"in_place to write into " + tc.path + " itself, which a copy cut or canceled leaves partly written."
+		}
+		body := &fileBody{content: []byte("new")}
+		resp, answer, err := sendTransfer(client, newUpload(t, r.addr, tc.path, body, "0644", true))
+		expectRefused(t, tc.what, resp, answer, err, http.StatusForbidden, text)
+		if taken := body.taken.Load(); tc.early && taken != 0 {
+			t.Errorf("%s: expected the refusal before any byte was sent, %d were", tc.what, taken)
+		}
+		expectFile(t, tc.path, "as it was", tc.mode)
+	}
+	expectNoTemporary(t, home)
+}
+
 // TestUploadMovedAtOnce guards an upload whose file is moved as soon as it is placed, as a watcher
 // of a spool directory does: ratd still answers 201 with the mode it wrote the file with
 // (Rat-Mode), which it set, rather than look at the path again, where the file is gone.
