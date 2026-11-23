@@ -993,6 +993,22 @@ func TestTransferRate(t *testing.T) {
 	}
 }
 
+// TestCleanRemote guards the cleaning of a remote path, as ratd reads it: absolute or after ~/, its
+// spellings made one (a doubled slash, after ~/ too, a dot, a parent), a parent above ~ kept, which
+// rat can not resolve; a relative path, which ratd refuses, left as it is, rather than cleaned into
+// one starting with ~/, which ratd would read as its home.
+func TestCleanRemote(t *testing.T) {
+	for remote, clean := range map[string]string{
+		"/a//b/./c/../d": "/a/b/d", "/../x": "/x", "~/a//b/./c/../d": "~/a/b/d", "~//x": "~/x", "~///x": "~/x",
+		"~/../x": "~/../x", "~/a/../../x": "~/../x", "~": "~", "./~/x": "./~/x", "a/../~/x": "a/../~/x",
+		"x//y": "x//y", "~user/x": "~user/x",
+	} {
+		if got := cleanRemote(remote); got != clean {
+			t.Errorf("%q: expected %q, got %q", remote, clean, got)
+		}
+	}
+}
+
 // TestTransferRemoteSpellings guards a remote path spelled two ways (a doubled slash, a dot, a
 // parent): one transfer, joined by a call with the other spelling and canceled by it, rather than
 // two writing one file, a cancel finding none under way.

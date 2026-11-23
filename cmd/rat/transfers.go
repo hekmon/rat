@@ -144,12 +144,18 @@ func (q transferRequest) key() string {
 // cleanRemote returns remote, a path of ratd's machine, lexically clean, its ~ kept: with path,
 // not filepath, for a path of that machine, rat running on Windows too. Its spellings (a doubled
 // slash, a dot, a parent) then make one transfer; what ~ stands for, and the links of that
-// machine, rat can not know, ~/x and its absolute path staying two.
+// machine, rat can not know, ~/x and its absolute path staying two. A relative path is left as it
+// is, for ratd to refuse: cleaned, ./~/x would become ~/x, which ratd reads as its home.
 func cleanRemote(remote string) string {
 	if rest, ok := strings.CutPrefix(remote, "~/"); ok {
-		return "~/" + path.Clean(rest)
+		// ratd cleans its home followed by the rest, ~//x being ~/x: the rest is cleaned without
+		// the slashes starting it, which path.Clean would keep as a root
+		return "~/" + path.Clean(strings.TrimLeft(rest, "/"))
 	}
-	return path.Clean(remote)
+	if path.IsAbs(remote) {
+		return path.Clean(remote)
+	}
+	return remote
 }
 
 // transfers runs the file transfers of rat. Each transfer is a job, identified by its destination,
