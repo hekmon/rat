@@ -28,19 +28,31 @@ type Uploaded struct {
 	Note string
 }
 
+// UploadOptions are how an upload writes its file: the zero value refuses an existing file.
+type UploadOptions struct {
+	// Overwrite replaces an existing file ([HeaderOverwrite]).
+	Overwrite bool
+	// InPlace writes into the file it replaces, rather than put a new file in its place
+	// ([HeaderInPlace]): it keeps the hard links, owner and extended attributes of the file, and
+	// needs no write permission on its directory, the file's own deciding instead, but a body cut
+	// short leaves it partly written. It applies to a file replaced only, with Overwrite: a missing
+	// file is created all or nothing.
+	InPlace bool
+}
+
 // Upload copies src, a regular file the caller opened, to path on the machine of the ratd at
 // server, HOST:PORT, through client (see [HTTPClient]), replacing an existing file with overwrite
-// only, and returns what ratd wrote. The permission bits of src are sent; its bytes are counted
-// by its own reads, for a caller wrapping it to tell progress.
+// only, as options tell, and returns what ratd wrote. The permission bits of src are sent; its
+// bytes are counted by its own reads, for a caller wrapping it to tell progress.
 //
-// It is all or nothing on ratd's side: ratd writes the file once received whole, and writes
-// nothing of an upload cut before its end. What its headers alone refuse is refused before any
-// byte is sent, client waiting for the go-ahead of ratd ([HTTPClient] waits a second for it). A
-// refusal or failure of ratd is a [Refusal], with the sentence ratd wrote for the agent;
-// [ErrNoTransfers] tells a ratd older than the transfers; a [TransferError] of kind [ErrCut] the
-// connection lost once ratd gave its go-ahead, before the end of the file; of kind
-// [ErrAnswerLost] lost once the file was sent whole, before ratd answered, ratd then possibly
-// writing it.
+// It is all or nothing on ratd's side, unless options.InPlace writes into a file it replaces: ratd
+// writes the file once received whole, and writes nothing of an upload cut before its end. What
+// its headers alone refuse is refused before any byte is sent, client waiting for the go-ahead of
+// ratd ([HTTPClient] waits a second for it). A refusal or failure of ratd is a [Refusal], with the
+// sentence ratd wrote for the agent; [ErrNoTransfers] tells a ratd older than the transfers; a
+// [TransferError] of kind [ErrCut] the connection lost once ratd gave its go-ahead, before the end
+// of the file; of kind [ErrAnswerLost] lost once the file was sent whole, before ratd answered,
+// ratd then possibly writing it.
 //
 // src is stamped when opened and once read (see package stamp): a file that changed meanwhile (a
 // log still written, a build output) ends the body with an error instead of its end, and Upload
@@ -62,7 +74,7 @@ type Uploaded struct {
 // returns from a request only once the read of its body under way returns: a read of src blocked
 // (a file system not answering) delays it.
 func Upload(ctx context.Context, cancel <-chan struct{}, client *http.Client, server string, src fs.File,
-	path string, overwrite bool) (*Uploaded, error) {
+	path string, options UploadOptions) (*Uploaded, error) {
 	info, err := src.Stat()
 	if err != nil {
 		return nil, err
@@ -103,7 +115,8 @@ func Upload(ctx context.Context, cancel <-chan struct{}, client *http.Client, se
 	req.Header.Set("Expect", "100-continue")
 	req.Header.Set(HeaderPath, EncodePath(path))
 	req.Header.Set(HeaderMode, FormatMode(info.Mode()))
-	req.Header.Set(HeaderOverwrite, strconv.FormatBool(overwrite))
+	req.Header.Set(HeaderOverwrite, strconv.FormatBool(options.Overwrite))
+	req.Header.Set(HeaderInPlace, strconv.FormatBool(options.InPlace))
 	resp, err := client.Do(req)
 	// a stop coming once ratd answered the file written is too late: that answer is returned, the
 	// stop cutting at most the read of its note

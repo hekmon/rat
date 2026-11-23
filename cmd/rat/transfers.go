@@ -821,7 +821,7 @@ func (t *transfers) runUpload(ctx context.Context, j *job, source *os.File) (str
 	}
 	j.size.Store(info.Size())
 	up, err := connect.Upload(t.ctx, ctx.Done(), t.client, t.server, countedFile{File: source, job: j},
-		j.request.remote, j.request.overwrite)
+		j.request.remote, connect.UploadOptions{Overwrite: j.request.overwrite})
 	if err != nil {
 		return t.failureText(j, err)
 	}

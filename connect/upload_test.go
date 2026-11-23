@@ -131,11 +131,18 @@ func (i testInfo) IsDir() bool        { return false }
 func (i testInfo) Sys() any           { return nil }
 
 // TestUpload guards an upload as ratd expects it: a POST of UploadPath, chunked, with the path
-// encoded, the permission bits of the file, overwrite, and the bytes of the file whole; and what
-// ratd answered: a file created with its mode and the note of ratd (201), or replaced (204).
+// encoded, the permission bits of the file, overwrite and in place as asked, and the bytes of the
+// file whole; and what ratd answered: a file created with its mode and the note of ratd (201), or
+// replaced (204).
 func TestUpload(t *testing.T) {
 	content := bytes.Repeat([]byte("data\n"), 100_000)
+	// the in place of each upload, as the fake received it
+	var mu sync.Mutex
+	var inPlace []string
 	server, client := fakeRatd(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		inPlace = append(inPlace, r.Header.Get(HeaderInPlace))
+		mu.Unlock()
 		path, err := DecodePath(r.Header.Get(HeaderPath))
 		if r.Method != http.MethodPost || r.URL.Path != UploadPath || r.Header.Get("Content-Type") != OctetStream ||
 			len(r.TransferEncoding) != 1 || r.TransferEncoding[0] != "chunked" || err != nil || path != "~/my dir/app.bin" ||
@@ -155,14 +162,24 @@ func TestUpload(t *testing.T) {
 		_, _ = io.WriteString(w, "Missing directories created: /x.\n")
 	})
 	up, err := Upload(context.Background(), nil, client, server, &testFile{content: content, mode: 0o750},
-		"~/my dir/app.bin", false)
+		"~/my dir/app.bin", UploadOptions{})
 	if err != nil || *up != (Uploaded{Mode: 0o640, Sent: int64(len(content)), Note: "Missing directories created: /x."}) {
 		t.Errorf("expected the file created, got %+v, %v", up, err)
 	}
 	up, err = Upload(context.Background(), nil, client, server, &testFile{content: content, mode: 0o750},
-		"~/my dir/app.bin", true)
+		"~/my dir/app.bin", UploadOptions{Overwrite: true})
 	if err != nil || *up != (Uploaded{Replaced: true, Mode: 0o600, Sent: int64(len(content))}) {
 		t.Errorf("expected the file replaced, got %+v, %v", up, err)
+	}
+	up, err = Upload(context.Background(), nil, client, server, &testFile{content: content, mode: 0o750},
+		"~/my dir/app.bin", UploadOptions{Overwrite: true, InPlace: true})
+	if err != nil || *up != (Uploaded{Replaced: true, Mode: 0o600, Sent: int64(len(content))}) {
+		t.Errorf("expected the file replaced in place, got %+v, %v", up, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(inPlace, " ") != "false false true" {
+		t.Errorf("expected Rat-In-Place false, false, then true, got %q", inPlace)
 	}
 }
 
@@ -183,7 +200,7 @@ func TestUploadRefused(t *testing.T) {
 		}
 	})
 	file := &testFile{content: bytes.Repeat([]byte("x"), 1<<20), mode: 0o644}
-	_, err := Upload(context.Background(), nil, client, server, file, "/x", false)
+	_, err := Upload(context.Background(), nil, client, server, file, "/x", UploadOptions{})
 	var refused *Refusal
 	if !errors.As(err, &refused) || !errors.Is(err, ErrRefused) || refused.Status != http.StatusPreconditionFailed ||
 		refused.Text != "/x exists: set overwrite to replace it." {
@@ -192,10 +209,10 @@ func TestUploadRefused(t *testing.T) {
 	if taken := file.taken(); taken != 0 {
 		t.Errorf("expected the refusal before any byte was read, %d were", taken)
 	}
-	if _, err = Upload(context.Background(), nil, client, server, file, "/old", false); !errors.Is(err, ErrNoTransfers) {
+	if _, err = Upload(context.Background(), nil, client, server, file, "/old", UploadOptions{}); !errors.Is(err, ErrNoTransfers) {
 		t.Errorf("a 404 without the version: expected ErrNoTransfers, got %v", err)
 	}
-	if _, err = Upload(context.Background(), nil, client, server, file, "/missing", false); !errors.As(err, &refused) ||
+	if _, err = Upload(context.Background(), nil, client, server, file, "/missing", UploadOptions{}); !errors.As(err, &refused) ||
 		refused.Status != http.StatusNotFound {
 		t.Errorf("a 404 with the version: expected a refusal, got %v", err)
 	}
@@ -229,7 +246,7 @@ func TestUploadCut(t *testing.T) {
 		{"/whole", 1024, ErrAnswerLost},
 	} {
 		file := &testFile{size: tc.size, mode: 0o644}
-		_, err := Upload(context.Background(), nil, client, server, file, tc.path, false)
+		_, err := Upload(context.Background(), nil, client, server, file, tc.path, UploadOptions{})
 		var failed *TransferError
 		switch {
 		case err == nil:
@@ -253,7 +270,7 @@ func TestUploadChanged(t *testing.T) {
 		cut <- err
 	})
 	file := &testFile{content: bytes.Repeat([]byte("x"), 64<<10), mode: 0o644, grows: true}
-	if _, err := Upload(context.Background(), nil, client, server, file, "/x", false); !errors.Is(err, ErrChanged) {
+	if _, err := Upload(context.Background(), nil, client, server, file, "/x", UploadOptions{}); !errors.Is(err, ErrChanged) {
 		t.Errorf("expected ErrChanged, got %v", err)
 	}
 	if err := <-cut; err == nil {
@@ -311,7 +328,7 @@ func TestUploadGrowing(t *testing.T) {
 	file := &growingFile{opened: 1 << 20}
 	done := make(chan error, 1)
 	go func() {
-		_, err := Upload(context.Background(), nil, client, server, file, "/x", false)
+		_, err := Upload(context.Background(), nil, client, server, file, "/x", UploadOptions{})
 		done <- err
 	}()
 	select {
@@ -351,7 +368,7 @@ func TestUploadReadFailed(t *testing.T) {
 		{"read", &testFile{content: content, mode: 0o644, fails: reading}, reading},
 		{"look once read", &testFile{content: content, mode: 0o644, lookFails: looking}, looking},
 	} {
-		_, err := Upload(context.Background(), nil, client, server, tc.file, "/x", false)
+		_, err := Upload(context.Background(), nil, client, server, tc.file, "/x", UploadOptions{})
 		var failed *TransferError
 		if !errors.Is(err, ErrRead) || !errors.As(err, &failed) || failed.Reason != tc.failing {
 			t.Errorf("%s failing: expected ErrRead, its reason that error, got %v", tc.what, err)
@@ -387,7 +404,7 @@ func TestUploadCancelled(t *testing.T) {
 		cancel := make(chan struct{})
 		done := make(chan error, 1)
 		go func() {
-			_, err := Upload(context.Background(), cancel, client, server, file, "/x", false)
+			_, err := Upload(context.Background(), cancel, client, server, file, "/x", UploadOptions{})
 			done <- err
 		}()
 		<-started
@@ -424,7 +441,7 @@ func TestUploadCancelled(t *testing.T) {
 		done := make(chan outcome, 1)
 		go func() {
 			up, err := Upload(context.Background(), cancel, client, server, &testFile{content: []byte("whole"),
-				mode: 0o644}, "/x", false)
+				mode: 0o644}, "/x", UploadOptions{})
 			done <- outcome{up, err}
 		}()
 		<-received
@@ -458,7 +475,7 @@ func TestUploadCancelled(t *testing.T) {
 			done := make(chan error, 1)
 			go func() {
 				_, err := Upload(ctx, cancel, client, server, &testFile{content: []byte("whole"), mode: 0o644}, "/x",
-					false)
+					UploadOptions{})
 				done <- err
 			}()
 			<-received
@@ -493,7 +510,7 @@ func TestUploadCancelled(t *testing.T) {
 		ctx, stop := context.WithCancel(context.Background())
 		defer stop()
 		client.Transport = stopOnAnswer{inner: client.Transport, stop: stop}
-		up, err := Upload(ctx, nil, client, server, &testFile{content: []byte("whole"), mode: 0o644}, "/x", false)
+		up, err := Upload(ctx, nil, client, server, &testFile{content: []byte("whole"), mode: 0o644}, "/x", UploadOptions{})
 		if err != nil || up.Replaced || up.Sent != 5 {
 			t.Errorf("stopped once ratd answered the file written: expected that answer, too late to stop, got %+v, %v",
 				up, err)
