@@ -141,8 +141,9 @@ by its destination, which one transfer at a time writes, and found by its paths,
 by name: a call with the same paths waits for the rest, or tells how it ended, once, whatever its
 overwrite and `in_place`, but for a call setting one to a transfer without it, which may refuse a
 file existing (without overwrite) or be refused where writing in place would not (without
-`in_place`, its new file denied a place): refused while that transfer runs, told how it ended if
-it wrote its file, starting the copy asked otherwise. Another source to the same destination is
+`in_place`, its new file denied a place; `in_place` counting with overwrite alone, a missing file
+being created all or nothing): refused while that transfer runs, told how it ended if it wrote its
+file, starting the copy asked otherwise. Another source to the same destination is
 refused while it runs, and once it ended, its outcome not told yet, the call tells that outcome, as
 a cancel naming another source does, and forgets the job: the next call starts the transfer asked,
 the agent knowing what the first one wrote (after a context compaction, for one). Paths are cleaned

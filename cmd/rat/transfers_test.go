@@ -1506,6 +1506,28 @@ func TestTransferEndedInPlace(t *testing.T) {
 	}
 }
 
+// TestTransferInPlaceAloneJoins guards a call setting in_place without overwrite met by the job of
+// its paths without either: joined, in place changing nothing without overwrite (a missing file
+// created all or nothing, an existing one refused), rather than refused as asking more.
+func TestTransferInPlaceAloneJoins(t *testing.T) {
+	shortWait(t, 300*time.Millisecond)
+	held := make(chan struct{})
+	release := sync.OnceFunc(func() { close(held) })
+	// set before rat starts, and restored once it stopped (cleanups run in reverse order)
+	hookPreparing := preparing
+	preparing = func(transferRequest) { <-held }
+	t.Cleanup(func() { preparing = hookPreparing })
+	tt := startTransfers(t)
+	// released before rat stops, which waits for its transfers
+	t.Cleanup(release)
+	randomFile(t, filepath.Join(tt.local, "up.bin"), 1<<10, 0o644)
+	remote := filepath.Join(tt.remote, "new.bin")
+	tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote}, false,
+		"Still copying up.bin to "+remote+": 0 B")
+	tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote, "in_place": true}, false,
+		"Still copying up.bin to "+remote+": 0 B")
+}
+
 // TestTransferOverwriteLeftOut guards a transfer with overwrite called again with its paths,
 // overwrite left out, as its progress tells to call again with the same paths: joined while it
 // runs, its progress told, and once it ended, told how, rather than refused, or told to copy again.

@@ -129,6 +129,12 @@ func (q transferRequest) upload() bool {
 	return q.tool == uploadTool
 }
 
+// writesInPlace tells whether the request writes into the file it replaces: in_place counts with
+// overwrite alone, a missing file being created all or nothing, an existing one refused.
+func (q transferRequest) writesInPlace() bool {
+	return q.inPlace && q.overwrite
+}
+
 // source and destination return the paths of the request, as the agent gave them.
 func (q transferRequest) source() string {
 	if q.upload() {
@@ -348,7 +354,8 @@ func (t *transfers) request(tool string, arguments json.RawMessage) (transferReq
 
 // join returns the job of q: the one of its paths doing what q asks, or a new one, which checks
 // the local file first (see run). A call joins the job of its paths whatever its overwrite and
-// in_place, as told to call again with the same paths, unless the call sets one the job does not:
+// in_place, as told to call again with the same paths, unless the call sets one the job does not
+// (in_place counting with overwrite alone, see writesInPlace):
 // refused while that job runs, which may refuse a file existing (without overwrite) or be refused
 // where writing in place would not (without in_place, its new file denied a place); joined once it
 // wrote its file; forgotten otherwise (refused, failed or canceled), the call starting the copy
@@ -373,7 +380,7 @@ func (t *transfers) join(q transferRequest) (*job, string) {
 		if q.overwrite && !j.request.overwrite {
 			missing = append(missing, "overwrite")
 		}
-		if q.inPlace && !j.request.inPlace {
+		if q.writesInPlace() && !j.request.writesInPlace() {
 			missing = append(missing, "in_place")
 		}
 		switch {
@@ -786,7 +793,7 @@ func canceledText(j *job) string {
 // it, which may leave it partly written (ratd empties it as the first bytes come). rat does not
 // know whether that file existed, a missing one being created all or nothing.
 func destinationText(j *job) string {
-	if j.request.inPlace && j.request.overwrite {
+	if j.request.writesInPlace() {
 		return fmt.Sprintf("%s, written in place, may be partly written", j.request.destination())
 	}
 	return fmt.Sprintf("%s is as it was", j.request.destination())
@@ -805,7 +812,7 @@ func (t *transfers) failureText(j *job, err error) (string, bool, bool) {
 	switch {
 	case errors.Is(err, connect.ErrAnswerLost) && errors.As(err, &failed):
 		left := j.request.destination() + " may be written or not"
-		if j.request.inPlace && j.request.overwrite {
+		if j.request.writesInPlace() {
 			// written into as the body came, which ratd may not have received whole: whatever it
 			// received, the old content is gone
 			left = destinationText(j)
@@ -823,7 +830,7 @@ func (t *transfers) failureText(j *job, err error) (string, bool, bool) {
 	case errors.Is(err, connect.ErrChanged):
 		text := fmt.Sprintf("%s changed while it was read: it may still be written. Upload it again once it is "+
 			"complete.", j.request.local)
-		if j.request.inPlace && j.request.overwrite {
+		if j.request.writesInPlace() {
 			text += " " + destinationText(j) + "."
 		}
 		return text, true, false
