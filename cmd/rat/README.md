@@ -171,7 +171,8 @@ opened and once read (`connect.Upload`): a file changing meanwhile fails the tra
 writing nothing. A replaced file keeping permissions other than those of its source is told, as
 an agent setting overwrite may expect a chmod in the same call, but on Windows, whose files have
 no permission bits (Go shows 0666, or 0444 for a read-only file): almost every replace would tell
-it.
+it. A read-only file there is not replaced, `os.Root.Rename` refusing to, as Windows does: the
+agent is told so, rather than access denied.
 
 **The texts of ratd name the tools.** The descriptions of `write_file` and `read_file`, and the
 instructions, point a file the agent only moves to "a tool copying files by path if you have

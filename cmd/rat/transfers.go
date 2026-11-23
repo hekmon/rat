@@ -65,6 +65,11 @@ var transferWait = time.Duration(tools.MaxWaitSeconds) * time.Second
 // for tests.
 var modesTold = runtime.GOOS != "windows"
 
+// readOnlyKept tells whether a rename leaves a read-only file in place rather than replace it: on
+// Windows, whose os.Root.Rename does not ignore the read-only attribute, as its removal does; on
+// Unix, the permissions of the directory decide. A variable for tests.
+var readOnlyKept = runtime.GOOS == "windows"
+
 const (
 	// rateWindow is how far back the rate of a transfer is measured: recent enough for a link that
 	// slowed down to show.
@@ -1004,7 +1009,12 @@ func (t *transfers) place(tmp, local string, overwrite bool) (replaced bool, kep
 			if err = t.root.Chmod(tmp, mode); err != nil {
 				return false, 0, "", err
 			}
-			return true, mode.Perm(), "", t.renameInPlace(tmp, local, tmpInfo)
+			err = t.renameInPlace(tmp, local, tmpInfo)
+			if err != nil && readOnlyKept && errors.Is(err, fs.ErrPermission) && mode&0o200 == 0 {
+				return false, 0, fmt.Sprintf("%s is read-only, which Windows keeps from being replaced: clear its "+
+					"read-only attribute, or download to another name.", local), nil
+			}
+			return true, mode.Perm(), "", err
 		case !errors.Is(err, fs.ErrNotExist):
 			return false, 0, "", err
 		}

@@ -857,6 +857,57 @@ func TestDownloadFilePlacedReplyLost(t *testing.T) {
 	expectNoTemporary(t, tt.local)
 }
 
+// TestDownloadFileReadOnlyKept guards a download with overwrite to a read-only file, which a rename
+// can not replace on Windows: told read-only, with what to do, rather than access denied, the file
+// kept as it was; a writable file whose rename is denied all the same told as the system tells it.
+// Its rename refuses as Windows does, readOnlyKept set as there.
+func TestDownloadFileReadOnlyKept(t *testing.T) {
+	// set before rat starts, and restored once it stopped (cleanups run in reverse order)
+	kept, rename := readOnlyKept, renameLocal
+	readOnlyKept = true
+	renameLocal = func(root *os.Root, oldname, newname string) error {
+		if info, err := root.Lstat(newname); err == nil && (info.Mode().Perm()&0o200 == 0 ||
+			filepath.Base(newname) == "denied.bin") {
+			return &os.LinkError{Op: "rename", Old: oldname, New: newname, Err: fs.ErrPermission}
+		}
+		return rename(root, oldname, newname)
+	}
+	t.Cleanup(func() { readOnlyKept, renameLocal = kept, rename })
+	tt := startTransfers(t)
+	remote := filepath.Join(tt.remote, "app.bin")
+	randomFile(t, remote, 1<<10, 0o644)
+	local := filepath.Join(tt.local, "x.bin")
+	previous := randomFile(t, local, 10, 0o444)
+	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": "x.bin", "overwrite": true}, true,
+		"x.bin is read-only, which Windows keeps from being replaced: clear its read-only attribute, or download to "+
+			"another name.")
+	expectContent(t, local, previous, 0o444)
+	randomFile(t, filepath.Join(tt.local, "denied.bin"), 10, 0o644)
+	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": "denied.bin", "overwrite": true},
+		true, "Writing denied.bin failed: permission denied.")
+	expectNoTemporary(t, tt.local)
+}
+
+// TestDownloadFileReadOnlyDenied guards a download with overwrite to a read-only file whose rename is
+// denied where a rename replaces read-only files (Unix, the directory deciding): told as the system
+// tells it, rather than as a read-only file Windows keeps.
+func TestDownloadFileReadOnlyDenied(t *testing.T) {
+	// set before rat starts, and restored once it stopped (cleanups run in reverse order)
+	kept, rename := readOnlyKept, renameLocal
+	readOnlyKept = false
+	renameLocal = func(root *os.Root, oldname, newname string) error {
+		return &os.LinkError{Op: "rename", Old: oldname, New: newname, Err: fs.ErrPermission}
+	}
+	t.Cleanup(func() { readOnlyKept, renameLocal = kept, rename })
+	tt := startTransfers(t)
+	remote := filepath.Join(tt.remote, "app.bin")
+	randomFile(t, remote, 1<<10, 0o644)
+	randomFile(t, filepath.Join(tt.local, "x.bin"), 10, 0o444)
+	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": "x.bin", "overwrite": true}, true,
+		"Writing x.bin failed: permission denied.")
+	expectNoTemporary(t, tt.local)
+}
+
 // TestDownloadFileNameTooLong guards a download to a name longer than any file system takes,
 // though its temporary file, named to fit, could take the bytes: refused before any byte is
 // written, in the transfers directory before any request, and under a directory to create once
