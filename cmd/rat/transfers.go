@@ -303,7 +303,8 @@ func (t *transfers) call(ctx context.Context, tool string, arguments json.RawMes
 // request reads the call of tool with arguments, or tells why it is refused. A path holding a NUL
 // byte, which no file name can hold, is refused here, before any request or directory created for
 // it, as ratd refuses one, and so is a destination naming a directory by its form
-// (connect.NamesDirectory). Both paths are cleaned, the remote one lexically (see cleanRemote).
+// (connect.NamesDirectory). Both paths are cleaned, the remote one lexically when ratd takes it
+// (see cleanRemote).
 func (t *transfers) request(tool string, arguments json.RawMessage) (transferRequest, string) {
 	q := transferRequest{tool: tool}
 	var err error
@@ -486,13 +487,19 @@ func kindText(mode fs.FileMode) string {
 func (t *transfers) localFailure(err error, what, local string) string {
 	var pathErr *fs.PathError
 	if errors.As(err, &pathErr) {
-		return fmt.Sprintf("%s %s failed: %v.", what, local, pathErr.Err)
+		return fmt.Sprintf("%s %s failed: %s.", what, local, sentence(pathErr.Err))
 	}
 	var linkErr *os.LinkError
 	if errors.As(err, &linkErr) {
-		return fmt.Sprintf("%s %s failed: %v.", what, local, linkErr.Err)
+		return fmt.Sprintf("%s %s failed: %s.", what, local, sentence(linkErr.Err))
 	}
-	return fmt.Sprintf("%s %s failed: %v.", what, local, err)
+	return fmt.Sprintf("%s %s failed: %s.", what, local, sentence(err))
+}
+
+// sentence returns the message of err, to end a sentence of rat: without the period that ends the
+// messages of Windows ("Access is denied."), the sentence adding its own.
+func sentence(err error) string {
+	return strings.TrimSuffix(err.Error(), ".")
 }
 
 // await waits for j, for a call made at called, until it ends, transferWait passes, or ctx is done,
@@ -758,7 +765,8 @@ func canceledText(j *job) string {
 // failureText tells j failing with err: its answer lost once all of it was sent, ratd possibly
 // having written it, a cancel coming then too late to cut it; refused or failed by ratd (its
 // sentence), an answer of ratd, which a cancel never brings, cutting the connection first: a cancel
-// came too late then; canceled (whatever the error the cut gave); ratd older than the transfers or
+// came too late then; canceled (whatever the error the cut gave), unless rat is stopping, which
+// cuts an upload whatever was sent, ratd possibly writing it; ratd older than the transfers or
 // not reached; the file changed while read, or failing to read, as the system tells it; the copy
 // cut.
 func (t *transfers) failureText(j *job, err error) (string, bool, bool) {
@@ -771,7 +779,7 @@ func (t *transfers) failureText(j *job, err error) (string, bool, bool) {
 			j.request.source(), j.request.destination(), failed.Reason, j.request.tool), true, false
 	case errors.As(err, &refused):
 		return refused.Text, true, false
-	case j.cancelWasAsked():
+	case j.cancelWasAsked() && t.ctx.Err() == nil:
 		return canceledText(j), false, true
 	case errors.Is(err, connect.ErrNoTransfers):
 		return fmt.Sprintf("The ratd at %s is older than this rat and serves no file transfers: whoever runs it must "+
@@ -783,8 +791,8 @@ func (t *transfers) failureText(j *job, err error) (string, bool, bool) {
 		return t.localFailure(failed.Reason, "Reading", j.request.local) + fmt.Sprintf(" %s is as it was.",
 			j.request.destination()), true, false
 	case errors.Is(err, connect.ErrCut) && errors.As(err, &failed):
-		return fmt.Sprintf("The copy of %s to %s was cut: %v. %s is as it was.", j.request.source(),
-			j.request.destination(), failed.Reason, j.request.destination()), true, false
+		return fmt.Sprintf("The copy of %s to %s was cut: %s. %s is as it was.", j.request.source(),
+			j.request.destination(), sentence(failed.Reason), j.request.destination()), true, false
 	default:
 		return t.reachText(err), true, false
 	}

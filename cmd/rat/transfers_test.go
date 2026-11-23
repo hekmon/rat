@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"errors"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -616,6 +617,29 @@ func TestUploadFileReadFailed(t *testing.T) {
 		"Reading mem failed: input/output error. "+remote+" is as it was.")
 	if _, err := os.Lstat(remote); err == nil {
 		t.Error("expected no remote file written")
+	}
+}
+
+// TestUploadStopAfterCancelTooLate guards an upload sent whole, canceled too late (its cancel waiting
+// for the answer of ratd), then cut by rat stopping, which cuts it whatever was sent: logged as
+// failing, ratd possibly writing it, rather than as canceled, its destination as it was.
+func TestUploadStopAfterCancelTooLate(t *testing.T) {
+	shortWait(t, 300*time.Millisecond)
+	tt := startTransfers(t)
+	stall := make(chan struct{})
+	t.Cleanup(func() { close(stall) })
+	// the fake reads a first chunk, then stalls, the rest in the buffers of the connection
+	tt.fake.set(func(f *fakeTransfers) { f.stall = stall })
+	randomFile(t, filepath.Join(tt.local, "up.bin"), 64<<10, 0o644)
+	remote := filepath.Join(tt.remote, "up.bin")
+	args := map[string]any{"local_path": "up.bin", "remote_path": remote}
+	tt.expect(t, uploadTool, args, false, "Still copying up.bin to ")
+	args["cancel"] = true
+	tt.expect(t, uploadTool, args, true, "The transfer to "+remote+" is still ending: ")
+	tt.stopRat(t)
+	if logs := tt.rat.logs.String(); strings.Contains(logs, "outcome=canceled") ||
+		!strings.Contains(logs, "outcome=error") {
+		t.Errorf("expected the upload logged failing, not canceled:\n%s", logs)
 	}
 }
 
@@ -1481,6 +1505,27 @@ func TestTransferCancelEnded(t *testing.T) {
 			isError != ended.isError {
 			t.Errorf("expected %v: %q, got %v: %q", ended.isError, ended.told, isError, text)
 		}
+	}
+}
+
+// TestTransferReasonEndsOnce guards the reason of the system ending a sentence of rat with one
+// period, though Windows ends its messages with one ("Access is denied."): a local file failing,
+// with a path, a link or no error of its own, and a copy cut.
+func TestTransferReasonEndsOnce(t *testing.T) {
+	tr := &transfers{ctx: context.Background()}
+	denied := errors.New("Access is denied.")
+	for _, err := range []error{&fs.PathError{Op: "open", Path: "x.bin", Err: denied},
+		&os.LinkError{Op: "rename", Old: ".x.bin.rat-1", New: "x.bin", Err: denied}, denied} {
+		if got := tr.localFailure(err, "Writing", "x.bin"); got != "Writing x.bin failed: Access is denied." {
+			t.Errorf("%T: expected one period, got %q", err, got)
+		}
+	}
+	j := &job{request: transferRequest{tool: uploadTool, local: "up.bin", remote: "/r/up.bin"}}
+	cut := &connect.TransferError{Kind: connect.ErrCut,
+		Reason: errors.New("wsarecv: An existing connection was forcibly closed by the remote host.")}
+	if got, _, _ := tr.failureText(j, cut); got != "The copy of up.bin to /r/up.bin was cut: wsarecv: An existing "+
+		"connection was forcibly closed by the remote host. /r/up.bin is as it was." {
+		t.Errorf("a copy cut: expected one period, got %q", got)
 	}
 }
 

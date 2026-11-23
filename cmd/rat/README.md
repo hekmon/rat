@@ -143,10 +143,13 @@ refused while that transfer runs, told how it ended if it wrote its file, starti
 otherwise. Another source to the same destination is refused while it runs, and once it ended, its
 outcome not told yet, the call tells that outcome, as a cancel naming another source does, and
 forgets the job: the next call starts the transfer asked, the agent knowing what the first one
-wrote (after a context compaction, for one). Paths are cleaned as a call is read,
-the remote one lexically (`path.Clean`, `~/` kept): its spellings with a doubled slash, a dot or
-a parent make one job, but `~/x` and the absolute path it stands for stay two, as do two paths
-through a link of ratd's machine, which rat can not resolve. Canceling a call (the harness giving
+wrote (after a context compaction, for one). Paths are cleaned as a call is read, the remote one
+lexically when ratd takes it, absolute or starting with `~/` (`path.Clean`, `~/` kept), a relative
+one sent as it is for ratd to refuse: its spellings with a doubled slash, a dot or a parent make
+one job, but `~/x` and the absolute path it stands for stay two, as do two paths through a link of
+ratd's machine, which rat can not resolve. A destination naming a directory by its form (a final
+slash, or `.` or `..` as its last part) is refused before any request, as ratd refuses one, rather
+than cleaned into the name of a file. Canceling a call (the harness giving
 up on it) ends its wait, not the transfer. `cancel` with the same paths stops it, leaving the
 destination as it was, decided at one point: before the last chunk of an upload (past it, ratd
 may be writing the file, and the call tells its answer, or that it was lost, the file possibly
@@ -162,10 +165,10 @@ put in place once complete: linked under its name without overwrite, which fails
 appeared meanwhile, renamed over the file it replaces with overwrite, the file replaced keeping
 its mode; missing directories are created, and named, and the destination looked at again once
 they are there, whoever created them, before any byte is written: under a directory missing, the
-look made before the request could not tell a name too long. A download failing once some were created, creating them
-included, names them too, leaving them; an upload cut or canceled can not name those ratd
-created, its answer never read. A symbolic link at the end of a local path is refused, telling where it leads; `os.Root`
-ignores `O_NOFOLLOW`, so rat looks at the file with
+look made before the request could not tell a name too long. A download failing once some were
+created, creating them included, names them too, leaving them; an upload cut or canceled can not
+name those ratd created, its answer never read. A symbolic link at the end of a local path is
+refused, telling where it leads; `os.Root` ignores `O_NOFOLLOW`, so rat looks at the file with
 `Root.Lstat`, then checks the file it opened is the one it looked at. An upload is stamped when
 opened and once read (`connect.Upload`): a file changing meanwhile fails the transfer, ratd
 writing nothing. A replaced file keeping permissions other than those of its source is told, as

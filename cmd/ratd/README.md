@@ -387,7 +387,8 @@ errors with its messages.
   agent did not mean. The content is text (a JSON string), written as is. The description tells
   no way around for binary content: an agent that really needs one encodes it as text by itself,
   and pointing to a way (`base64 -d` in the terminal) would invite it into its context, a third
-  larger and meaningless to the model.
+  larger and meaningless to the model. A path naming a directory by its form (a final slash, or `.`
+  or `..` as its last part) is refused, rather than cleaned into the name of a file.
 - **`read_file`** `{path, start_line, max_lines, line_numbers}`: whole lines of a text file, from
   `start_line` (1 by default, negative counts from the end: -100 for the last 100 lines), at most
   `max_lines` (all by default). The header tells the lines returned out of how many, the size and
@@ -591,7 +592,7 @@ message tells an outcome the agent may act upon, such as nothing to close.
 | control character in a text | yes | the character and its line, `send_keys` for keys, `write_file` for content |
 | tmux restarting | yes | every window was lost, retry in a few seconds to find a fresh `main` |
 | tmux not answering in time | yes | logged, retrying may work |
-| file refused (not regular, not text, missing, denied, relative path, a range too far into a huge file to reach in time) | yes | why, and the terminal when it can do better |
+| file refused (not regular, not text, missing, denied, relative path, naming a directory, a range too far into a huge file to reach in time) | yes | why, and the terminal when it can do better |
 | file system failing (no space left, read-only…) | yes | the reason of the system, and whether the file may be partial |
 | file system not answering in time | yes | logged, the file may still be written: check it before writing again |
 | anything else | yes | internal error, logged, retrying may work |
