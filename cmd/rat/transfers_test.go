@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1406,6 +1407,82 @@ func TestTransferEndedOverwrite(t *testing.T) {
 		t.Errorf("expected the transfer creating the file told, got %q", text)
 	}
 	tt.expect(t, downloadTool, newWith, false, "Downloaded "+remote+" to new.bin (1 KiB): replaced.")
+}
+
+// TestTransferEndedInPlace guards an upload without in_place met by a call setting it, as one
+// without overwrite is met by a call setting overwrite: refused while the upload runs, as it may
+// be refused where writing in place would not (its new file denied a place); once it ended
+// failing so, its outcome not told yet, forgotten, the call copying the file in place, rather
+// than told, as the outcome of its own request, to set the in_place it set; once it ended writing
+// its file, joined, told how it ended, rather than the file copied again.
+func TestTransferEndedInPlace(t *testing.T) {
+	shortWait(t, 300*time.Millisecond)
+	holds := map[string]chan struct{}{"failed.bin": make(chan struct{}), "written.bin": make(chan struct{})}
+	releases := map[string]func(){}
+	for name, hold := range holds {
+		releases[name] = sync.OnceFunc(func() { close(hold) })
+	}
+	// set before rat starts, and restored once it stopped (cleanups run in reverse order)
+	hookPreparing := preparing
+	preparing = func(q transferRequest) {
+		if !q.inPlace {
+			<-holds[filepath.Base(q.remote)]
+		}
+	}
+	t.Cleanup(func() { preparing = hookPreparing })
+	tt := startTransfers(t)
+	// released before rat stops, which waits for its transfers
+	for _, release := range releases {
+		t.Cleanup(release)
+	}
+	randomFile(t, filepath.Join(tt.local, "up.bin"), 1<<10, 0o644)
+	failed, written := filepath.Join(tt.remote, "failed.bin"), filepath.Join(tt.remote, "written.bin")
+	inPlace := map[string]map[string]any{}
+	for _, remote := range []string{failed, written} {
+		randomFile(t, remote, 10, 0o644)
+		tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote, "overwrite": true}, false,
+			"Still copying up.bin to "+remote+": 0 B")
+		inPlace[remote] = map[string]any{"local_path": "up.bin", "remote_path": remote, "overwrite": true,
+			"in_place": true}
+	}
+	tt.expect(t, uploadTool, inPlace[failed], true, "A transfer to "+failed+" from up.bin is under way without "+
+		"in_place: wait for it, calling again without in_place, or stop it with cancel.")
+	// the upload to failed.bin fails once received whole, as ratd fails a new file denied its place;
+	// the fake reads failWith as a request comes
+	tt.fake.set(func(f *fakeTransfers) {
+		f.failWith = "Permission denied: an upload puts a new file in place of " + failed + ", which " + tt.remote +
+			" refuses to rat, the user the terminals run as: set in_place to write into " + failed + " itself, which " +
+			"a copy cut or canceled leaves partly written."
+	})
+	releases["failed.bin"]()
+	for deadline := time.Now().Add(10 * time.Second); tt.fake.count() == 0 && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
+	tt.fake.set(func(f *fakeTransfers) { f.failWith = "" })
+	// called until the job of its paths ended, and the copy it starts then
+	untilEnded := func(call map[string]any) string {
+		t.Helper()
+		var text string
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+			if text, _ = tt.call(t, uploadTool, call); !strings.Contains(text, "is under way") &&
+				!strings.HasPrefix(text, "Still copying") {
+				break
+			}
+		}
+		return text
+	}
+	if text := untilEnded(inPlace[failed]); !strings.HasPrefix(text, "Uploaded up.bin to "+failed+" (1 KiB): replaced.") {
+		t.Errorf("expected the failed upload forgotten, the file written in place, got %q", text)
+	}
+	releases["written.bin"]()
+	if text := untilEnded(inPlace[written]); !strings.HasPrefix(text, "Uploaded up.bin to "+written+" (1 KiB): "+
+		"replaced. It ended ") {
+		t.Errorf("expected the upload writing its file told, got %q", text)
+	}
+	if got := tt.fake.inPlaces(); !slices.Equal(got, []bool{false, true, false}) {
+		t.Errorf("expected the upload without in_place, the one in place starting once it failed, and the other "+
+			"without, the one writing its file joined; got the in place of %v", got)
+	}
 }
 
 // TestTransferOverwriteLeftOut guards a transfer with overwrite called again with its paths,

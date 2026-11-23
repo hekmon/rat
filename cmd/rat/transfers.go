@@ -347,12 +347,14 @@ func (t *transfers) request(tool string, arguments json.RawMessage) (transferReq
 }
 
 // join returns the job of q: the one of its paths doing what q asks, or a new one, which checks
-// the local file first (see run). A call joins the job of its paths whatever its overwrite, as
-// told to call again with the same paths, unless the call sets overwrite and the job does not:
-// refused while that job runs, which may refuse a file existing; joined once it wrote its file;
-// forgotten otherwise (refused, failed or canceled), the call starting the copy asked, rather than
-// told an outcome of another request as its own (a file existing, refused without overwrite, to a
-// call setting it). Another source to the same destination is refused while its job runs, and
+// the local file first (see run). A call joins the job of its paths whatever its overwrite and
+// in_place, as told to call again with the same paths, unless the call sets one the job does not:
+// refused while that job runs, which may refuse a file existing (without overwrite) or be refused
+// where writing in place would not (without in_place, its new file denied a place); joined once it
+// wrote its file; forgotten otherwise (refused, failed or canceled), the call starting the copy
+// asked, rather than told an outcome of another request as its own (a file existing, refused
+// without overwrite, to a call setting it; to set in_place, to a call setting it). Another source
+// to the same destination is refused while its job runs, and
 // once it ended, its outcome not told yet, told that outcome instead, the job forgotten: the next
 // call starts the transfer asked.
 func (t *transfers) join(q transferRequest) (*job, string) {
@@ -364,18 +366,27 @@ func (t *transfers) join(q transferRequest) (*job, string) {
 		// and ended for the second, forgotten untold and its copy started again.
 		ended := j.hasEnded()
 		joinLooked(j)
-		// its file written without overwrite: what a call setting it asks too
+		// its file written: what a call asking more asks too
 		wrote := ended && !j.isError && !j.canceled
+		// what the call sets that the job does not
+		var missing []string
+		if q.overwrite && !j.request.overwrite {
+			missing = append(missing, "overwrite")
+		}
+		if q.inPlace && !j.request.inPlace {
+			missing = append(missing, "in_place")
+		}
 		switch {
-		case sameSource && (!q.overwrite || j.request.overwrite || wrote):
+		case sameSource && (len(missing) == 0 || wrote):
 			return j, ""
 		case sameSource && ended:
 			// ended without writing its file (refused, failed or canceled): forgotten, the copy asked
 			// starting
 			delete(t.jobs, q.key())
 		case sameSource:
-			return nil, fmt.Sprintf("A transfer to %s from %s is under way without overwrite: wait for it, calling "+
-				"again without overwrite, or stop it with cancel.", q.destination(), q.source())
+			without := strings.Join(missing, " and ")
+			return nil, fmt.Sprintf("A transfer to %s from %s is under way without %s: wait for it, calling "+
+				"again without %s, or stop it with cancel.", q.destination(), q.source(), without, without)
 		case ended:
 			delete(t.jobs, q.key())
 			return nil, endedText(j) + fmt.Sprintf(" Nothing was copied from %s: call again to copy it.", q.source())
