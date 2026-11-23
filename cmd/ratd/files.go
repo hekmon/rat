@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/hekmon/rat/cmd/ratd/tools"
+	"github.com/hekmon/rat/connect"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -46,11 +47,27 @@ func relativeText(path string) string {
 		"the directories of your windows).", path)
 }
 
-// pathRefusal returns the text refusing path, which absolutePath refused with err.
+// errDirectoryPath refuses, as the path of a file to write, one naming a directory by its form
+// (see connect.NamesDirectory).
+var errDirectoryPath = errors.New("destination naming a directory")
+
+// destinationPath is absolutePath for the path of a file to write: one naming a directory by its
+// form is refused (errDirectoryPath) before it is cleaned into the name of a file.
+func destinationPath(path string) (string, error) {
+	if connect.NamesDirectory(path) {
+		return "", errDirectoryPath
+	}
+	return absolutePath(path)
+}
+
+// pathRefusal returns the text refusing path, which absolutePath or destinationPath refused with
+// err.
 func pathRefusal(path string, err error) string {
 	switch {
 	case errors.Is(err, errNULInPath):
 		return fmt.Sprintf("Path %q holds a NUL byte, which no file name can hold.", path)
+	case errors.Is(err, errDirectoryPath):
+		return fmt.Sprintf("Path %q names a directory: give the name of the file to write in it.", path)
 	case errors.Is(err, errRelativePath):
 		return relativeText(path)
 	default:
@@ -90,7 +107,7 @@ const fileTimeoutText = "The file system did not answer in time: %s may still be
 // file system answers.
 func (d *daemon) writeFile(ctx context.Context, in tools.WriteFileInput) result {
 	attrs := []any{"path", in.Path, "bytes", len(in.Content)}
-	path, err := absolutePath(in.Path)
+	path, err := destinationPath(in.Path)
 	if err != nil {
 		return result{outcome: failed, err: err, attrs: attrs, text: pathRefusal(in.Path, err)}
 	}

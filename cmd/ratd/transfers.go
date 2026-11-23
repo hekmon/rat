@@ -142,8 +142,9 @@ func transferStatus(err error) int {
 }
 
 // transferPath returns the path a transfer request names (connect.HeaderPath), absolute and clean,
-// or the refusal of a missing, undecodable or relative one.
-func transferPath(req *http.Request) (string, *result) {
+// or the refusal of a missing, undecodable or relative one, and, for the file an upload writes,
+// of one naming a directory by its form (see destinationPath).
+func transferPath(req *http.Request, way direction) (string, *result) {
 	value := req.Header.Get(connect.HeaderPath)
 	if value == "" {
 		return "", &result{outcome: failed, err: connect.ErrHeader,
@@ -153,7 +154,11 @@ func transferPath(req *http.Request) (string, *result) {
 	if err != nil {
 		return "", &result{outcome: failed, err: err, text: err.Error() + "."}
 	}
-	path, err := absolutePath(named)
+	resolve := absolutePath
+	if way == upload {
+		resolve = destinationPath
+	}
+	path, err := resolve(named)
 	if err != nil {
 		return "", &result{outcome: failed, err: err, text: pathRefusal(named, err)}
 	}
@@ -258,7 +263,7 @@ func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 				"Content-Type %q: files travel as %s.", declared, connect.OctetStream)})
 		}
 	}
-	path, refused := transferPath(req)
+	path, refused := transferPath(req, upload)
 	if refused != nil {
 		return refuse(w, http.StatusBadRequest, *refused)
 	}
@@ -483,7 +488,7 @@ var downloadOpened = func(string) {}
 // The file opened is checked again, as it may have been replaced meanwhile, opened without
 // blocking (a FIFO without a writer would block forever).
 func (d *daemon) download(w http.ResponseWriter, req *http.Request) result {
-	path, refused := transferPath(req)
+	path, refused := transferPath(req, download)
 	if refused != nil {
 		return refuse(w, http.StatusBadRequest, *refused)
 	}

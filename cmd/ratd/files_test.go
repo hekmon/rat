@@ -144,7 +144,8 @@ func TestPathRefusalNoHome(t *testing.T) {
 }
 
 // TestWriteFileRefused guards what write_file does not write, telling why: a relative path, a
-// path holding a NUL byte (no directory created for it), a name too long under a directory it
+// path holding a NUL byte (no directory created for it), a path naming a directory (a final
+// slash), a name too long under a directory it
 // created (which it names), a directory, a FIFO (without blocking on it), a device, a path under a
 // file, a denied permission naming the user, and a write failing midway, leaving the file partial
 // (here over the file size limit of the process, which Go makes a failed write rather than a
@@ -158,6 +159,12 @@ func TestWriteFileRefused(t *testing.T) {
 		"Path "+strconv.Quote(nul)+" holds a NUL byte, which no file name can hold.")
 	if _, err := os.Stat(filepath.Dir(nul)); err == nil {
 		t.Error("NUL in path: expected no directory created for it")
+	}
+	// a path naming a directory, which cleaning would make the name of a file
+	expectTool(t, session, "write_file", map[string]any{"path": "~/notes/", "content": "x"}, true,
+		`Path "~/notes/" names a directory: give the name of the file to write in it.`)
+	if _, err := os.Lstat(filepath.Join(home, "notes")); err == nil {
+		t.Error("naming a directory: expected no file written in its place")
 	}
 	// a name too long under a directory to create: the directory, left, named
 	tooLong := filepath.Join(home, "new", strings.Repeat("a", 300))

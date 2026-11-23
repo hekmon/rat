@@ -291,7 +291,8 @@ func (t *transfers) call(ctx context.Context, tool string, arguments json.RawMes
 
 // request reads the call of tool with arguments, or tells why it is refused. A path holding a NUL
 // byte, which no file name can hold, is refused here, before any request or directory created for
-// it, as ratd refuses one. Both paths are cleaned, the remote one lexically (see cleanRemote).
+// it, as ratd refuses one, and so is a destination naming a directory by its form
+// (connect.NamesDirectory). Both paths are cleaned, the remote one lexically (see cleanRemote).
 func (t *transfers) request(tool string, arguments json.RawMessage) (transferRequest, string) {
 	q := transferRequest{tool: tool}
 	var err error
@@ -316,6 +317,11 @@ func (t *transfers) request(tool string, arguments json.RawMessage) (transferReq
 	case !filepath.IsLocal(q.local):
 		return q, fmt.Sprintf("local_path %q is not within %s: give a path relative to it, without going up (..).",
 			q.local, t.dir)
+	// the destination naming a directory, which cleaning would turn into the name of a file
+	case !q.upload() && connect.NamesDirectory(filepath.ToSlash(q.local)):
+		return q, fmt.Sprintf("local_path %q names a directory: give the name of the file to write in it.", q.local)
+	case q.upload() && connect.NamesDirectory(q.remote):
+		return q, fmt.Sprintf("remote_path %q names a directory: give the name of the file to write in it.", q.remote)
 	}
 	q.local, q.remote = filepath.Clean(q.local), cleanRemote(q.remote)
 	return q, ""

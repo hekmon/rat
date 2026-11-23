@@ -6,6 +6,19 @@ import (
 	"testing"
 )
 
+// TestNamesDirectory guards the form of a destination naming a directory, which both sides
+// refuse: ending with a slash, or with . or .. as its last part, and not a name holding dots.
+func TestNamesDirectory(t *testing.T) {
+	for path, names := range map[string]bool{
+		"~/backups/": true, "/a/b/": true, "/": true, "/a/.": true, "/a/..": true, ".": true, "..": true,
+		"/a/b": false, "~/a.b": false, "/a/b..": false, "/a/..b": false, "~/.config": false,
+	} {
+		if got := NamesDirectory(path); got != names {
+			t.Errorf("%q: expected %v, got %v", path, names, got)
+		}
+	}
+}
+
 // TestErrorEncoding guards the sentence of a Rat-Error trailer: control characters and the
 // percent sign percent-encoded, which a header can not carry or would take for an escape, the rest
 // kept readable, UTF-8 and bytes that are not UTF-8 included; decoded back as it was; and a value

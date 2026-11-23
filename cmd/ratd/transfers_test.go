@@ -240,9 +240,10 @@ func TestUploadNameNotUTF8(t *testing.T) {
 // though its temporary file, named to fit, could take the bytes, even under a directory to
 // create, which it names, or of a directory to create, naming those created before it, a NUL
 // byte in the path, no directory created for it, and a link leading nowhere or looping where a
-// directory is to be created, mistakes of the client (409) rather than of ratd. The file
-// existing stays as it was, and no temporary file is left. The endpoints answer their method
-// only.
+// directory is to be created, mistakes of the client (409) rather than of ratd, and a path naming
+// a directory by its form (a final slash), rather than cleaned into a file written or replaced in
+// its place. The file existing stays as it was, and no temporary file is left. The endpoints answer
+// their method only.
 func TestUploadRefused(t *testing.T) {
 	r, client, home := transferRatd(t)
 	file := filepath.Join(home, "file")
@@ -334,6 +335,10 @@ func TestUploadRefused(t *testing.T) {
 			"Creating " + loop + " failed: too many levels of symbolic links."},
 		{"link looping", loop, true, nil, http.StatusConflict,
 			loop + " is a symbolic link to " + loop + ", a loop of links leading to no file."},
+		{"naming a directory missing", "~/backups/", false, nil, http.StatusBadRequest,
+			`Path "~/backups/" names a directory: give the name of the file to write in it.`},
+		{"naming as a directory a file", file + "/", true, nil, http.StatusBadRequest,
+			`Path "` + file + `/" names a directory: give the name of the file to write in it.`},
 	} {
 		// no permission is denied to root
 		if tc.status == http.StatusForbidden && os.Geteuid() == 0 {
@@ -353,6 +358,9 @@ func TestUploadRefused(t *testing.T) {
 	expectFile(t, file, "kept", 0o600)
 	if _, err := os.Stat(filepath.Dir(nul)); err == nil {
 		t.Error("NUL in path: expected no directory created for it")
+	}
+	if _, err := os.Lstat(filepath.Join(home, "backups")); err == nil {
+		t.Error("naming a directory: expected no file written in its place")
 	}
 	expectNoTemporary(t, home)
 

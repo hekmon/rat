@@ -487,7 +487,7 @@ func TestTransferModesNotTold(t *testing.T) {
 // TestUploadFileRefused guards what rat refuses of an upload, from the local side alone and before
 // any request: paths missing, a local path out of the transfers directory, a file missing, a
 // directory, a symbolic link, telling where it leads within the directory, or that it leads out of
-// it, and a NUL byte in either path.
+// it, a NUL byte in either path, and a remote path naming a directory (a final slash).
 func TestUploadFileRefused(t *testing.T) {
 	tt := startTransfers(t)
 	randomFile(t, filepath.Join(tt.local, "sub", "app.bin"), 10, 0o644)
@@ -514,6 +514,8 @@ func TestUploadFileRefused(t *testing.T) {
 	}
 	tt.expect(t, uploadTool, map[string]any{"local_path": "sub/app.bin", "remote_path": remote + "\x00b"}, true,
 		"remote_path "+strconv.Quote(remote+"\x00b")+" holds a NUL byte, which no file name can hold.")
+	tt.expect(t, uploadTool, map[string]any{"local_path": "sub/app.bin", "remote_path": tt.remote + "/backups/"}, true,
+		"remote_path "+strconv.Quote(tt.remote+"/backups/")+" names a directory: give the name of the file to write in it.")
 	if requests := tt.fake.count(); requests != 0 {
 		t.Errorf("expected no request to ratd, got %d", requests)
 	}
@@ -675,9 +677,9 @@ func TestUploadFileCut(t *testing.T) {
 
 // TestDownloadFile guards downloads: a remote file copied whole into the transfers directory,
 // binary included, created with its mode minus the umask, the directories created named; an
-// existing file refused without overwrite before any request, as a path under a file; replaced
-// with it, keeping its own mode, told when not the one of the remote file; and no temporary file
-// left.
+// existing file refused without overwrite before any request, as a path under a file or naming a
+// directory; replaced with it, keeping its own mode, told when not the one of the remote file;
+// and no temporary file left.
 func TestDownloadFile(t *testing.T) {
 	tt := startTransfers(t)
 	remote := filepath.Join(tt.remote, "app.bin")
@@ -698,6 +700,13 @@ func TestDownloadFile(t *testing.T) {
 		"Writing new/dir/app.bin/x.bin failed: not a directory.")
 	if tt.fake.count() != requests {
 		t.Error("expected a path under a file refused before any request")
+	}
+	// a local path naming a directory, which cleaning would make the name of a file: refused before
+	// any request
+	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": "logs/"}, true,
+		`local_path "logs/" names a directory: give the name of the file to write in it.`)
+	if _, err := os.Lstat(filepath.Join(tt.local, "logs")); err == nil || tt.fake.count() != requests {
+		t.Error("expected a local path naming a directory refused before any request, no file written")
 	}
 	// a NUL byte under a directory missing, where a look tells the file missing: refused before any
 	// request, and before the directory is created for it

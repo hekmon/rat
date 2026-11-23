@@ -185,6 +185,16 @@ func DecodePath(value string) (string, error) {
 	return path, nil
 }
 
+// NamesDirectory tells whether path, a destination, names a directory by its form: ending with a
+// slash, or with . or .. as its last part, which cleaning it would turn into the name of a file,
+// written (or, with overwrite, replaced) where the agent meant a directory, as cp copies into
+// ~/backups/. Both sides refuse such a destination, a source being cleaned as given. Its separator
+// is a slash: a local path goes through filepath.ToSlash first.
+func NamesDirectory(path string) bool {
+	return strings.HasSuffix(path, "/") || path == "." || path == ".." || strings.HasSuffix(path, "/.") ||
+		strings.HasSuffix(path, "/..")
+}
+
 // EncodeError returns text as [HeaderError] carries it: percent-encoded where a header can carry
 // nothing as is, control characters (a file name may hold an escape, a new line) and the percent
 // sign, the rest kept as is, readable with curl. Sent as is, a control character makes Go's client
