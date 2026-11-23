@@ -1039,47 +1039,102 @@ func TestTransferRemoteSpellings(t *testing.T) {
 }
 
 // TestTransferEndedOverwrite guards a transfer without overwrite met by a call setting it: refused
-// while the transfer runs (its local check held past the wait of its call), naming its overwrite,
-// rather than joined; once it ended refused (its file existing), its outcome not told yet, told how
-// it ended, then forgotten, the next call replacing the file, rather than told to set the
-// overwrite it set.
+// while the transfer runs (its local check held past the wait of its call), as it may refuse a file
+// existing, rather than joined; once it ended refused (its file existing) or canceled, its outcome
+// not told yet, forgotten, the call copying the file, rather than told, as the outcome of another
+// request, to set the overwrite it set, or that the copy was canceled; once it ended creating its
+// file, joined, told how it ended, once, rather than the file copied again.
 func TestTransferEndedOverwrite(t *testing.T) {
 	shortWait(t, 300*time.Millisecond)
 	held := make(chan struct{})
 	release := sync.OnceFunc(func() { close(held) })
 	// set before rat starts, and restored once it stopped (cleanups run in reverse order)
-	hook := preparing
+	hookPreparing, hookDownloaded := preparing, downloaded
 	preparing = func(q transferRequest) {
 		if !q.overwrite {
 			<-held
 		}
 	}
-	t.Cleanup(func() { preparing = hook })
+	// the transfer to canceled.bin canceled once its file came whole, long after its call
+	downloaded = func(j *job) {
+		if j.request.local == "canceled.bin" && !j.request.overwrite {
+			j.askCancel()
+		}
+	}
+	t.Cleanup(func() { preparing, downloaded = hookPreparing, hookDownloaded })
 	tt := startTransfers(t)
 	// released before rat stops, which waits for its transfers
 	t.Cleanup(release)
 	remote := filepath.Join(tt.remote, "app.bin")
 	randomFile(t, remote, 1<<10, 0o644)
 	randomFile(t, filepath.Join(tt.local, "x.bin"), 10, 0o644)
-	without := map[string]any{"remote_path": remote, "local_path": "x.bin"}
+	// x.bin exists, which a transfer without overwrite refuses; new.bin does not, which it creates;
+	// neither does canceled.bin, which it does not
+	for _, local := range []string{"x.bin", "new.bin", "canceled.bin"} {
+		tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": local}, false,
+			"Still copying "+remote+" to "+local+": 0 B")
+	}
 	with := map[string]any{"remote_path": remote, "local_path": "x.bin", "overwrite": true}
-	tt.expect(t, downloadTool, without, false, "Still copying "+remote+" to x.bin: 0 B")
-	tt.expect(t, downloadTool, with, true, "A transfer to x.bin from "+remote+" is under way with overwrite false: "+
-		"wait for it with its paths and that overwrite, or stop it with cancel.")
+	newWith := map[string]any{"remote_path": remote, "local_path": "new.bin", "overwrite": true}
+	tt.expect(t, downloadTool, with, true, "A transfer to x.bin from "+remote+" is under way without overwrite: "+
+		"wait for it, calling again without overwrite, or stop it with cancel.")
 	release()
-	// asked until the refused job ended: told how, rather than joined as its own
+	// asked until the job of its paths ended, refused as under way until then
+	untilEnded := func(call map[string]any) string {
+		t.Helper()
+		var text string
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+			if text, _ = tt.call(t, downloadTool, call); !strings.Contains(text, "is under way") {
+				break
+			}
+		}
+		return text
+	}
+	if text := untilEnded(with); !strings.HasPrefix(text, "Downloaded "+remote+" to x.bin (1 KiB): replaced.") {
+		t.Errorf("expected the refused transfer forgotten, the file replaced, got %q", text)
+	}
+	canceledWith := map[string]any{"remote_path": remote, "local_path": "canceled.bin", "overwrite": true}
+	if text := untilEnded(canceledWith); !strings.HasPrefix(text, "Downloaded "+remote+" to canceled.bin (1 KiB): "+
+		"created.") {
+		t.Errorf("expected the canceled transfer forgotten, the file created, got %q", text)
+	}
+	if text := untilEnded(newWith); !strings.HasPrefix(text, "Downloaded "+remote+" to new.bin (1 KiB): created. "+
+		"It ended ") {
+		t.Errorf("expected the transfer creating the file told, got %q", text)
+	}
+	tt.expect(t, downloadTool, newWith, false, "Downloaded "+remote+" to new.bin (1 KiB): replaced.")
+}
+
+// TestTransferOverwriteLeftOut guards a transfer with overwrite called again with its paths,
+// overwrite left out, as its progress tells to call again with the same paths: joined while it
+// runs, its progress told, and once it ended, told how, rather than refused, or told to copy again.
+func TestTransferOverwriteLeftOut(t *testing.T) {
+	shortWait(t, 300*time.Millisecond)
+	tt := startTransfers(t)
+	stall := make(chan struct{})
+	release := sync.OnceFunc(func() { close(stall) })
+	t.Cleanup(release)
+	tt.fake.set(func(f *fakeTransfers) { f.stall = stall })
+	remote := filepath.Join(tt.remote, "big.bin")
+	randomFile(t, remote, 1<<20, 0o644)
+	samePaths := map[string]any{"remote_path": remote, "local_path": "big.bin"}
+	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": "big.bin", "overwrite": true}, false,
+		"Still copying "+remote+" to big.bin: ")
+	tt.expect(t, downloadTool, samePaths, false, "Still copying "+remote+" to big.bin: ")
+	release()
 	var text string
+	var isError bool
 	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
-		if text, _ = tt.call(t, downloadTool, with); !strings.Contains(text, "is under way") {
+		if text, isError = tt.call(t, downloadTool, samePaths); !strings.HasPrefix(text, "Still copying") {
 			break
 		}
 	}
-	if !strings.HasPrefix(text, "The transfer to x.bin from "+remote+" ended ") ||
-		!strings.HasSuffix(text, ": x.bin exists: set overwrite to replace it. Nothing was copied with overwrite true: "+
-			"call again to copy it.") {
-		t.Errorf("expected the refused transfer told ended, got %q", text)
+	if isError || !strings.HasPrefix(text, "Downloaded "+remote+" to big.bin (1 MiB): created.") {
+		t.Errorf("expected the transfer told ended, got %v: %q", isError, text)
 	}
-	tt.expect(t, downloadTool, with, false, "Downloaded "+remote+" to x.bin (1 KiB): replaced.")
+	if n := tt.fake.count(); n != 1 {
+		t.Errorf("expected one transfer, %d requests made", n)
+	}
 }
 
 // TestTransferCancelDuringPrepare guards a cancel coming as a transfer checks its local side, which

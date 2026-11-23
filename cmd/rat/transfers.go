@@ -333,33 +333,39 @@ func (t *transfers) request(tool string, arguments json.RawMessage) (transferReq
 	return q, ""
 }
 
-// join returns the job of q: the one under way for its destination, of the same request (its
-// source and overwrite), or a new one, which checks the local file first (see run). Refused:
-// another source to the same destination, or the same one with another overwrite, while it runs.
-// One that ended, its outcome not told yet, is told instead, and forgotten: the next call starts
-// the transfer asked, rather than told the outcome of another request as its own (a file existing,
-// refused without overwrite, to a call setting it).
+// join returns the job of q: the one of its paths doing what q asks, or a new one, which checks
+// the local file first (see run). A call joins the job of its paths whatever its overwrite, as
+// told to call again with the same paths, unless the call sets overwrite and the job does not:
+// refused while that job runs, which may refuse a file existing; joined once it wrote its file;
+// forgotten otherwise (refused, failed or canceled), the call starting the copy asked, rather than
+// told an outcome of another request as its own (a file existing, refused without overwrite, to a
+// call setting it). Another source to the same destination is refused while its job runs, and
+// once it ended, its outcome not told yet, told that outcome instead, the job forgotten: the next
+// call starts the transfer asked.
 func (t *transfers) join(q transferRequest) (*job, string) {
 	t.jobsMu.Lock()
 	defer t.jobsMu.Unlock()
 	if j := t.jobs[q.key()]; j != nil {
 		sameSource := j.request.source() == q.source()
+		// its file written without overwrite: what a call setting it asks too
+		wrote := j.hasEnded() && !j.isError && !j.canceled
 		switch {
-		case sameSource && j.request.overwrite == q.overwrite:
+		case sameSource && (!q.overwrite || j.request.overwrite || wrote):
 			return j, ""
-		case j.hasEnded() && sameSource:
+		case sameSource && j.hasEnded():
+			// ended without writing its file (refused, failed or canceled): forgotten, the copy asked
+			// starting
 			delete(t.jobs, q.key())
-			return nil, endedText(j) + fmt.Sprintf(" Nothing was copied with overwrite %v: call again to copy it.",
-				q.overwrite)
+		case sameSource:
+			return nil, fmt.Sprintf("A transfer to %s from %s is under way without overwrite: wait for it, calling "+
+				"again without overwrite, or stop it with cancel.", q.destination(), q.source())
 		case j.hasEnded():
 			delete(t.jobs, q.key())
 			return nil, endedText(j) + fmt.Sprintf(" Nothing was copied from %s: call again to copy it.", q.source())
-		case sameSource:
-			return nil, fmt.Sprintf("A transfer to %s from %s is under way with overwrite %v: wait for it with its "+
-				"paths and that overwrite, or stop it with cancel.", q.destination(), q.source(), j.request.overwrite)
+		default:
+			return nil, fmt.Sprintf("A transfer to %s from %s is under way: wait for it with its paths, or stop it "+
+				"with cancel.", q.destination(), j.request.source())
 		}
-		return nil, fmt.Sprintf("A transfer to %s from %s is under way: wait for it with its paths, or stop it with "+
-			"cancel.", q.destination(), j.request.source())
 	}
 	ctx, cancel := context.WithCancel(t.ctx)
 	j := &job{request: q, started: time.Now(), cancel: cancel, done: make(chan struct{})}

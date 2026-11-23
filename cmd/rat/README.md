@@ -137,11 +137,13 @@ seconds: it runs in rat, as a job kept in memory. A call waits for it 50 seconds
 size, the rate over the last 30 seconds, a rounded time left, or that nothing moved), for the
 agent to wait its own way (a `sleep` in its shell) or to do something else. A job is identified
 by its destination, which one transfer at a time writes, and found by its paths, as terminals are
-by name: the same call again waits for the rest, or tells how it ended, once; another source to
-the same destination, or the same one with another overwrite, is refused while it runs, and once
-it ended, its outcome not told yet, the call tells that outcome, as a cancel naming another
-source does, and forgets the job: the next call starts the transfer asked, the agent knowing what
-the first one wrote (after a context compaction, for one). Paths are cleaned as a call is read,
+by name: a call with the same paths waits for the rest, or tells how it ended, once, whatever its
+overwrite, but for a call setting it to a transfer without it, which may refuse a file existing:
+refused while that transfer runs, told how it ended if it wrote its file, starting the copy asked
+otherwise. Another source to the same destination is refused while it runs, and once it ended, its
+outcome not told yet, the call tells that outcome, as a cancel naming another source does, and
+forgets the job: the next call starts the transfer asked, the agent knowing what the first one
+wrote (after a context compaction, for one). Paths are cleaned as a call is read,
 the remote one lexically (`path.Clean`, `~/` kept): its spellings with a doubled slash, a dot or
 a parent make one job, but `~/x` and the absolute path it stands for stay two, as do two paths
 through a link of ratd's machine, which rat can not resolve. Canceling a call (the harness giving
