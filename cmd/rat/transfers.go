@@ -284,10 +284,10 @@ func (t *transfers) call(ctx context.Context, tool string, arguments json.RawMes
 	if refused != "" {
 		return refused, true
 	}
-	if q.cancel {
-		return t.cancel(ctx, q)
-	}
 	called := time.Now()
+	if q.cancel {
+		return t.cancel(ctx, q, called)
+	}
 	j, refused := t.join(q)
 	if refused != "" {
 		return refused, true
@@ -503,11 +503,17 @@ func (t *transfers) await(ctx context.Context, j *job, called time.Time) (string
 		return "", false
 	}
 	t.forget(j)
-	text := j.text
-	if j.ended.Before(called) {
-		text += fmt.Sprintf(" It ended %s ago.", agoText(time.Since(j.ended)))
+	return j.text + endedAgo(j, called), j.isError
+}
+
+// endedAgo tells how long ago j ended, for a call made at called, if it ended before the call: the
+// call found it ended rather than saw it end, which an agent coming back to it later (a sleep in
+// its shell, a context compaction) would take for a transfer just ended.
+func endedAgo(j *job, called time.Time) string {
+	if !j.ended.Before(called) {
+		return ""
 	}
-	return text, j.isError
+	return fmt.Sprintf(" It ended %s ago.", agoText(time.Since(j.ended)))
 }
 
 // endedText tells how j ended, for a call to its destination from another source, which found it
@@ -526,9 +532,10 @@ func (t *transfers) forget(j *job) {
 	}
 }
 
-// cancel stops the transfer of the paths of q, and tells how it ended: canceled, the destination
-// left as it was, or ended before the cancel could stop it.
-func (t *transfers) cancel(ctx context.Context, q transferRequest) (string, bool) {
+// cancel stops the transfer of the paths of q, for a call made at called, and tells how it ended:
+// canceled, the destination left as it was, or ended before the cancel could stop it, how long ago
+// if before the call (see endedAgo).
+func (t *transfers) cancel(ctx context.Context, q transferRequest, called time.Time) (string, bool) {
 	t.jobsMu.Lock()
 	j := t.jobs[q.key()]
 	t.jobsMu.Unlock()
@@ -559,17 +566,18 @@ func (t *transfers) cancel(ctx context.Context, q transferRequest) (string, bool
 		return "", false
 	}
 	t.forget(j)
+	ago := endedAgo(j, called)
 	switch {
 	case j.canceled, j.refused:
 		// stopped, or refused by its local side before any request: nothing ran for the cancel to
 		// come too late for
-		return j.text, j.isError
+		return j.text + ago, j.isError
 	case j.isError:
 		// a failure, or an answer lost: told first, rather than behind "too late to cancel", which
 		// reads as a copy done
-		return j.text + " The cancel came too late to stop it.", true
+		return j.text + " The cancel came too late to stop it." + ago, true
 	default:
-		return "Too late to cancel: " + j.text, false
+		return "Too late to cancel: " + j.text + ago, false
 	}
 }
 
@@ -996,8 +1004,9 @@ func (t *transfers) place(tmp, local string, overwrite bool) (replaced bool, kep
 	return false, 0, fmt.Sprintf("%s exists: set overwrite to replace it.", local), nil
 }
 
-// progressText tells the progress of j, still under way after a wait during which before bytes had
-// moved: the bytes moved of the size, the rate and the time left, or that nothing moved.
+// progressText tells the progress of j, still under way after a wait, before being the bytes it had
+// moved as the wait began: the bytes moved of the size, the rate and the time left, or that nothing
+// moved during the wait.
 func (t *transfers) progressText(j *job, before int64) string {
 	moved, size := j.moved.Load(), j.size.Load()
 	// An upload read whole is not told sent whole, a cancel too late: connect decides that as it

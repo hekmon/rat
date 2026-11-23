@@ -1308,12 +1308,42 @@ func TestTransferCanceledCallKeepsJob(t *testing.T) {
 			if way == "waiting" {
 				text, _ = tr.await(ctx, j, time.Now())
 			} else {
-				text, _ = tr.cancel(ctx, q)
+				text, _ = tr.cancel(ctx, q, time.Now())
 			}
 			if text != "" || tr.jobs[q.key()] != j {
 				t.Fatalf("%s, the call canceled as its job ended: expected nothing told and the job kept, got %q, "+
 					"kept %v", way, text, tr.jobs[q.key()] == j)
 			}
+		}
+	}
+}
+
+// TestTransferCancelEnded guards a cancel of a transfer that ended before the call, its outcome not
+// told yet: told how it ended, too late or before any request, with how long ago, as a call waiting
+// for it tells, rather than as a transfer the cancel just missed.
+func TestTransferCancelEnded(t *testing.T) {
+	q := transferRequest{tool: uploadTool, local: "up.bin", remote: "/r/up.bin"}
+	for _, ended := range []struct {
+		text             string
+		isError, refused bool
+		told             string
+	}{
+		{"Uploaded up.bin to /r/up.bin (1 KiB): created.", false, false,
+			"Too late to cancel: Uploaded up.bin to /r/up.bin (1 KiB): created. It ended 2 minutes ago."},
+		{"The connection to ratd was lost.", true, false,
+			"The connection to ratd was lost. The cancel came too late to stop it. It ended 2 minutes ago."},
+		{"Reading up.bin failed: permission denied.", true, true,
+			"Reading up.bin failed: permission denied. It ended 2 minutes ago."},
+	} {
+		j := &job{request: q, cancel: func() {}, done: make(chan struct{}), text: ended.text, isError: ended.isError,
+			refused: ended.refused, ended: time.Now().Add(-2*time.Minute - time.Second)}
+		close(j.done)
+		tr := &transfers{jobs: map[string]*job{q.key(): j}}
+		canceling := q
+		canceling.cancel = true
+		if text, isError := tr.cancel(context.Background(), canceling, time.Now()); text != ended.told ||
+			isError != ended.isError {
+			t.Errorf("expected %v: %q, got %v: %q", ended.isError, ended.told, isError, text)
 		}
 	}
 }

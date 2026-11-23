@@ -334,7 +334,8 @@ func TestUploadRefused(t *testing.T) {
 		{"under a link loop", loop + "/x.bin", false, nil, http.StatusConflict,
 			"Creating " + loop + " failed: too many levels of symbolic links."},
 		{"link looping", loop, true, nil, http.StatusConflict,
-			loop + " is a symbolic link to " + loop + ", a loop of links leading to no file."},
+			loop + " is a symbolic link to " + loop + ", a loop of links leading to no file: remove the link in a " +
+				"terminal, then upload again."},
 		{"naming a directory missing", "~/backups/", false, nil, http.StatusBadRequest,
 			`Path "~/backups/" names a directory: give the name of the file to write in it.`},
 		{"naming as a directory a file", file + "/", true, nil, http.StatusBadRequest,
