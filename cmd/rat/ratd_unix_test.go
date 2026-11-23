@@ -9,9 +9,11 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -29,17 +31,48 @@ import (
 // of go test ./...: a run testing less without saying so would pass for one that tested, and
 // -skip RealRatd is the explicit choice to.
 
-// buildRatd builds ratd from this tree, and returns the path of its binary. A test that can not
-// build it (no go command) fails, as one lacking tmux does: a run that tested nothing would pass
-// for one that tested.
+// ratdBuilt is ratd built from this tree, once for the tests of the package (see buildRatd), in a
+// directory TestMain removes once they ran: a build for each test would load the machine for the
+// tests of tmux running alongside, and macOS assesses each new binary on its first run.
+var ratdBuilt struct {
+	once   sync.Once
+	dir    string
+	binary string
+	err    error
+}
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if ratdBuilt.dir != "" {
+		_ = os.RemoveAll(ratdBuilt.dir)
+	}
+	os.Exit(code)
+}
+
+// buildRatd builds ratd from this tree the first time a test asks for it, and returns the path of
+// its binary. A test that can not have it built (no go command) fails, as one lacking tmux does: a
+// run that tested nothing would pass for one that tested.
 func buildRatd(t *testing.T) string {
 	t.Helper()
-	binary := filepath.Join(t.TempDir(), "ratd")
-	out, err := exec.Command("go", "build", "-o", binary, "github.com/hekmon/rat/cmd/ratd").CombinedOutput()
-	if err != nil {
-		t.Fatalf("building ratd: %v\n%s", err, out)
+	ratdBuilt.once.Do(func() {
+		dir, err := os.MkdirTemp("", "rat-test-ratd-")
+		if err != nil {
+			ratdBuilt.err = err
+			return
+		}
+		ratdBuilt.dir = dir
+		binary := filepath.Join(dir, "ratd")
+		out, err := exec.Command("go", "build", "-o", binary, "github.com/hekmon/rat/cmd/ratd").CombinedOutput()
+		if err != nil {
+			ratdBuilt.err = fmt.Errorf("%w\n%s", err, out)
+			return
+		}
+		ratdBuilt.binary = binary
+	})
+	if ratdBuilt.err != nil {
+		t.Fatalf("building ratd: %v", ratdBuilt.err)
 	}
-	return binary
+	return ratdBuilt.binary
 }
 
 // servingLine is the line ratd logs once it serves, telling the address it listens on.
@@ -135,6 +168,109 @@ func TestRealRatdRoundTrip(t *testing.T) {
 	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": "back.bin"}, false,
 		"Downloaded "+remote+" to back.bin (300 KiB): created.")
 	expectContent(t, filepath.Join(tt.local, "back.bin"), content, 0o750&^umask())
+}
+
+// TestRealRatdPaths guards what ratd does by itself with the remote path of a transfer: the missing
+// directories of an upload created and named, which rat adds to its text, and ~/ taken as the home
+// of ratd, both ways.
+func TestRealRatdPaths(t *testing.T) {
+	tt := startRatdTransfers(t, "test-rat-paths")
+	content := randomFile(t, filepath.Join(tt.local, "app.bin"), 300<<10, 0o644)
+	deep := filepath.Join(tt.remote, "new", "dir", "app.bin")
+	tt.expect(t, uploadTool, map[string]any{"local_path": "app.bin", "remote_path": deep}, false,
+		"Uploaded app.bin to "+deep+" (300 KiB): created. Missing directories created: "+
+			filepath.Join(tt.remote, "new")+", "+filepath.Join(tt.remote, "new", "dir")+". Check the path if you "+
+			"did not mean them.")
+	expectContent(t, deep, content, 0o644&^umask())
+	tt.expect(t, uploadTool, map[string]any{"local_path": "app.bin", "remote_path": "~/files/home.bin"}, false,
+		"Uploaded app.bin to ~/files/home.bin (300 KiB): created.")
+	expectContent(t, filepath.Join(tt.remote, "home.bin"), content, 0o644&^umask())
+	tt.expect(t, downloadTool, map[string]any{"remote_path": "~/files/home.bin", "local_path": "back.bin"}, false,
+		"Downloaded ~/files/home.bin to back.bin (300 KiB): created.")
+	expectContent(t, filepath.Join(tt.local, "back.bin"), content, 0o644&^umask())
+}
+
+// TestRealRatdRefusals guards the refusals of ratd itself, relayed by rat in ratd's words: what a
+// transfer does not write nor read (a symbolic link, a directory, a FIFO), a path under a file, a
+// relative path; and what ratd's user may not do: read a file of no permission, or replace a file
+// whose directory refuses a new one, rat told to set in_place, which then writes it. Nothing is
+// written.
+func TestRealRatdRefusals(t *testing.T) {
+	tt := startRatdTransfers(t, "test-rat-refusals")
+	content := randomFile(t, filepath.Join(tt.local, "app.bin"), 64<<10, 0o644)
+	file := filepath.Join(tt.remote, "app.bin")
+	randomFile(t, file, 64<<10, 0o644)
+	link := filepath.Join(tt.remote, "link")
+	if err := os.Symlink(file, link); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(tt.remote, "dir")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(tt.remote, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linkText := link + " is a symbolic link to " + file + ", which transfers do not follow: use that path instead."
+	fifoText := fifo + " is not a regular file (a FIFO): transfers only copy regular files."
+	relativeText := `Path "app.bin" is relative: give an absolute path, or one starting with ~/ (list_windows shows ` +
+		"the directories of your windows)."
+	for _, tc := range []struct {
+		what, tool, remote, text string
+	}{
+		{"upload to a symbolic link", uploadTool, link, linkText},
+		{"download of a symbolic link", downloadTool, link, linkText},
+		{"upload to a directory", uploadTool, dir, dir + " is a directory, not a file."},
+		{"download of a directory", downloadTool, dir,
+			dir + " is a directory, not a file: transfers copy one file, archive it first (tar)."},
+		{"upload to a FIFO", uploadTool, fifo, fifoText},
+		{"download of a FIFO", downloadTool, fifo, fifoText},
+		{"upload under a file", uploadTool, filepath.Join(file, "a", "x.bin"),
+			file + " is not a directory: " + filepath.Join(file, "a") + " can not be created in it."},
+		{"upload to a relative path", uploadTool, "app.bin", relativeText},
+		{"download of a relative path", downloadTool, "app.bin", relativeText},
+	} {
+		args := map[string]any{"local_path": "down.bin", "remote_path": tc.remote}
+		if tc.tool == uploadTool {
+			args = map[string]any{"local_path": "app.bin", "remote_path": tc.remote, "overwrite": true}
+		}
+		if text, isError := tt.call(t, tc.tool, args); !isError || text != tc.text {
+			t.Errorf("%s: expected the refusal %q, got %v: %q", tc.what, tc.text, isError, text)
+		}
+	}
+	// root reads and writes anything
+	if os.Geteuid() != 0 {
+		me, err := user.Current()
+		if err != nil {
+			t.Fatal(err)
+		}
+		secret := filepath.Join(tt.remote, "secret.bin")
+		randomFile(t, secret, 1<<10, 0)
+		tt.expect(t, downloadTool, map[string]any{"remote_path": secret, "local_path": "down.bin"}, true,
+			"Permission denied: "+secret+" can not be read by "+me.Username+", the user the terminals run as.")
+		locked := filepath.Join(tt.remote, "locked")
+		if err := os.Mkdir(locked, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		conf := filepath.Join(locked, "app.yml")
+		randomFile(t, conf, 1<<10, 0o644)
+		if err := os.Chmod(locked, 0o555); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+		args := map[string]any{"local_path": "app.bin", "remote_path": conf, "overwrite": true}
+		tt.expect(t, uploadTool, args, true, "Permission denied: an upload puts a new file in place of "+conf+
+			", which "+locked+" refuses to "+me.Username+", the user the terminals run as: set in_place to write "+
+			"into "+conf+" itself, which a copy cut or canceled leaves partly written.")
+		args["in_place"] = true
+		tt.expect(t, uploadTool, args, false, "Uploaded app.bin to "+conf+" (64 KiB): replaced.")
+		expectContent(t, conf, content, 0o644)
+	}
+	if _, err := os.Lstat(filepath.Join(tt.local, "down.bin")); err == nil {
+		t.Error("expected no file downloaded")
+	}
+	expectNoTemporary(t, tt.remote)
 }
 
 // answersOf runs through tt the calls whose answers the tests of the fake go through, on their way

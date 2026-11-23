@@ -219,6 +219,12 @@ Comments rot quietly, tests break loudly. When a decision can be checked, write 
 - CI (`.github/workflows/tests.yml`) runs them with the tmux of several systems, from the oldest
   supported to the newest Fedora packages, and on macOS, at each push and once a week: what rat
   relies on changes from one version of tmux to the next, without a commit here.
+- rat's transfers are tested against ratd itself, built from this tree and run as a process, for
+  what ratd does by itself, successes and refusals; against a fake ratd for what a test must
+  provoke (a cut, a stall, a lost answer), whose answers on the way are compared with ratd's (see
+  `cmd/rat/ratd_unix_test.go`). They need the go command too, which the containers of CI lack: CI
+  runs them on Ubuntu and macOS. No build tag keeps them out of `go test ./...`: `-skip RealRatd`
+  is the explicit choice to test less.
 - rat and rat-tool are released for Windows too, where no test runs: their packages build there
   all the same, tests included, CI vetting them for Windows.
 
