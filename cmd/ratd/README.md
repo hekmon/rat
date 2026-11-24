@@ -742,9 +742,12 @@ as it was.
   client shows, a reply lost, an error told at close: nothing specific is promised.
 - **L6. The change check.** It misses a rewrite keeping the size within a tick of the clock, writes
   through a memory mapping and, on Windows, what the modification time does not show.
-- **L7. Files without a true size** (`/proc`, `/sys`) are refused.
+- **L7. Files without a true size** (`/proc`, `/sys`) are refused by ratd, as the source of a
+  download. rat does not look for them in its transfers directory, not meant to hold any.
 - **L8. Other writers.** For a file another program writes or swaps during a transfer, G5 holds,
-  and nothing else. G7 covers the writes of one ratd only.
+  and nothing else. G7 covers the writes of one ratd only. On rat's side, which can not open a file
+  without following (`os.Root`), a link put at the path between the look and the open is followed
+  when it leads to the very file looked at.
 - **L9. Early refusals.** An existing file without `overwrite`, a link, what is not a regular file
   and a path ratd can not read are refused before any byte is sent. Any other refusal comes when
   the system gives it.
