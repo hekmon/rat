@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -262,7 +263,7 @@ func TestWriteFileTimeout(t *testing.T) {
 	// The call returns without waiting for the goroutine writing the file, which reads fileWriter
 	// on its own: restoring the hook is ordered after that read by called, or it races.
 	stuck, called := make(chan struct{}), make(chan struct{})
-	fileWriter = func(*daemon, string, string) result {
+	fileWriter = func(*daemon, context.Context, string, string) result {
 		close(called)
 		<-stuck
 		return result{}
@@ -274,8 +275,8 @@ func TestWriteFileTimeout(t *testing.T) {
 	})
 	path := filepath.Join(home, "x")
 	expectTool(t, session, "write_file", map[string]any{"path": "~/x", "content": "x"}, true,
-		"The file system did not answer in time: "+path+" may still be written, partially or not. Check it before "+
-			"writing again.")
+		"Writing "+path+" did not end in time: the file system does not answer, or another write into the file "+
+			"through ratd is still under way. It may be written, partially or not: check it before writing again.")
 	if !strings.Contains(logs.String(), "level=WARN msg=tool session=alice remote="+toolsRemote+" tool=write_file outcome=error") {
 		t.Errorf("expected a warning:\n%s", logs)
 	}
@@ -297,12 +298,12 @@ func TestWriteFileWaitsForWriteEnding(t *testing.T) {
 		t.Fatal(err)
 	}
 	// the write still going on, holding the lock of the file
-	release, err := d.inPlace.lock(path, info, nil)
+	release, err := d.inPlace.lock(context.Background(), path, info, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	written := make(chan result, 1)
-	go func() { written <- d.writeFileNow(path, "new") }()
+	go func() { written <- d.writeFileNow(context.Background(), path, "new") }()
 	expectWaiting(t, waiting, path)
 	// an answer coming now is kept for the end: the late bytes below then tear the file
 	var r result
@@ -335,4 +336,94 @@ func TestWriteFileWaitsForWriteEnding(t *testing.T) {
 	if n := len(d.inPlace.files); n != 0 {
 		t.Errorf("expected no lock left once the writes ended, got %d", n)
 	}
+}
+
+// lockedFile writes content to a new file and holds its lock, as a write in place under way does,
+// until the release returned is called.
+func lockedFile(t *testing.T, d *daemon, content string) (path string, release func()) {
+	t.Helper()
+	path = filepath.Join(t.TempDir(), "app.conf")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err = d.inPlace.lock(context.Background(), path, info, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path, release
+}
+
+// TestWriteFileWaitEndsWithCall guards write_file waiting for a write in place into its file
+// lasting past the end of its call (an upload of minutes): the call answers the timeout text,
+// naming the write under way as a possible cause, and its write gives up with it, rather than
+// coming once the other ends, replacing what that one left long after the agent was answered. The
+// lock of the file is dropped once both ended.
+func TestWriteFileWaitEndsWithCall(t *testing.T) {
+	waiting := waitingLocks(t)
+	d := &daemon{user: "u"}
+	path, release := lockedFile(t, d, "left by the upload")
+	// the result of the goroutine writing the file, which outlives the call: waited for below
+	writer := fileWriter
+	done := make(chan result, 1)
+	fileWriter = func(d *daemon, ctx context.Context, path, content string) result {
+		r := writer(d, ctx, path, content)
+		done <- r
+		return r
+	}
+	t.Cleanup(func() { fileWriter = writer })
+	ctx, cancel := context.WithCancel(context.Background())
+	answered := make(chan result, 1)
+	go func() { answered <- d.writeFile(ctx, tools.WriteFileInput{Path: path, Content: "new"}) }()
+	expectWaiting(t, waiting, path)
+	cancel()
+	timeoutText := "Writing " + path + " did not end in time: the file system does not answer, or another " +
+		"write into the file through ratd is still under way. It may be written, partially or not: check it " +
+		"before writing again."
+	if r := <-answered; r.outcome != failed || r.level != slog.LevelWarn || r.text != timeoutText {
+		t.Errorf("expected the timeout text as a warning, got %v (level %v): %s", r.outcome, r.level, r.text)
+	}
+	// Released before the write gave up, the lock would let it write: its end is waited for first,
+	// bounded for a write still waiting to fail the test rather than hang it.
+	select {
+	case r := <-done:
+		if r.text != timeoutText || !errors.Is(r.err, context.Canceled) {
+			t.Errorf("expected the write ending with the timeout text, got %v: %s", r.err, r.text)
+		}
+		release()
+	case <-time.After(5 * time.Second):
+		t.Error("expected the write giving up with its call, it still waits")
+		release()
+		<-done
+	}
+	expectFile(t, path, "left by the upload", 0o644)
+	if n := len(d.inPlace.files); n != 0 {
+		t.Errorf("expected no lock left once the writes ended, got %d", n)
+	}
+}
+
+// TestWriteFileWaitGivesWayToStop guards write_file waiting for a write in place into its file as
+// ratd stops: it answers the stop, an ordinary one logged at Info level rather than an internal
+// error, and the file is left as it was.
+func TestWriteFileWaitGivesWayToStop(t *testing.T) {
+	waiting := waitingLocks(t)
+	stopping := make(chan struct{})
+	d := &daemon{user: "u", stopping: stopping}
+	path, release := lockedFile(t, d, "as it was")
+	defer release()
+	answered := make(chan result, 1)
+	go func() {
+		answered <- d.writeFile(context.Background(), tools.WriteFileInput{Path: path, Content: "new"})
+	}()
+	expectWaiting(t, waiting, path)
+	close(stopping)
+	r := <-answered
+	if want := "ratd is stopping: " + path + " was not written."; r.outcome != failed ||
+		r.level != slog.LevelInfo || r.text != want {
+		t.Errorf("expected %q at Info level, got %v (level %v): %s", want, r.outcome, r.level, r.text)
+	}
+	expectFile(t, path, "as it was", 0o644)
 }

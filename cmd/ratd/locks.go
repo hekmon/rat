@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io/fs"
 	"sync"
 	"syscall"
@@ -37,11 +38,14 @@ type fileLock struct {
 var lockWaiting = func(string) {}
 
 // lock waits until no other write in place holds the file at path, described by info, then holds
-// it until release is called. It fails with errStopping once stopping is closed, ratd stopping: a
-// write waiting never delays the stop. A nil stopping, before ratd serves, never closes. A file
-// whose device and inode the system does not tell is not locked. release is never nil, a call to it
-// doing nothing once lock failed; the caller calls it once, a second call blocking.
-func (l *fileLocks) lock(path string, info fs.FileInfo, stopping <-chan struct{}) (release func(), err error) {
+// it until release is called. The wait ends with ctx, failing with its error: a write_file whose
+// call was answered must not write later, replacing what the write it waited for left. It fails
+// with errStopping once stopping is closed, ratd stopping: a write waiting never delays the stop. A
+// nil stopping, before ratd serves, never closes. Neither is looked at once the lock is held. A
+// file whose device and inode the system does not tell is not locked. release is never nil, a call
+// to it doing nothing once lock failed; the caller calls it once, a second call blocking.
+func (l *fileLocks) lock(ctx context.Context, path string, info fs.FileInfo, stopping <-chan struct{}) (
+	release func(), err error) {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return func() {}, nil
@@ -73,6 +77,9 @@ func (l *fileLocks) lock(path string, info fs.FileInfo, stopping <-chan struct{}
 		lockWaiting(path)
 		select {
 		case f.held <- struct{}{}:
+		case <-ctx.Done():
+			leave()
+			return func() {}, ctx.Err()
 		case <-stopping:
 			leave()
 			return func() {}, errStopping

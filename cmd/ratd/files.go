@@ -96,16 +96,32 @@ func absolutePath(path string) (string, error) {
 	return filepath.Clean(path), nil
 }
 
-// fileTimeoutText tells an agent that a file operation on path did not end in time: a stale
-// network file system blocks a human as well.
-const fileTimeoutText = "The file system did not answer in time: %s may still be written, partially or not. Check " +
-	"it before writing again."
+// fileTimeoutText tells an agent that writing path did not end in time, for either cause, which
+// ratd can not tell apart when answering: a stale network file system, which blocks a human as
+// well, or another write in place into the file through ratd (see fileLocks). Only the first may
+// leave the file partly written by this call, but the agent checks it in both: in the second, the
+// other write is changing it.
+const fileTimeoutText = "Writing %s did not end in time: the file system does not answer, or another write into " +
+	"the file through ratd is still under way. It may be written, partially or not: check it before writing again."
+
+// fileTimeout is write_file's answer to a call ending before its write, err the error of its
+// context: logged as a warning, a file system not answering being worth an admin's look.
+func fileTimeout(err error, path string) result {
+	return result{outcome: failed, err: err, level: slog.LevelWarn, text: fmt.Sprintf(fileTimeoutText, path)}
+}
+
+// stoppedWrite is write_file's answer to ratd stopping while the write waits for the lock of path,
+// nothing written: an ordinary stop, as wait_window answers one, not an internal error.
+func stoppedWrite(path string) result {
+	return result{outcome: failed, err: errStopping, level: slog.LevelInfo,
+		text: fmt.Sprintf("ratd is stopping: %s was not written.", path)}
+}
 
 // writeFile writes the content of in to its path, in place, within the context of the call. File
 // operations can not be interrupted: on a file system not answering (a stale NFS mount), the call
 // returns at the end of its context, logged as a warning, while the write stays blocked until the
-// file system answers. A wait for a write in place into the file under way (see fileLocks) is not
-// interrupted either: the call returns the same way, and the write comes once that one ends.
+// file system answers. A wait for a write in place into the file under way (see fileLocks) ends
+// with the call, answered the same way, and nothing is written.
 func (d *daemon) writeFile(ctx context.Context, in tools.WriteFileInput) result {
 	attrs := []any{"path", in.Path, "bytes", len(in.Content)}
 	path, err := destinationPath(in.Path)
@@ -114,14 +130,14 @@ func (d *daemon) writeFile(ctx context.Context, in tools.WriteFileInput) result 
 	}
 	attrs[1] = path
 	written := make(chan result, 1)
-	go func() { written <- fileWriter(d, path, in.Content) }()
+	go func() { written <- fileWriter(d, ctx, path, in.Content) }()
+	// whichever comes first, a wait for the lock ended by ctx answers as ctx ending does
 	select {
 	case r := <-written:
 		r.attrs = append(attrs, r.attrs...)
 		return r
 	case <-ctx.Done():
-		return result{outcome: failed, err: ctx.Err(), level: slog.LevelWarn, attrs: attrs,
-			text: fmt.Sprintf(fileTimeoutText, path)}
+		return withAttrs(fileTimeout(ctx.Err(), path), attrs)
 	}
 }
 
@@ -133,8 +149,9 @@ var fileWriter = (*daemon).writeFileNow
 // its missing directories if needed, or replacing it in place: as cp does, a replaced file keeps
 // its mode, owner and links, and a symbolic link is followed. It never blocks on a FIFO, but waits
 // for a write in place into the file through ratd under way to end, an upload's or another
-// write_file's (see fileLocks), unless ratd stops.
-func (d *daemon) writeFileNow(path, content string) result {
+// write_file's (see fileLocks). The wait ends with ctx, answered as writeFile answers ctx ending
+// (fileTimeout), or with ratd stopping: either way nothing is written, the file left as it was.
+func (d *daemon) writeFileNow(ctx context.Context, path, content string) result {
 	info, err := os.Stat(path)
 	var created []string
 	switch {
@@ -168,10 +185,19 @@ func (d *daemon) writeFileNow(path, content string) result {
 		return failed(d.fileFailure(err, "Writing "+path, written, false))
 	}
 	// One write in place at a time into a file (see fileLocks), held until the file is closed, taken
-	// before the truncation: a stop ending the wait leaves the file as it was.
+	// before the truncation: a stop or the end of the call ending the wait leaves the file as it was.
 	release := func() {}
 	if info, err = file.Stat(); err == nil {
-		release, err = d.inPlace.lock(path, info, d.stopping)
+		release, err = d.inPlace.lock(ctx, path, info, d.stopping)
+		switch {
+		case err == nil:
+		case errors.Is(err, errStopping):
+			_ = file.Close()
+			return failed(stoppedWrite(path))
+		default:
+			_ = file.Close()
+			return fileTimeout(err, path)
+		}
 	}
 	defer release()
 	// once truncated, a failure leaves the file partial

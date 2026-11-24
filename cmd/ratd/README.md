@@ -596,7 +596,7 @@ message tells an outcome the agent may act upon, such as nothing to close.
 | tmux not answering in time | yes | logged, retrying may work |
 | file refused (not regular, not text, missing, denied, relative path, naming a directory, a range too far into a huge file to reach in time) | yes | why, and the terminal when it can do better |
 | file system failing (no space left, read-only…) | yes | the reason of the system, and whether the file may be partial |
-| file system not answering in time | yes | logged, the file may still be written: check it before writing again |
+| file system not answering in time, or a write waiting past its call for another into the file | yes | logged, the file may still be written: check it before writing again |
 | anything else | yes | internal error, logged, retrying may work |
 | nothing to close | no | nothing to close |
 | window already existing | no | not created, what it runs and where |
@@ -793,7 +793,9 @@ reading and writing the bytes already sent before it sees the cut, while the age
 may be partly written, writes it again at once. The second write waits for the first to end, an
 upload before its go-ahead, `write_file` before emptying the file. Without the wait, the two would
 interleave: the file torn, the late bytes of the first left after the content of the second. The
-wait gives way to a stop of ratd, the file left as it was. Rejected: refusing the second write while
+wait gives way to a stop of ratd, the file left as it was, and `write_file`'s ends with its call
+too, nothing written: a write coming once the other ends, long after its call was answered, would
+replace what that one left. Rejected: refusing the second write while
 the first ends, which would make the agent call again for a wait of moments.
 
 Without `Rat-In-Place`, an upload denied a new file in place of one ratd's user can write

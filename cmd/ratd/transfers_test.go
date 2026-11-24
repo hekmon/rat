@@ -801,7 +801,7 @@ func TestUploadInPlaceWaitGivesWayToStop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	release, err := r.d.inPlace.lock(path, info, nil)
+	release, err := r.d.inPlace.lock(context.Background(), path, info, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

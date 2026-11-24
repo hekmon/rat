@@ -440,9 +440,9 @@ func (d *daemon) uploadInPlace(w http.ResponseWriter, req *http.Request, path st
 		return writeFailure(err)
 	}
 	// One write in place at a time into a file (see fileLocks), held until the file is closed. Waited
-	// for before the go-ahead: the client sends no byte meanwhile, and a stop ending the wait leaves
-	// the file as it was.
-	release, err := d.inPlace.lock(path, opened, d.stopping)
+	// for before the go-ahead: the client sends no byte meanwhile, and a stop or the client leaving
+	// ending the wait leaves the file as it was.
+	release, err := d.inPlace.lock(req.Context(), path, opened, d.stopping)
 	defer release()
 	if err != nil {
 		_ = file.Close()
