@@ -418,7 +418,9 @@ FIFO without a reader then fails at once), and checked again once opened, as the
 not be the one checked. Whether it is created or replaced is told by opening: exclusively first,
 then the existing file, then creating again, for a symbolic link whose target is missing, which
 the first open refuses and the second finds no file behind. The former size is that of the file
-once no other write through ratd holds it (see G7 in File transfers).
+once no other write through ratd holds it (see G7 in File transfers), and a file is told created
+only if found empty then: of two writes creating one file at once, the second to hold it is told
+it replaced what the first wrote.
 
 Errors of the file system are told as the system gives them ("no space left on device",
 "read-only file system"), unlike tmux messages: an agent expects a low level operation to fail
@@ -751,11 +753,12 @@ as it was.
 - **L13. One file, two transfers.** rat knows a transfer by its destination as written, cleaned:
   `~/x` and the absolute path it stands for, or two paths through a link of ratd's machine, are
   two transfers of rat to one file, as are those of two rats. G3 and G7 hold for each: without
-  `in_place` the last one placed stays, whole, and writes in place go one at a time. An upload in
-  place told done may have written a file another transfer replaced by a new one meanwhile: its
-  bytes are then in no file at the path.
+  `in_place` the last one placed stays, whole, and writes in place go one at a time. A write
+  in place told done (an upload with `in_place`, `write_file`) may have written a file another
+  transfer replaced by a new one meanwhile: its bytes are then in no file at the path.
 - **L14. Directories.** The missing directories of an upload are created before the go-ahead and
-  left by whatever ends it; an upload cut, canceled or told unreachable does not name them.
+  left by whatever ends it; an upload cut, canceled, told unreachable or whose answer was lost does
+  not name them.
 - **L15. File systems without permission bits** (FAT, exFAT): G6 does not hold, a new file showing
   what the file system gives, untold.
 

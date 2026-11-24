@@ -72,6 +72,48 @@ func TestWriteFileDanglingLink(t *testing.T) {
 	expectFile(t, target, "again", 0o644&^umask())
 }
 
+// TestWriteFileOvertaken guards write_file creating its file, another write getting ahead of it
+// between its open and the moment it holds the file (two calls at once to a missing file, or
+// through a symbolic link whose target is missing, neither knowing which created it): told it
+// replaced what the other wrote, with its size, rather than created, the content it emptied untold.
+func TestWriteFileOvertaken(t *testing.T) {
+	d := &daemon{user: "u"}
+	dir := t.TempDir()
+	target, link := filepath.Join(dir, "target.conf"), filepath.Join(dir, "link.conf")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	hook := writeOpened
+	t.Cleanup(func() { writeOpened = hook })
+	// the other write: ahead once, then out of the way
+	writeOpened = func(string) {
+		writeOpened = hook
+		if err := os.WriteFile(target, []byte("other"), 0o644); err != nil {
+			t.Error(err)
+		}
+	}
+	for _, path := range []string{target, link} {
+		if err := os.Remove(target); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			t.Fatal(err)
+		}
+		ahead := writeOpened
+		r := d.writeFileNow(context.Background(), path, "new")
+		if told := "Replaced " + path + " (3 B, 5 B before)."; r.outcome == failed || r.text != told {
+			t.Errorf("expected %q, got %v: %s", told, r.err, r.text)
+		}
+		expectFile(t, target, "new", 0o644&^umask())
+		writeOpened = ahead
+	}
+	// nobody ahead: created
+	writeOpened = hook
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	if r := d.writeFileNow(context.Background(), link, "new"); r.text != "Created "+link+" (3 B)." {
+		t.Errorf("expected the file told created, got %v: %s", r.err, r.text)
+	}
+}
+
 // TestWriteFile guards writing files: created with the exact content, nothing added, and a mode
 // going through the umask; replaced in place, keeping its mode, with its former size told; missing
 // directories created and named; a symbolic link followed, writing its target; and the log line

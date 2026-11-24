@@ -184,6 +184,7 @@ func (d *daemon) writeFileNow(ctx context.Context, path, content string) result 
 	case err != nil:
 		return failed(d.fileFailure(err, "Writing "+path, written, false))
 	}
+	writeOpened(path)
 	// One write in place at a time into a file (see fileLocks), held until the file is closed, taken
 	// before the truncation: a stop or the end of the call ending the wait leaves the file as it was.
 	release := func() {}
@@ -219,6 +220,12 @@ func (d *daemon) writeFileNow(ctx context.Context, path, content string) result 
 	if err != nil {
 		return failed(d.fileFailure(err, "Writing "+path, written, truncated))
 	}
+	// Told created for a file this write created and found empty once it held it. Told from the
+	// open alone, of two writes creating one file at once, the second to hold it would be told
+	// created too, having replaced what the first wrote: the one that created it exclusively,
+	// overtaken, or both through a dangling symbolic link, whose target neither knows it created
+	// (see openRegular). The size once the file is held tells what a write replaced.
+	isNew = isNew && info.Size() == 0
 	text := fmt.Sprintf("Replaced %s (%s, %s before).", path, sizeText(len(content)), sizeText(int(info.Size())))
 	if isNew {
 		text = fmt.Sprintf("Created %s (%s).", path, sizeText(len(content)))
@@ -228,6 +235,10 @@ func (d *daemon) writeFileNow(ctx context.Context, path, content string) result 
 	}
 	return result{text: text, attrs: []any{"created", isNew, "directories_created", len(created)}}
 }
+
+// writeOpened is called with the path of a write_file once its file is opened, before it holds it:
+// a hook for tests, which write into the file there, as another write getting ahead.
+var writeOpened = func(string) {}
 
 // createdText names the directories created (by createDirectories) for a file, for an agent to
 // catch a typo in its path.
@@ -290,7 +301,9 @@ func (e *notRegularError) Error() string {
 }
 
 // openRegular opens path for writing, creating it if missing, and tells whether it created it,
-// from the open that succeeded: exclusively first, then the existing file, then creating again. It
+// from the open that succeeded: exclusively first, then the existing file, then creating again,
+// which may open a file another created meanwhile, told created all the same (the caller holds it
+// before telling what it replaced). It
 // never blocks on a FIFO (without a reader, opening it fails), and refuses what it opened if it is
 // not a regular file, with a notRegularError: checked again on the file opened, which may have
 // replaced the one checked before opening.
