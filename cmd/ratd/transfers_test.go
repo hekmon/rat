@@ -589,6 +589,78 @@ func TestUploadInPlace(t *testing.T) {
 	expectNoTemporary(t, home)
 }
 
+// modeOf returns the mode a look found, or why it failed, for a test to tell what it got.
+func modeOf(info fs.FileInfo, err error) any {
+	if err != nil {
+		return err
+	}
+	return info.Mode()
+}
+
+// TestUploadSpecialBits guards the special bits of a file an upload replaces (G6, L2): put in place
+// by a new file, it takes the nine permission bits of the file replaced only, never its setuid bit,
+// which would then be for ratd's user, Rat-Mode telling those nine; written in place, it is told the
+// same, what the system did to the bit aside; in both, Rat-Note tells the agent the bit the file
+// replaced had, for it to set again. A file replaced without such a bit carries no Rat-Note. setuid
+// rather than setgid: a chmod may drop setgid silently, for a group the user is not in.
+func TestUploadSpecialBits(t *testing.T) {
+	r, client, home := transferRatd(t)
+	path := filepath.Join(home, "tool")
+	setuid := func() {
+		t.Helper()
+		if err := os.Chmod(path, fs.ModeSetuid|0o755); err != nil {
+			t.Fatal(err)
+		}
+		if info, err := os.Stat(path); err != nil || info.Mode()&fs.ModeSetuid == 0 {
+			t.Fatalf("the setuid bit was not set: %v", modeOf(info, err))
+		}
+	}
+	if err := os.WriteFile(path, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	note := connect.SpecialBitsNote(fs.ModeSetuid)
+	if note == "" {
+		// an empty note would equal a missing header below
+		t.Fatal("no note for a setuid bit")
+	}
+	setuid()
+	resp, body, err := sendTransfer(client, newUpload(t, r.addr, path, &fileBody{content: []byte("new")}, "0644", true))
+	if err != nil || resp.StatusCode != http.StatusNoContent || resp.Header.Get(connect.HeaderMode) != "0755" ||
+		connect.DecodeError(resp.Header.Get(connect.HeaderNote)) != note {
+		t.Errorf("put in place: expected 204, mode 0755 and the note, got %v, %v: %q", resp, err, body)
+	}
+	if info, err := os.Lstat(path); err != nil || info.Mode() != 0o755 {
+		t.Errorf("put in place: expected exactly 0755, no setuid bit, got %v", modeOf(info, err))
+	}
+	expectFile(t, path, "new", 0o755)
+
+	setuid()
+	resp, body, err = sendTransfer(client, newUploadInPlace(t, r.addr, path, &fileBody{content: []byte("in place")},
+		true))
+	if err != nil || resp.StatusCode != http.StatusNoContent || resp.Header.Get(connect.HeaderMode) != "0755" ||
+		connect.DecodeError(resp.Header.Get(connect.HeaderNote)) != note {
+		t.Errorf("in place: expected 204, mode 0755 and the note, got %v, %v: %q", resp, err, body)
+	}
+	expectFile(t, path, "in place", 0o755)
+
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, inPlace := range []bool{false, true} {
+		req := newUpload(t, r.addr, path, &fileBody{content: []byte("plain")}, "0644", true)
+		req.Header.Set(connect.HeaderInPlace, strconv.FormatBool(inPlace))
+		resp, body, err = sendTransfer(client, req)
+		if err != nil || resp.StatusCode != http.StatusNoContent {
+			t.Fatalf("in place %v, no special bit: expected 204, got %v, %v: %q", inPlace, resp, err, body)
+		}
+		if _, told := resp.Header[connect.HeaderNote]; told {
+			t.Errorf("in place %v, no special bit: expected no %s, got %q", inPlace, connect.HeaderNote,
+				resp.Header.Get(connect.HeaderNote))
+		}
+	}
+	expectNoTemporary(t, home)
+}
+
 // TestUploadInPlaceCut guards an upload in place whose body is cut short (its client failing it, as
 // rat does when its file changed): the file is left partly written, the beginning of the new
 // content, rather than as it was, the log telling the bytes written in place. The file is read

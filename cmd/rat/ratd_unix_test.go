@@ -279,8 +279,9 @@ func TestRealRatdRefusals(t *testing.T) {
 
 // answersOf runs through tt the calls whose answers the tests of the fake go through, on their way
 // to what they provoke: an upload created, refused as existing, replaced (its mode kept, a hard
-// link left with the old content), written in place (a hard link following); a download created,
-// replaced, missing. It returns their results and the files they leave, a line each, its
+// link left with the old content), written in place (a hard link following), replacing a file of a
+// setuid bit, put in place and in place; a download created, replaced, replacing a file of a setuid
+// bit, missing. It returns their results and the files they leave, a line each, its
 // directories named <local> and <remote>: alike from one ratd to the other when they answer alike.
 // The files hold their name repeated, unlike randomFile's, for their content to be told alike too.
 func answersOf(t *testing.T, tt *transferTest) []string {
@@ -312,7 +313,8 @@ func answersOf(t *testing.T, tt *transferTest) []string {
 				holds = "the content of " + name
 			}
 		}
-		return fmt.Sprintf("%s %v, %s", filepath.Base(path), info.Mode().Perm(), holds)
+		// the whole mode, for the special bits of a file replaced to show
+		return fmt.Sprintf("%s %v, %s", filepath.Base(path), info.Mode(), holds)
 	}
 	var lines []string
 	call := func(what, tool string, args map[string]any, files ...string) {
@@ -345,10 +347,19 @@ func answersOf(t *testing.T, tt *transferTest) []string {
 		"overwrite": true, "in_place": true}, remote, link)
 	call("upload replaced, a hard link", uploadTool, map[string]any{"local_path": "app2.bin", "remote_path": remote,
 		"overwrite": true}, remote, link)
+	chmod(remote, fs.ModeSetuid|0o755)
+	call("upload replaced, setuid", uploadTool, map[string]any{"local_path": "app.bin", "remote_path": remote,
+		"overwrite": true}, remote)
+	chmod(remote, fs.ModeSetuid|0o755)
+	call("upload in place, setuid", uploadTool, map[string]any{"local_path": "app2.bin", "remote_path": remote,
+		"overwrite": true, "in_place": true}, remote)
 	back := filepath.Join(tt.local, "back.bin")
 	call("download, created", downloadTool, map[string]any{"remote_path": remote, "local_path": "back.bin"}, back)
 	chmod(back, 0o640)
 	call("download, replaced", downloadTool, map[string]any{"remote_path": remote, "local_path": "back.bin",
+		"overwrite": true}, back)
+	chmod(back, fs.ModeSetuid|0o755)
+	call("download replaced, setuid", downloadTool, map[string]any{"remote_path": remote, "local_path": "back.bin",
 		"overwrite": true}, back)
 	call("download, missing", downloadTool, map[string]any{"remote_path": filepath.Join(tt.remote, "missing.bin"),
 		"local_path": "missing.bin"}, filepath.Join(tt.local, "missing.bin"))

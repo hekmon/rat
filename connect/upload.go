@@ -19,15 +19,16 @@ type Uploaded struct {
 	// Replaced tells an existing file was replaced (204), rather than created (201).
 	Replaced bool
 	// Mode is the permission bits of the file as written: those sent minus the umask of ratd for
-	// a file created, its own for a file replaced; nothing unless ModeTold.
+	// a file created, the nine of the file it replaced otherwise; nothing unless ModeTold.
 	Mode fs.FileMode
 	// ModeTold tells ratd told Mode ([HeaderMode]): an answer whose mode can not be read is still
 	// the file written, which its status tells, rather than a failure of the upload.
 	ModeTold bool
 	// Sent is the size of the file sent, in bytes.
 	Sent int64
-	// Note is what ratd tells the agent of a file it created, often nothing: the directories it
-	// created for it.
+	// Note is what ratd tells the agent of the file it wrote, often nothing: for a file created,
+	// the directories it created for it (the body of its 201); for a file replaced, the setuid or
+	// setgid bit it had and lost ([HeaderNote]).
 	Note string
 }
 
@@ -151,8 +152,12 @@ func Upload(ctx context.Context, cancel <-chan struct{}, client *http.Client, se
 	// the file is written, which its status tells: a mode that can not be read is not a failure,
 	// which a caller would tell as the file not written (canceled, ratd unreachable)
 	mode, modeErr := ParseMode(resp.Header.Get(HeaderMode))
+	note := readText(resp.Body)
+	if value := resp.Header.Get(HeaderNote); value != "" {
+		note = DecodeError(value)
+	}
 	return &Uploaded{Replaced: resp.StatusCode == http.StatusNoContent, Mode: mode, ModeTold: modeErr == nil,
-		Sent: body.read(), Note: readText(resp.Body)}, nil
+		Sent: body.read(), Note: note}, nil
 }
 
 // afterClosed calls f in a goroutine of its own once c is closed, unless stop is called first: a

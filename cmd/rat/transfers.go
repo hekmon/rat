@@ -978,7 +978,7 @@ func (t *transfers) runDownload(ctx context.Context, j *job) (string, bool, bool
 	case !j.beginPlacing():
 		return failed(canceledText(j), false, true)
 	}
-	replaced, kept, refused, err := t.place(tmpName, local, j.request.overwrite)
+	replaced, found, refused, err := t.place(tmpName, local, j.request.overwrite)
 	switch {
 	case refused != "":
 		return failed(refused, true, false)
@@ -990,9 +990,12 @@ func (t *transfers) runDownload(ctx context.Context, j *job) (string, bool, bool
 		how = "replaced"
 	}
 	text := fmt.Sprintf("Downloaded %s to %s (%s): %s.", j.request.remote, local, sizeText(j.moved.Load()), how)
-	if modesTold && replaced && kept != download.Mode {
+	if modesTold && replaced && found.Perm() != download.Mode {
 		text += fmt.Sprintf(" It kept its permissions (%s), not those of the remote file (%s).",
-			connect.FormatMode(kept), connect.FormatMode(download.Mode))
+			connect.FormatMode(found), connect.FormatMode(download.Mode))
+	}
+	if note := connect.SpecialBitsNote(found); replaced && note != "" {
+		text += " " + note
 	}
 	if len(created) > 0 {
 		text += " " + t.createdText(created)
@@ -1055,12 +1058,13 @@ var linkLocal = (*os.Root).Link
 var renameLocal = (*os.Root).Rename
 
 // place puts tmp, a complete temporary file next to local, in its place, as ratd places an upload
-// (see placeFile in cmd/ratd): a file found there is replaced with overwrite only, keeping its
-// mode, returned; otherwise tmp is linked under its name, which fails if a file appeared since it
-// was checked, looked at again then; on a file system without hard links (see linkUnsupported),
-// renamed; a link or a rename failing with tmp found in place, as on NFS, told done. refused tells
-// what is found there and not replaced.
-func (t *transfers) place(tmp, local string, overwrite bool) (replaced bool, kept fs.FileMode, refused string, err error) {
+// (see placeFile in cmd/ratd): a file found there is replaced with overwrite only, keeping its nine
+// permission bits, its mode as looked at then returned as found, special bits included, for the
+// caller to tell the setuid or setgid bit lost, never put back; otherwise tmp is linked under its
+// name, which fails if a file appeared since it was checked, looked at again then; on a file
+// system without hard links (see linkUnsupported), renamed; a link or a rename failing with tmp
+// found in place, as on NFS, told done. refused tells what is found there and not replaced.
+func (t *transfers) place(tmp, local string, overwrite bool) (replaced bool, found fs.FileMode, refused string, err error) {
 	q := transferRequest{tool: downloadTool, local: local, overwrite: overwrite}
 	tmpInfo, err := t.root.Lstat(tmp)
 	if err != nil {
@@ -1076,16 +1080,15 @@ func (t *transfers) place(tmp, local string, overwrite bool) (replaced bool, kep
 			if refused := t.checkLocal(local, info, q); refused != "" {
 				return false, 0, refused, nil
 			}
-			mode := info.Mode() & (fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky)
-			if err = t.root.Chmod(tmp, mode); err != nil {
+			if err = t.root.Chmod(tmp, info.Mode().Perm()); err != nil {
 				return false, 0, "", err
 			}
 			err = t.renameInPlace(tmp, local, tmpInfo)
-			if err != nil && readOnlyKept && errors.Is(err, fs.ErrPermission) && mode&0o200 == 0 {
+			if err != nil && readOnlyKept && errors.Is(err, fs.ErrPermission) && info.Mode()&0o200 == 0 {
 				return false, 0, fmt.Sprintf("%s is read-only, which Windows keeps from being replaced: clear its "+
 					"read-only attribute, or download to another name.", local), nil
 			}
-			return true, mode.Perm(), "", err
+			return true, info.Mode(), "", err
 		case !errors.Is(err, fs.ErrNotExist):
 			return false, 0, "", err
 		}

@@ -205,6 +205,10 @@ func (f *fakeTransfers) upload(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(connect.HeaderMode, connect.FormatMode(written.Mode()))
 	}
 	if replaced {
+		// as ratd tells the setuid or setgid bit of the file replaced, from the look before the bytes
+		if note := connect.SpecialBitsNote(info.Mode()); note != "" {
+			w.Header().Set(connect.HeaderNote, connect.EncodeError(note))
+		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -570,6 +574,56 @@ func TestUploadFile(t *testing.T) {
 	if !strings.Contains(tt.rat.logs.String(), "msg=transfer direction=upload_file local=sub/app.bin remote="+remote+
 		" outcome=ok bytes="+strconv.Itoa(len(content))) {
 		t.Errorf("expected the upload logged with its paths and size:\n%s", tt.rat.logs)
+	}
+}
+
+// modeOf returns the mode a look found, or why it failed, for a test to tell what it got.
+func modeOf(info fs.FileInfo, err error) any {
+	if err != nil {
+		return err
+	}
+	return info.Mode()
+}
+
+// TestTransferSpecialBits guards a transfer replacing a file of a setuid bit (G6, L2): a download
+// puts a file of the nine permission bits of the file replaced only in its place, its setuid bit
+// never put back, which would then be for the user of rat, and tells it, for the agent to set it
+// again; an upload relays what ratd tells of the file it replaced (Rat-Note), put in place or
+// written in place. setuid rather than setgid: a chmod may drop setgid silently, for a group the
+// user is not in.
+func TestTransferSpecialBits(t *testing.T) {
+	tt := startTransfers(t)
+	note := "The file replaced had the setuid bit, which a file written loses: set it again if it needs it " +
+		"(chmod u+s)."
+	setuid := func(path string) {
+		t.Helper()
+		if err := os.Chmod(path, fs.ModeSetuid|0o755); err != nil {
+			t.Fatal(err)
+		}
+		if info, err := os.Stat(path); err != nil || info.Mode()&fs.ModeSetuid == 0 {
+			t.Fatalf("the setuid bit was not set: %v", modeOf(info, err))
+		}
+	}
+	remote := filepath.Join(tt.remote, "tool")
+	content := randomFile(t, remote, 1<<10, 0o750)
+	local := filepath.Join(tt.local, "tool")
+	randomFile(t, local, 1<<10, 0o755)
+	setuid(local)
+	size := sizeText(1 << 10)
+	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": "tool", "overwrite": true}, false,
+		"Downloaded "+remote+" to tool ("+size+"): replaced. It kept its permissions (0755), not those of the remote "+
+			"file (0750). "+note)
+	expectContent(t, local, content, 0o755)
+	if info, err := os.Lstat(local); err != nil || info.Mode() != 0o755 {
+		t.Errorf("expected exactly 0755, no setuid bit, got %v", modeOf(info, err))
+	}
+
+	randomFile(t, filepath.Join(tt.local, "new"), 1<<10, 0o700)
+	for _, inPlace := range []bool{false, true} {
+		setuid(remote)
+		tt.expect(t, uploadTool, map[string]any{"local_path": "new", "remote_path": remote, "overwrite": true,
+			"in_place": inPlace}, false, "Uploaded new to "+remote+" ("+size+"): replaced. It kept its permissions "+
+			"(0755), not those of your file (0700): change them in a terminal (chmod) if it needs yours. "+note)
 	}
 }
 

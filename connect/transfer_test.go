@@ -90,6 +90,23 @@ func TestMode(t *testing.T) {
 	}
 }
 
+// TestSpecialBitsNote guards the sentence telling a setuid or setgid bit a transfer did not keep
+// on the file it replaced: nothing without either, the sticky bit alone included; each named, with
+// the chmod setting it again, both at once together.
+func TestSpecialBitsNote(t *testing.T) {
+	for mode, expected := range map[fs.FileMode]string{
+		0o755:                 "",
+		fs.ModeSticky | 0o755: "",
+		fs.ModeSetuid | 0o755: "The file replaced had the setuid bit, which a file written loses: set it again if it needs it (chmod u+s).",
+		fs.ModeSetgid | 0o755: "The file replaced had the setgid bit, which a file written loses: set it again if it needs it (chmod g+s).",
+		fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky: "The file replaced had the setuid and setgid bits, which a file written loses: set them again if it needs them (chmod ug+s).",
+	} {
+		if note := SpecialBitsNote(mode); note != expected {
+			t.Errorf("%v: expected %q, got %q", mode, expected, note)
+		}
+	}
+}
+
 // TestUploadFlags guards the flags of an upload, its overwrite and in place: true or false, false
 // when absent, the safe side; anything else refused rather than guessed, naming the header.
 func TestUploadFlags(t *testing.T) {

@@ -251,7 +251,8 @@ func transferNotRegular(path string, info fs.FileInfo, way direction) *result {
 }
 
 // upload writes the file of req at the path it names, all or nothing: into a temporary file next
-// to it, put in its place once complete (see placeFile), the file replaced keeping its own mode.
+// to it, put in its place once complete (see placeFile), the file replaced keeping its own
+// permission bits, and its setuid or setgid bit told lost (connect.HeaderNote).
 // What the headers alone refuse is refused before the client sends any byte, when it waits for
 // ratd's go-ahead (Expect: 100-continue): a file existing without Rat-Overwrite, a symbolic link,
 // what is not a regular file, a path the system fails to look at (a name too long), a body that is
@@ -373,7 +374,7 @@ func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 	case err != nil:
 		return writeFailure(err)
 	}
-	replaced, kept, refused, err := placeFile(tmp.Name(), path, overwrite)
+	replaced, found, refused, err := placeFile(tmp.Name(), path, overwrite)
 	switch {
 	case refused != nil:
 		return fail(refusalStatus(refused), withAttrs(*refused, attrs))
@@ -382,11 +383,12 @@ func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 	}
 	modeSet := tmpInfo.Mode()
 	if replaced {
-		modeSet = kept
+		modeSet = found.Perm()
 	}
 	w.Header().Set(connect.HeaderMode, connect.FormatMode(modeSet))
 	attrs = append(attrs, "replaced", replaced, "directories_created", len(created))
 	if replaced {
+		setNote(w, connect.SpecialBitsNote(found))
 		w.WriteHeader(http.StatusNoContent)
 		return result{attrs: append(attrs, "status", http.StatusNoContent)}
 	}
@@ -404,7 +406,8 @@ var inPlaceOpening = func(string) {}
 
 // uploadInPlace writes the body of req into the file at path, an existing regular file an upload
 // with overwrite replaces, rather than put a new file in its place (Rat-In-Place), as cp writes
-// one: the file keeps its hard links, owner, mode and extended attributes, and its directory needs
+// one: the file keeps its hard links, owner, permission bits and extended attributes (the system
+// clearing its setuid and setgid bits on a write, which the answer tells), and its directory needs
 // no write permission (a file of ratd's user in a directory of root, one of another user under the
 // sticky bit of /tmp), the file's own deciding instead, but a body cut short leaves it partly
 // written. It is opened without following a link at the end of the path nor blocking, and refused
@@ -465,8 +468,19 @@ func (d *daemon) uploadInPlace(w http.ResponseWriter, req *http.Request, path st
 			attrs))
 	}
 	w.Header().Set(connect.HeaderMode, connect.FormatMode(opened.Mode()))
+	// told from the look before the bytes: what the write left of the bits (cleared, or kept for
+	// root) would take a second look
+	setNote(w, connect.SpecialBitsNote(opened.Mode()))
 	w.WriteHeader(http.StatusNoContent)
 	return result{attrs: append(attrs, "replaced", true, "status", http.StatusNoContent)}
+}
+
+// setNote sets note, what ratd tells the agent of a file an upload replaced, in the header of the
+// answer, a 204 carrying no body (see connect.HeaderNote): nothing when it is empty.
+func setNote(w http.ResponseWriter, note string) {
+	if note != "" {
+		w.Header().Set(connect.HeaderNote, connect.EncodeError(note))
+	}
 }
 
 // emptiedOnWrite writes into file, written in place, emptying it before its first write: until the
@@ -565,16 +579,19 @@ var linkFile = os.Link
 var renameFile = os.Rename
 
 // placeFile puts tmp, a complete temporary file next to path, in its place, and tells whether it
-// replaced a file. A file found there is replaced with overwrite only, and keeps its mode, tmp
-// taking it first, returned as kept; checkReplaced refuses the others. Without a file there, tmp
-// is linked under its name, which fails if a file appeared since it was checked, where a rename
-// would replace it; that file is then looked at again. On a file system without hard links (FAT,
-// some network ones), it is renamed: a file appearing in between is then replaced. A link or a
-// rename failing is no proof: on NFS, one the server made fails all the same when its reply is lost,
-// the request sent again then failing (link(2), BUGS: "Use stat(2) to find out if the link got
-// created"); tmp found at path tells it placed. On success, tmp may remain as a second name of the
-// file, for the caller to remove.
-func placeFile(tmp, path string, overwrite bool) (replaced bool, kept fs.FileMode, refused *result, err error) {
+// replaced a file. A file found there is replaced with overwrite only, and keeps its nine
+// permission bits, tmp taking them first; its mode as looked at then, special bits included, is
+// returned as found, for the caller to tell what was lost from that one look: the setuid, setgid
+// and sticky bits are never put back, as with cp. On the new file, which belongs to the user
+// writing it, a setuid bit would be for that user, not for the owner it was set for.
+// checkReplaced refuses the others. Without a file there, tmp is linked under its name, which fails
+// if a file appeared since it was checked, where a rename would replace it; that file is then
+// looked at again. On a file system without hard links (FAT, some network ones), it is renamed: a
+// file appearing in between is then replaced. A link or a rename failing is no proof: on NFS, one
+// the server made fails all the same when its reply is lost, the request sent again then failing
+// (link(2), BUGS: "Use stat(2) to find out if the link got created"); tmp found at path tells it
+// placed. On success, tmp may remain as a second name of the file, for the caller to remove.
+func placeFile(tmp, path string, overwrite bool) (replaced bool, found fs.FileMode, refused *result, err error) {
 	tmpInfo, err := os.Lstat(tmp)
 	if err != nil {
 		return false, 0, nil, err
@@ -589,11 +606,10 @@ func placeFile(tmp, path string, overwrite bool) (replaced bool, kept fs.FileMod
 			if r := checkReplaced(path, info, overwrite); r != nil {
 				return false, 0, r, nil
 			}
-			kept = info.Mode() & (fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky)
-			if err = os.Chmod(tmp, kept); err != nil {
+			if err = os.Chmod(tmp, info.Mode().Perm()); err != nil {
 				return false, 0, nil, err
 			}
-			return true, kept, nil, renameInPlace(tmp, path, tmpInfo)
+			return true, info.Mode(), nil, renameInPlace(tmp, path, tmpInfo)
 		case !errors.Is(err, fs.ErrNotExist):
 			return false, 0, nil, err
 		}

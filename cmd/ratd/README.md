@@ -621,7 +621,8 @@ client checks, never through MCP: `/mcp` stays MCP only. The contract is declare
   look at the path finds once the file is placed, a file moved at once (a watcher of a spool
   directory) leaving the answer without them. A 201 names the directories created, as `write_file`
   does, and so does a failure leaving some, creating them included: the answer to an upload cut or
-  canceled, nobody reads.
+  canceled, nobody reads. A 204, which carries no body, tells in `Rat-Note` the setuid or setgid
+  bit the file replaced showed and the file written lost (see L2), encoded as `Rat-Error` is.
 - **`GET /download`**: the body of the answer is the file at the path `Rat-Path` names, with its
   permission bits in `Rat-Mode` and its size in `Rat-Size`. HEAD answers the headers alone.
 - The answers of both endpoints carry `Rat-Version`, the version of ratd: a 404 without it comes
@@ -678,8 +679,7 @@ mark with the change making it true.
   nothing outside its transfers directory.
 - **G6. Nine bits of mode.** A new file takes the permission bits (rwx) of its source minus the
   umask; a replaced file keeps its own. Nothing else of the metadata of a file is promised (see L1
-  and L2). *Not yet: a new file put in place of another takes its setuid, setgid and sticky bits
-  too, by ratd as by rat, a setuid bit then being for the user writing it.*
+  and L2).
 - **G7. One write in place at a time.** Two writes in place into one file through ratd
   (`write_file`, an upload with `in_place`) never interleave: the second waits for the first, which
   keeps G1 for an upload in place following one canceled, whose handler may still write the bytes
@@ -721,8 +721,7 @@ from the bytes it read and the size it saw.*
   sets the bit again itself (`chmod u+s`): it added no ability, and took a sync before the chmod
   for network file systems, a look after it for a chmod dropping setgid without an error, and a
   lock for two writes clearing and putting back in turn. Rejected as well: refusing such a file,
-  which an agent then replaces in a terminal, with the same result. *Not yet: see G6; and nothing
-  is told.*
+  which an agent then replaces in a terminal, with the same result.
 - **L3. Power and kills.** No fsync. A ratd or a rat killed leaves `.NAME.rat-RANDOM` behind.
 - **L4. No hard links.** On a file system without them (FAT, sshfs), G4 does not cover a file
   appearing during the copy: it is replaced.
@@ -754,19 +753,20 @@ the directory, as rat does with `os.Root`, would take the whole placing of the f
 `write_file` makes the opposite choice (see Files), for content it holds whole; a file arriving for
 minutes, half replaced, would be worse than none. Without overwrite, the temporary file is linked
 under the name of the target, which fails if a file appeared meanwhile (412), where a rename would
-replace it; with overwrite, it takes the mode of the file it replaces, then is renamed over it.
-Permissions follow `scp`: a new file gets those of its source minus the umask, a replaced file
-keeps its own, and setuid, setgid and sticky never travel. The price of the rename: hard links to a
-replaced file are broken, its extended attributes lost, and its owner becomes ratd's user (rat runs
-as a user of its own on each side, as the manual recommends). On a file system without hard links
-(FAT, some network ones, FUSE without link as sshfs, whatever error its link gives: EPERM, EMLINK,
-ENOSYS, ENOTSUP), the file is renamed even without overwrite, a file appearing in between then
-being replaced; rat does so too, on Windows with the errors of Windows (FAT, exFAT:
-ERROR_INVALID_FUNCTION). No fsync: all or nothing covers a transfer cut, not a power cut, after
-which a file may be lost as any other just written; an agent wanting it on disk runs `sync`. A ratd
-killed during an upload leaves its temporary file behind. A link or a rename failing is no proof:
-on NFS, one the server made fails all the same when its reply is lost (link(2), BUGS), the
-temporary file then found in place, which ratd and rat both tell written.
+replace it; with overwrite, it takes the permission bits of the file it replaces, then is renamed
+over it. Permissions follow `scp`: a new file gets those of its source minus the umask, a replaced
+file keeps its own nine bits, and setuid, setgid and sticky never travel nor are put back (see
+L2). The price of the rename: hard links to a replaced file are broken, its extended attributes
+lost, and its owner becomes ratd's user (rat runs as a user of its own on each side, as the manual
+recommends). On a file system without hard links (FAT, some network ones, FUSE without link as
+sshfs, whatever error its link gives: EPERM, EMLINK, ENOSYS, ENOTSUP), the file is renamed even
+without overwrite, a file appearing in between then being replaced; rat does so too, on Windows
+with the errors of Windows (FAT, exFAT: ERROR_INVALID_FUNCTION). No fsync: all or nothing covers a
+transfer cut, not a power cut, after which a file may be lost as any other just written; an agent
+wanting it on disk runs `sync`. A ratd killed during an upload leaves its temporary file behind. A
+link or a rename failing is no proof: on NFS, one the server made fails all the same when its reply
+is lost (link(2), BUGS), the temporary file then found in place, which ratd and rat both tell
+written.
 
 **In place.** With `Rat-In-Place`, an upload replacing a file writes into it instead, as `cp` does:
 the file keeps the hard links, extended attributes and owner the rename loses, and its directory

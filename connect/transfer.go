@@ -38,9 +38,14 @@ const (
 	// write permission, the file's own deciding instead, but a body cut short leaves it partly
 	// written. A missing file is created all or nothing whatever it says.
 	HeaderInPlace = "Rat-In-Place"
-	// HeaderMode holds permission bits in octal ([FormatMode]): of the file sent, in an upload and
-	// in the answer to a download; of the file as written, in the answer to an upload.
+	// HeaderMode holds the nine permission bits in octal ([FormatMode]): of the file sent, in an
+	// upload and in the answer to a download; of the file as written, in the answer to an upload.
 	HeaderMode = "Rat-Mode"
+	// HeaderNote is what ratd tells the agent of a file an upload replaced, a sentence (see
+	// [SpecialBitsNote]), absent when there is nothing to tell: the answer of a file replaced, a
+	// 204, carries no body, where that of a file created tells its note. It travels encoded as
+	// [HeaderError] does (see [EncodeError]).
+	HeaderNote = "Rat-Note"
 	// HeaderSize is the size of the file a download sends, as it was opened: the body is chunked,
 	// with no Content-Length.
 	HeaderSize = "Rat-Size"
@@ -230,9 +235,32 @@ func DecodeError(value string) string {
 }
 
 // FormatMode returns the permission bits of mode as [HeaderMode] carries them: four octal digits,
-// as chmod reads them (0644). The setuid, setgid and sticky bits never travel.
+// as chmod reads them (0644). The setuid, setgid and sticky bits never travel, and no file a
+// transfer writes takes them.
 func FormatMode(mode fs.FileMode) string {
 	return fmt.Sprintf("%04o", uint32(mode.Perm()))
+}
+
+// SpecialBitsNote returns the sentence telling the agent that the file a transfer replaced, of
+// mode as looked at before the bytes, had a setuid or setgid bit, which the file written does not
+// have, for the agent to set it again itself (chmod): empty without them. The same sentence serves
+// a file replaced by a new one, which has none, and one written in place, whose bits the system
+// clears on a write, unless the writer may keep them (root): the sentence is told from the look
+// before the bytes, never from the file written, which would take a second look. The sticky bit is
+// dropped without a word: Linux and macOS ignore it on a regular file.
+func SpecialBitsNote(mode fs.FileMode) string {
+	switch setuid, setgid := mode&fs.ModeSetuid != 0, mode&fs.ModeSetgid != 0; {
+	case setuid && setgid:
+		return "The file replaced had the setuid and setgid bits, which a file written loses: set them again if it " +
+			"needs them (chmod ug+s)."
+	case setuid:
+		return "The file replaced had the setuid bit, which a file written loses: set it again if it needs it " +
+			"(chmod u+s)."
+	case setgid:
+		return "The file replaced had the setgid bit, which a file written loses: set it again if it needs it " +
+			"(chmod g+s)."
+	}
+	return ""
 }
 
 // ParseMode returns the permission bits [HeaderMode] carries in value: octal, 0777 at most.

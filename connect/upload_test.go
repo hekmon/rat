@@ -209,6 +209,33 @@ func TestUploadModeUnreadable(t *testing.T) {
 	}
 }
 
+// TestUploadNote guards the note of an upload: read from Rat-Note when ratd sends one, decoded, the
+// answer of a file replaced (204) carrying no body; from the body otherwise, as for a file created
+// (201), whose note names the directories created.
+func TestUploadNote(t *testing.T) {
+	const replaced = "The file replaced had the setuid bit, which a file written loses: set it again if it needs " +
+		"it (chmod u+s)."
+	const created = "Missing directories created: /d. Check the path if you did not mean them."
+	server, client := fakeRatd(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set(HeaderMode, "0755")
+		if r.Header.Get(HeaderOverwrite) == "true" {
+			w.Header().Set(HeaderNote, EncodeError(replaced))
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, created)
+	})
+	for options, expected := range map[UploadOptions]string{{}: created, {Overwrite: true}: replaced} {
+		up, err := Upload(context.Background(), nil, client, server, &testFile{content: []byte("data"), mode: 0o644},
+			"/d/x", options)
+		if err != nil || up.Note != expected {
+			t.Errorf("overwrite %v: expected the note %q, got %+v, %v", options.Overwrite, expected, up, err)
+		}
+	}
+}
+
 // TestUploadRefused guards the refusals of ratd: from the headers alone, before any byte of the
 // file is read, as a Refusal with the sentence of ratd; a 404 without the version of ratd telling
 // a ratd older than the transfers, one with it a refusal like the others.
