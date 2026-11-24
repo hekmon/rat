@@ -224,7 +224,8 @@ func (d *daemon) writeFileNow(ctx context.Context, path, content string) result 
 	// open alone, of two writes creating one file at once, the second to hold it would be told
 	// created too, having replaced what the first wrote: the one that created it exclusively,
 	// overtaken, or both through a dangling symbolic link, whose target neither knows it created
-	// (see openRegular). The size once the file is held tells what a write replaced.
+	// (see openRegular). The size once the file is held tells what a write replaced: nothing, after a
+	// write of no byte, two calls through such a link then both told created, nothing emptied.
 	isNew = isNew && info.Size() == 0
 	text := fmt.Sprintf("Replaced %s (%s, %s before).", path, sizeText(len(content)), sizeText(int(info.Size())))
 	if isNew {

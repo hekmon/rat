@@ -420,7 +420,10 @@ then the existing file, then creating again, for a symbolic link whose target is
 the first open refuses and the second finds no file behind. The former size is that of the file
 once no other write through ratd holds it (see G7 in File transfers), and a file is told created
 only if found empty then: of two writes creating one file at once, the second to hold it is told
-it replaced what the first wrote.
+it replaced what the first wrote, if it wrote anything. Two calls at once through one symbolic
+link whose target is missing, the first writing no byte, are both told created: neither knows
+which created the target, and nothing was emptied. Rejected: resolving the link to create its
+target exclusively, redoing what the system does of a link, for a word no agent acts on.
 
 Errors of the file system are told as the system gives them ("no space left on device",
 "read-only file system"), unlike tmux messages: an agent expects a low level operation to fail
