@@ -104,7 +104,8 @@ const fileTimeoutText = "The file system did not answer in time: %s may still be
 // writeFile writes the content of in to its path, in place, within the context of the call. File
 // operations can not be interrupted: on a file system not answering (a stale NFS mount), the call
 // returns at the end of its context, logged as a warning, while the write stays blocked until the
-// file system answers.
+// file system answers. A wait for a write in place into the file under way (see fileLocks) is not
+// interrupted either: the call returns the same way, and the write comes once that one ends.
 func (d *daemon) writeFile(ctx context.Context, in tools.WriteFileInput) result {
 	attrs := []any{"path", in.Path, "bytes", len(in.Content)}
 	path, err := destinationPath(in.Path)
@@ -130,7 +131,9 @@ var fileWriter = (*daemon).writeFileNow
 
 // writeFileNow writes content to the regular file at path, an absolute clean path, creating it and
 // its missing directories if needed, or replacing it in place: as cp does, a replaced file keeps
-// its mode, owner and links, and a symbolic link is followed. It never blocks on a FIFO.
+// its mode, owner and links, and a symbolic link is followed. It never blocks on a FIFO, but waits
+// for a write in place into the file through ratd under way to end, an upload's or another
+// write_file's (see fileLocks), unless ratd stops.
 func (d *daemon) writeFileNow(path, content string) result {
 	info, err := os.Stat(path)
 	var created []string
@@ -164,9 +167,16 @@ func (d *daemon) writeFileNow(path, content string) result {
 	case err != nil:
 		return failed(d.fileFailure(err, "Writing "+path, written, false))
 	}
+	// One write in place at a time into a file (see fileLocks), held until the file is closed, taken
+	// before the truncation: a stop ending the wait leaves the file as it was.
+	release := func() {}
+	if info, err = file.Stat(); err == nil {
+		release, err = d.inPlace.lock(path, info, d.stopping)
+	}
+	defer release()
 	// once truncated, a failure leaves the file partial
 	truncated := false
-	if info, err = file.Stat(); err == nil {
+	if err == nil {
 		err = file.Truncate(0)
 		truncated = err == nil
 	}

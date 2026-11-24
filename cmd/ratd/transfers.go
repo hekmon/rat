@@ -412,9 +412,11 @@ var inPlaceOpening = func(string) {}
 // sticky bit of /tmp), the file's own deciding instead, but a body cut short leaves it partly
 // written. It is opened without following a link at the end of the path nor blocking, and refused
 // if what was opened is not a regular file (the path may name another file by then), before the
-// go-ahead: a refusal leaves the file as it was. It is emptied only once the body comes, its first
-// bytes or its end (see emptiedOnWrite): a connection lost before, the go-ahead received or not,
-// leaves it as it was too. fail and writeFailure are those of upload.
+// go-ahead: a refusal leaves the file as it was. A write in place into it through ratd under way is
+// waited for, before the go-ahead too (see fileLocks), a stop of ratd ending the wait with the file
+// as it was. It is emptied only once the body comes, its first bytes or its end (see
+// emptiedOnWrite): a connection lost before, the go-ahead received or not, leaves it as it was too.
+// fail and writeFailure are those of upload.
 func (d *daemon) uploadInPlace(w http.ResponseWriter, req *http.Request, path string, attrs []any,
 	fail func(int, result) result, writeFailure func(error) result) result {
 	inPlaceOpening(path)
@@ -436,6 +438,16 @@ func (d *daemon) uploadInPlace(w http.ResponseWriter, req *http.Request, path st
 		return fail(http.StatusConflict, withAttrs(*transferNotRegular(path, notRegular.info, upload), attrs))
 	case err != nil:
 		return writeFailure(err)
+	}
+	// One write in place at a time into a file (see fileLocks), held until the file is closed. Waited
+	// for before the go-ahead: the client sends no byte meanwhile, and a stop ending the wait leaves
+	// the file as it was.
+	release, err := d.inPlace.lock(path, opened, d.stopping)
+	defer release()
+	if err != nil {
+		_ = file.Close()
+		return fail(http.StatusBadRequest, result{err: err, attrs: attrs,
+			text: fmt.Sprintf("The upload to %s was cut before its end: nothing was written.", path)})
 	}
 	// Reading the body sends the go-ahead the client waits for. Emptying the file before would leave
 	// it empty when the connection is lost before the go-ahead reaches the client, which then can

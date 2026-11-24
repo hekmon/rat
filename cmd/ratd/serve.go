@@ -117,6 +117,8 @@ type daemon struct {
 	// stopping is closed once ratd stops (see serve): calls waiting return then, rather than hold
 	// the door open. Nil until serving, as in tests calling the tools without HTTP.
 	stopping <-chan struct{}
+	// inPlace serializes the writes in place into a file (see fileLocks)
+	inPlace fileLocks
 	// status is what systemd shows of ratd to a human operator
 	status *status
 	// notifier tells systemd the state of ratd, when started by it (see takeNotifySocket)

@@ -280,3 +280,59 @@ func TestWriteFileTimeout(t *testing.T) {
 		t.Errorf("expected a warning:\n%s", logs)
 	}
 }
+
+// TestWriteFileWaitsForWriteEnding guards write_file into a file a write in place is still writing
+// into (G7: an upload canceled, going on with the bytes already sent): it waits for that write to
+// end, its last bytes written, then the file holds exactly its content, rather than torn, the late
+// bytes of the other left after it. The lock of the file is dropped once both ended.
+func TestWriteFileWaitsForWriteEnding(t *testing.T) {
+	waiting := waitingLocks(t)
+	d := &daemon{user: "u"}
+	path := filepath.Join(t.TempDir(), "app.conf")
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the write still going on, holding the lock of the file
+	release, err := d.inPlace.lock(path, info, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	written := make(chan result, 1)
+	go func() { written <- d.writeFileNow(path, "new") }()
+	expectWaiting(t, waiting, path)
+	// an answer coming now is kept for the end: the late bytes below then tear the file
+	var r result
+	answered := false
+	select {
+	case r = <-written:
+		answered = true
+		t.Error("expected write_file waiting for the write under way, it wrote meanwhile")
+	case <-time.After(500 * time.Millisecond):
+	}
+	// the write ending: its last bytes, written where it was
+	late, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := late.WriteString(" and late bytes"); err != nil {
+		t.Fatal(err)
+	}
+	if err := late.Close(); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if !answered {
+		r = <-written
+	}
+	if r.outcome == failed || !strings.HasPrefix(r.text, "Replaced "+path+" (3 B,") {
+		t.Errorf("expected the file replaced once the write ended, got %v: %s", r.err, r.text)
+	}
+	expectFile(t, path, "new", 0o644)
+	if n := len(d.inPlace.files); n != 0 {
+		t.Errorf("expected no lock left once the writes ended, got %d", n)
+	}
+}

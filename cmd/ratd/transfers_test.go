@@ -697,6 +697,126 @@ func TestUploadInPlaceCut(t *testing.T) {
 	}
 }
 
+// waitingLocks replaces lockWaiting until the test ends, telling on the channel it returns the path
+// of each write waiting for the lock of its file: set before ratd serves, and restored once it
+// stopped (cleanups run in reverse order).
+func waitingLocks(t *testing.T) <-chan string {
+	t.Helper()
+	waiting := make(chan string, 8)
+	hook := lockWaiting
+	lockWaiting = func(path string) { waiting <- path }
+	t.Cleanup(func() { lockWaiting = hook })
+	return waiting
+}
+
+// expectWaiting fails the test unless a write waits for the lock of path within a few seconds.
+func expectWaiting(t *testing.T, waiting <-chan string, path string) {
+	t.Helper()
+	select {
+	case got := <-waiting:
+		if got != path {
+			t.Fatalf("expected a write waiting for the lock of %s, got %s", path, got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("expected a write waiting for the lock of %s, which another holds", path)
+	}
+}
+
+// TestUploadInPlaceWaitsForWriteEnding guards an upload in place into a file another upload in
+// place is still writing into, as the handler of one canceled goes on with the bytes already sent
+// before it sees the cut (G7): the second waits, before its go-ahead, for the first to end, then
+// the file holds exactly its content (G1), rather than torn, the late bytes of the first left after
+// it while the second is answered 204.
+func TestUploadInPlaceWaitsForWriteEnding(t *testing.T) {
+	waiting := waitingLocks(t)
+	r, client, home := transferRatd(t)
+	path := filepath.Join(home, "app.bin")
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// the first upload, its body fed by the test
+	body, feed := io.Pipe()
+	first := make(chan error, 1)
+	go func() {
+		_, _, err := sendTransfer(client, newUploadInPlace(t, r.addr, path, body, true))
+		first <- err
+	}()
+	chunk := bytes.Repeat([]byte("a"), 64<<10)
+	if _, err := feed.Write(chunk); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the first upload writing", func() bool {
+		info, err := os.Stat(path)
+		return err == nil && info.Size() >= int64(len(chunk))
+	})
+	type answer struct {
+		resp *http.Response
+		body string
+		err  error
+	}
+	second := make(chan answer, 1)
+	go func() {
+		resp, body, err := sendTransfer(client, newUploadInPlace(t, r.addr, path, &fileBody{content: []byte("new")}, true))
+		second <- answer{resp, body, err}
+	}()
+	expectWaiting(t, waiting, path)
+	// an answer coming now is kept for the end: the late bytes of the first then tear the file
+	var got answer
+	answered := false
+	select {
+	case got = <-second:
+		answered = true
+		t.Error("expected the second upload waiting for the first, it was answered meanwhile")
+	case <-time.After(500 * time.Millisecond):
+	}
+	// the first goes on with bytes already sent, then sees its cut
+	if _, err := feed.Write(chunk); err != nil {
+		t.Fatal(err)
+	}
+	_ = feed.CloseWithError(errors.New("cut"))
+	if err := <-first; err == nil {
+		t.Error("expected the client failing its body to fail its request")
+	}
+	if !answered {
+		got = <-second
+	}
+	if got.err != nil || got.resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %v, %v: %s", got.resp, got.err, got.body)
+	}
+	expectFile(t, path, "new", 0o644)
+}
+
+// TestUploadInPlaceWaitGivesWayToStop guards an upload in place waiting for the lock of its file,
+// which another write holds, as ratd stops: the wait gives way at once, rather than holding the
+// door open for the grace of the shutdown, the file left as it was, nothing written by the upload,
+// which is logged as cut by the stop.
+func TestUploadInPlaceWaitGivesWayToStop(t *testing.T) {
+	waiting := waitingLocks(t)
+	r, client, home := transferRatd(t)
+	path := filepath.Join(home, "app.conf")
+	if err := os.WriteFile(path, []byte("as it was"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err := r.d.inPlace.lock(path, info, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	go func() {
+		_, _, _ = sendTransfer(client, newUploadInPlace(t, r.addr, path, &fileBody{content: []byte("new")}, true))
+	}()
+	expectWaiting(t, waiting, path)
+	expectQuickStop(t, r)
+	expectFile(t, path, "as it was", 0o644)
+	if !strings.Contains(r.logs.String(), `error="cut: ratd stopping"`) {
+		t.Errorf("expected the upload logged as cut by the stop:\n%s", r.logs)
+	}
+}
+
 // TestUploadInPlaceEmptiedOnFirstBytes guards when an upload in place empties its file: once the
 // body comes, its first bytes or its end. A body cut before any byte, its client failing it as
 // soon as it got the go-ahead, leaves the file as it was, as a connection lost before the

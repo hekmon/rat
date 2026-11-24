@@ -400,9 +400,11 @@ errors with its messages.
 A file is written in place, as `cp` does: truncated, then written. It keeps its mode, owner,
 hard links and extended attributes, and a symbolic link is followed, writing its target, as a
 human editing it would. The cost: a write failing midway (no space left) leaves the file partial,
-which the error says, the agent still holding the content to write again; and two writes of the
-same file at once can mix. A program reading the file during a write may see it partial, as with
-`cp`: an agent for which it matters writes another file and renames it in the terminal. Rejected:
+which the error says, the agent still holding the content to write again; and a write from a
+terminal or another program at the same time can mix with it, two writes through ratd going one
+at a time (see G7 in File transfers). A program reading the file during a write may see it
+partial, as with `cp`: an agent for which it matters writes another file and renames it in the
+terminal. Rejected:
 writing a temporary file renamed over the target, atomic, but breaking hard links, turning a
 symbolic link into a file, possibly changing the owner, and needing to write in the directory;
 an `atomic` parameter, which small models would set "to be safe", a second way to write to test;
@@ -683,7 +685,7 @@ mark with the change making it true.
 - **G7. One write in place at a time.** Two writes in place into one file through ratd
   (`write_file`, an upload with `in_place`) never interleave: the second waits for the first, which
   keeps G1 for an upload in place following one canceled, whose handler may still write the bytes
-  already sent. *Not yet: they interleave.*
+  already sent.
 - **G8. Nothing waits on a transfer.** A tool call waits 50 seconds at most
   (`tools.MaxWaitSeconds`), and stopping ratd or rat cuts their transfers at once. A transfer still
   running is found again by its paths, and its outcome kept until told.
@@ -784,6 +786,15 @@ leaves it as it was. It is emptied only once the body comes, its first bytes or 
 connection lost before, the go-ahead received or not, leaves it as it was too. Emptied before the
 go-ahead, it would be left empty by a connection lost before the go-ahead reached rat, which then
 can not tell ratd was reached at all.
+
+Writes in place into a file go one at a time, `write_file`'s and those of uploads, by its device and
+inode (`fileLocks`): a write can outlive the call that made it, the handler of an upload canceled
+reading and writing the bytes already sent before it sees the cut, while the agent, told the file
+may be partly written, writes it again at once. The second write waits for the first to end, an
+upload before its go-ahead, `write_file` before emptying the file. Without the wait, the two would
+interleave: the file torn, the late bytes of the first left after the content of the second. The
+wait gives way to a stop of ratd, the file left as it was. Rejected: refusing the second write while
+the first ends, which would make the agent call again for a wait of moments.
 
 Without `Rat-In-Place`, an upload denied a new file in place of one ratd's user can write
 (`access(2)`) is refused telling the agent to set `in_place`, the parameter of `upload_file`
