@@ -700,15 +700,14 @@ in place, whether the whole file was sent.
 |---|---|---|
 | Done | ratd answered 201 or 204; a download was placed | nothing |
 | Untouched | refused by the local side; ratd never reached; any end without `in_place`, the answer lost aside | fixes the cause, copies again |
-| Unknown | `in_place`, ratd reached and answering nothing; the answer lost once the whole file was sent (without `in_place`: the old file or the new one, whole) | checks the file in a terminal, or copies again |
+| Unknown | `in_place`, ratd reached and answering nothing, or the copy canceled, whenever the cancel came; the answer lost once the whole file was sent (without `in_place`: the old file or the new one, whole) | checks the file in a terminal, or copies again |
 
 A refusal of ratd is relayed as it is: ratd, which knows whether it emptied a file written in
 place, tells which state it left. rat, which does not know, never derives it from the bytes it
 read or the size it saw: each such case is a proof to hold (an empty file, one emptied between two
 looks, a body buffered), where an agent with a terminal checks in one command. The price: an
 upload in place canceled before its first byte is told to check the file, rather than told it is
-as it was. *Not yet: rat tells an upload in place cut or canceled "as it was" or "partly written"
-from the bytes it read and the size it saw.*
+as it was.
 
 **Limits.** Each is a line a finding is closed with.
 

@@ -884,12 +884,10 @@ func TestTransferLeftInPlace(t *testing.T) {
 		left := "/r/up.bin is as it was."
 		lost := "/r/up.bin may be written or not."
 		again := "overwrite"
-		changed := ""
 		if q.inPlace && q.overwrite {
 			left = "/r/up.bin, written in place, may be partly written."
 			lost = left
 			again = "overwrite and in_place"
-			changed = " " + left
 		}
 		j := &job{request: q}
 		for err, told := range map[error]string{
@@ -898,7 +896,7 @@ func TestTransferLeftInPlace(t *testing.T) {
 			&connect.TransferError{Kind: connect.ErrRead, Reason: errors.New("input/output error")}: "Reading up.bin " +
 				"failed: input/output error. " + left,
 			connect.ErrChanged: "up.bin changed while it was read: it may still be written. Upload it again once it " +
-				"is complete." + changed,
+				"is complete. " + left,
 			&connect.TransferError{Kind: connect.ErrAnswerLost, Reason: errors.New("wsarecv: An existing connection " +
 				"was forcibly closed by the remote host.")}: "The answer of ratd to the copy of up.bin to /r/up.bin " +
 				"was lost once all of it was sent (wsarecv: An existing connection was forcibly closed by the remote " +

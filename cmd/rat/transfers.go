@@ -842,12 +842,8 @@ func (t *transfers) failureText(j *job, err error) (string, bool, bool) {
 		return fmt.Sprintf("The ratd at %s is older than this rat and serves no file transfers: whoever runs it must "+
 			"upgrade it.", t.server), true, false
 	case errors.Is(err, connect.ErrChanged):
-		text := fmt.Sprintf("%s changed while it was read: it may still be written. Upload it again once it is "+
-			"complete.", j.request.local)
-		if j.request.writesInPlace() {
-			text += " " + destinationText(j) + "."
-		}
-		return text, true, false
+		return fmt.Sprintf("%s changed while it was read: it may still be written. Upload it again once it is "+
+			"complete. %s.", j.request.local, destinationText(j)), true, false
 	case errors.Is(err, connect.ErrRead) && errors.As(err, &failed):
 		return t.localFailure(failed.Reason, "Reading", j.request.local) + " " + destinationText(j) + ".", true, false
 	case errors.Is(err, connect.ErrCut) && errors.As(err, &failed):
