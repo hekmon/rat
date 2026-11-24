@@ -599,10 +599,12 @@ func modeOf(info fs.FileInfo, err error) any {
 
 // TestUploadSpecialBits guards the special bits of a file an upload replaces (G6, L2): put in place
 // by a new file, it takes the nine permission bits of the file replaced only, never its setuid bit,
-// which would then be for ratd's user, Rat-Mode telling those nine; written in place, it is told the
-// same, what the system did to the bit aside; in both, Rat-Note tells the agent the bit the file
-// replaced had, for it to set again. A file replaced without such a bit carries no Rat-Note. setuid
-// rather than setgid: a chmod may drop setgid silently, for a group the user is not in.
+// which would then be for ratd's user, Rat-Mode telling those nine, and Rat-Note the bit the file
+// replaced had, for the agent to set again; written in place, Rat-Mode tells the same nine, and
+// Rat-Note the bit only when the system cleared it, never one the file still has: the system keeps
+// it for root, and on macOS for an empty body, which only empties the file (the answer told it lost
+// all the same). A file replaced without such a bit carries no Rat-Note. setuid rather than setgid:
+// a chmod may drop setgid silently, for a group the user is not in.
 func TestUploadSpecialBits(t *testing.T) {
 	r, client, home := transferRatd(t)
 	path := filepath.Join(home, "tool")
@@ -634,14 +636,28 @@ func TestUploadSpecialBits(t *testing.T) {
 	}
 	expectFile(t, path, "new", 0o755)
 
-	setuid()
-	resp, body, err = sendTransfer(client, newUploadInPlace(t, r.addr, path, &fileBody{content: []byte("in place")},
-		true))
-	if err != nil || resp.StatusCode != http.StatusNoContent || resp.Header.Get(connect.HeaderMode) != "0755" ||
-		connect.DecodeError(resp.Header.Get(connect.HeaderNote)) != note {
-		t.Errorf("in place: expected 204, mode 0755 and the note, got %v, %v: %q", resp, err, body)
+	for _, content := range []string{"in place", ""} {
+		setuid()
+		resp, body, err = sendTransfer(client, newUploadInPlace(t, r.addr, path, &fileBody{content: []byte(content)},
+			true))
+		if err != nil || resp.StatusCode != http.StatusNoContent || resp.Header.Get(connect.HeaderMode) != "0755" {
+			t.Fatalf("in place, content %q: expected 204 and mode 0755, got %v, %v: %q", content, resp, err, body)
+		}
+		// what the system did to the bit is its own, which the note follows
+		left, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		told := note
+		if left.Mode()&fs.ModeSetuid != 0 {
+			told = ""
+		}
+		if got := connect.DecodeError(resp.Header.Get(connect.HeaderNote)); got != told {
+			t.Errorf("in place, content %q, the file left %v: expected the note %q, got %q", content, left.Mode(), told,
+				got)
+		}
+		expectFile(t, path, content, 0o755)
 	}
-	expectFile(t, path, "in place", 0o755)
 
 	if err := os.Chmod(path, 0o755); err != nil {
 		t.Fatal(err)

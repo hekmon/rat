@@ -241,15 +241,15 @@ func FormatMode(mode fs.FileMode) string {
 	return fmt.Sprintf("%04o", uint32(mode.Perm()))
 }
 
-// SpecialBitsNote returns the sentence telling the agent that the file a transfer replaced, of
-// mode as looked at before the bytes, had a setuid or setgid bit, which the file written does not
-// have, for the agent to set it again itself (chmod): empty without them. The same sentence serves
-// a file replaced by a new one, which has none, and one written in place, whose bits the system
-// clears on a write, unless the writer may keep them (root): the sentence is told from the look
-// before the bytes, never from the file written, which would take a second look. The sticky bit is
-// dropped without a word: Linux and macOS ignore it on a regular file.
-func SpecialBitsNote(mode fs.FileMode) string {
-	switch setuid, setgid := mode&fs.ModeSetuid != 0, mode&fs.ModeSetgid != 0; {
+// SpecialBitsNote returns the sentence telling the agent that the file a transfer replaced had the
+// setuid or setgid bits of lost, which the file written does not have, for the agent to set them
+// again itself (chmod): empty without them. The same sentence serves a file replaced by a new one,
+// which has none of those the file replaced showed, and one written in place, where lost holds
+// only those the system cleared: it keeps them for some writers (root), and a bit the file still
+// has is not told lost. The sticky bit is dropped without a word: Linux and macOS ignore it on a
+// regular file.
+func SpecialBitsNote(lost fs.FileMode) string {
+	switch setuid, setgid := lost&fs.ModeSetuid != 0, lost&fs.ModeSetgid != 0; {
 	case setuid && setgid:
 		return "The file replaced had the setuid and setgid bits, which a file written loses: set them again if it " +
 			"needs them (chmod ug+s)."

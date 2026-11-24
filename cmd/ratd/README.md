@@ -716,8 +716,10 @@ as it was.
   it. Written in place, it keeps them, its capabilities aside. As `mv` and `cp`.
 - **L2. Setuid and setgid.** They never travel from a source, and a file written loses them, as
   with `cp` and `scp`: a new file put in place has none, and the system clears those of a file
-  written in place. The answer tells it when the file replaced showed one, looked at once, before
-  the bytes. Rejected: putting them back, with a chmod once written, and a chown before the rename
+  written in place, unless it keeps them: for root, and on macOS for a file only emptied, its
+  new content empty. The answer tells the bits lost: those the file showed when a new one replaced it,
+  those a file written in place showed before the bytes and no longer shows once written.
+  Rejected: putting them back, with a chmod once written, and a chown before the rename
   for the owner the bit is for. ratd's chmod is that of the user of the terminals, where the agent
   sets the bit again itself (`chmod u+s`): it added no ability, and took a sync before the chmod
   for network file systems, a look after it for a chmod dropping setgid without an error, and a

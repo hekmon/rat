@@ -459,6 +459,16 @@ func (d *daemon) uploadInPlace(w http.ResponseWriter, req *http.Request, path st
 		// an empty body, which writes nothing: the file emptied all the same, its new content
 		err = into.empty()
 	}
+	// The setuid and setgid bits the write cleared, looked at through the file still open. Told from
+	// the look before the bytes alone, a bit the system kept would be told lost: for a writer it lets
+	// keep them (root), and for an empty body on macOS, where emptying a file clears nothing. A look
+	// failing tells them all lost, what the system does but for those.
+	lost := opened.Mode() & (fs.ModeSetuid | fs.ModeSetgid)
+	if lost != 0 && err == nil {
+		if after, statErr := file.Stat(); statErr == nil {
+			lost &^= after.Mode()
+		}
+	}
 	// a network file system may only report a failed write when closing
 	if closeErr := file.Close(); err == nil {
 		err = closeErr
@@ -480,9 +490,7 @@ func (d *daemon) uploadInPlace(w http.ResponseWriter, req *http.Request, path st
 			attrs))
 	}
 	w.Header().Set(connect.HeaderMode, connect.FormatMode(opened.Mode()))
-	// told from the look before the bytes: what the write left of the bits (cleared, or kept for
-	// root) would take a second look
-	setNote(w, connect.SpecialBitsNote(opened.Mode()))
+	setNote(w, connect.SpecialBitsNote(lost))
 	w.WriteHeader(http.StatusNoContent)
 	return result{attrs: append(attrs, "replaced", true, "status", http.StatusNoContent)}
 }
