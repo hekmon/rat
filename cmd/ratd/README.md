@@ -383,8 +383,8 @@ errors with its messages.
 - **`write_file`** `{path, content}`: creates the file or replaces it, and says which (with the
   former size). A new file gets 0644 minus ratd's umask. Missing directories are created, as
   `mkdir -p` does (0755 minus ratd's umask), sparing a round trip through the terminal, and the
-  result names them, a failure leaving them included: a typo in a path creates directories the
-  agent did not mean. The content is text (a JSON string), written as is. The description tells
+  result names them, a failure leaving them included, a call ending before its write aside (the
+  time limit): a typo in a path creates directories the agent did not mean. The content is text (a JSON string), written as is. The description tells
   no way around for binary content: an agent that really needs one encodes it as text by itself,
   and pointing to a way (`base64 -d` in the terminal) would invite it into its context, a third
   larger and meaningless to the model. A path naming a directory by its form (a final slash, or `.`
@@ -704,7 +704,7 @@ all), whether it was asked in place, whether the whole file was sent.
 | State | When | What the agent does |
 |---|---|---|
 | Done | ratd answered 201 or 204; a download was placed | nothing |
-| Untouched | refused by the local side; ratd answering nothing at all, never reached or lost before its go-ahead, before which it writes nothing; any end without `in_place`, the answer lost aside | fixes the cause, copies again |
+| Untouched | refused by the local side; ratd answering nothing at all, never reached or lost before its go-ahead, before which it does not touch the file; any end without `in_place`, the answer lost aside | fixes the cause, copies again |
 | Unknown | `in_place`, ratd giving its go-ahead and answering nothing after, or the copy canceled, whenever the cancel came; the answer lost once the whole file was sent (without `in_place`: the old file or the new one, whole) | checks the file in a terminal, or copies again |
 
 A refusal of ratd is relayed as it is: ratd, which knows whether it emptied a file written in
@@ -750,8 +750,14 @@ as it was.
   in place is unknown.
 - **L13. One file, two transfers.** rat knows a transfer by its destination as written, cleaned:
   `~/x` and the absolute path it stands for, or two paths through a link of ratd's machine, are
-  two transfers of rat to one file. G3 and G7 hold for each: without `in_place` the last one
-  placed stays, whole, and writes in place go one at a time.
+  two transfers of rat to one file, as are those of two rats. G3 and G7 hold for each: without
+  `in_place` the last one placed stays, whole, and writes in place go one at a time. An upload in
+  place told done may have written a file another transfer replaced by a new one meanwhile: its
+  bytes are then in no file at the path.
+- **L14. Directories.** The missing directories of an upload are created before the go-ahead and
+  left by whatever ends it; an upload cut, canceled or told unreachable does not name them.
+- **L15. File systems without permission bits** (FAT, exFAT): G6 does not hold, a new file showing
+  what the file system gives, untold.
 
 ### How a transfer keeps them
 

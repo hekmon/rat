@@ -101,7 +101,7 @@ type downloadInput struct {
 const transferDescription = "Its content never enters your context, whatever its size, binary included. local_path " +
 	"is relative to %s, the only directory rat copies files from and to on your machine; remote_path is absolute or " +
 	"starts with ~/. Missing directories are created. An existing file is replaced only with overwrite, and keeps " +
-	"its permissions; a new one gets those of %s. A symbolic link at the end of a path is refused, naming its target, " +
+	"its permissions; a new one gets those of %s minus the umask. A symbolic link at the end of a path is refused, naming its target, " +
 	"and a file changing while it is copied fails the transfer: copy it once complete. The call waits up to %d " +
 	"seconds: a longer copy goes on in the background, the call telling its progress, and calling again with the " +
 	"same paths waits for the rest, or tells how it ended, the copy keeping the parameters it started with: to " +
