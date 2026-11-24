@@ -135,38 +135,39 @@ directory must be one of its own, as a new `.git/hooks/pre-commit` in a project 
 **Jobs, found by their paths.** A transfer can outlast a call, which several harnesses cut at 60
 seconds: it runs in rat, as a job kept in memory. A call waits for it 50 seconds at most, as
 `wait_window` does at most; a longer one goes on, the call telling its progress (the bytes of the
-size, the rate over the last 30 seconds, a rounded time left, or that nothing moved), for the
-agent to wait its own way (a `sleep` in its shell) or to do something else. A job is identified
-by its destination, which one transfer at a time writes, and found by its paths, as terminals are
-by name: a call with the same paths waits for the rest, or tells how it ended, once, whatever its
-overwrite and `in_place`, but for a call setting one to a transfer without it, which may refuse a
-file existing (without overwrite) or be refused where writing in place would not (without
-`in_place`, its new file denied a place; `in_place` counting with overwrite alone, a missing file
-being created all or nothing): refused while that transfer runs, told how it ended if it wrote its
-file (to a call setting `in_place`, with the new file that copy put in place of the old one, its
-hard links, owner and attributes not kept), starting the copy asked otherwise. Another source to
-the same destination is refused while it runs, and once it ended, its outcome not told yet, the
-call tells that outcome, as a cancel naming another source does, and forgets the job: the next call
-starts the transfer asked, the agent knowing what the first one wrote (after a context compaction,
-for one). Paths are cleaned as a call is read, the remote one lexically when ratd takes it,
-absolute or starting with `~/` (`path.Clean`, `~/` kept), a relative one sent as it is for ratd to
-refuse: its spellings with a doubled slash, a dot or a parent make one job, but `~/x` and the
-absolute path it stands for stay two, as do two paths through a link of ratd's machine, which rat
-can not resolve. A destination naming a directory by its form (a final slash, or `.` or `..` as its
-last part) is refused before any request, as ratd refuses one, rather than cleaned into the name of
-a file. Canceling a call (the harness giving up on it) ends its wait, not the transfer. `cancel`
-with the same paths stops it, leaving the destination as it was, decided at one point: before the
-last chunk of an upload (past it, ratd may be writing the file, and the call tells its answer, or
-that it was lost, the file possibly written), before a download is put in place. An upload with
-`in_place` writes into the file it replaces (see In place in the README of ratd): a cut or a cancel
-may then leave it partly written, which rat tells, not knowing whether ratd found the file to write
-into, a missing one being created all or nothing. Written in place into the very file uploaded, rat
-and ratd sharing a machine, a file would be emptied as it is read, lost but for its first bytes:
-the description of `in_place` warns against it. Rejected: detecting it, which rat could only do by
-the path, wrongly through a tunnel showing a remote ratd on a loopback address, the same paths on
-both machines. Rejected: a call joining the job of its paths whatever its `in_place`, as changing
-how the file is written rather than what is copied: a call setting it was then told, as its own
-outcome, the refusal of the transfer without it, which told to set `in_place`. Rejected: job
+size, the rate over the last 30 seconds, a rounded time left, or that nothing moved), for the agent
+to wait its own way (a `sleep` in its shell) or to do something else. A job is identified by its
+destination, which one transfer at a time writes, and found by its paths, as terminals are by name:
+a call with the same paths waits for the rest, or tells how it ended, once, whatever its overwrite
+and `in_place`. The job keeps what the call starting it asked, and every answer tells what the job
+did, never what the joining call asked: an upload replacing a file tells whether it put a new file
+in its place or wrote into it, and a refusal telling to set overwrite (a file existing) or
+`in_place` (a new file denied its place) may reach a call that set it, the same call again then
+copying as asked. To copy with other options, the agent cancels the job, or lets it end and be
+told, then calls again, which the descriptions tell. Another source to the same destination is
+refused while it runs, and once it ended, its outcome not told yet, the call tells that outcome, as
+a cancel naming another source does, and forgets the job: the next call starts the transfer asked,
+the agent knowing what the first one wrote (after a context compaction, for one). Paths are cleaned
+as a call is read, the remote one lexically when ratd takes it, absolute or starting with `~/`
+(`path.Clean`, `~/` kept), a relative one sent as it is for ratd to refuse: its spellings with a
+doubled slash, a dot or a parent make one job, but `~/x` and the absolute path it stands for stay
+two, as do two paths through a link of ratd's machine, which rat can not resolve. A destination
+naming a directory by its form (a final slash, or `.` or `..` as its last part) is refused before
+any request, as ratd refuses one, rather than cleaned into the name of a file. Canceling a call
+(the harness giving up on it) ends its wait, not the transfer. `cancel` with the same paths stops
+it, leaving the destination as it was, decided at one point: before the last chunk of an upload
+(past it, ratd may be writing the file, and the call tells its answer, or that it was lost, the
+file possibly written), before a download is put in place. An upload with `in_place` writes into
+the file it replaces (see In place in the README of ratd): a cut or a cancel may then leave it
+partly written, which rat tells, not knowing whether ratd found the file to write into, a missing
+one being created all or nothing. Written in place into the very file uploaded, rat and ratd
+sharing a machine, a file would be emptied as it is read, lost but for its first bytes: the
+description of `in_place` warns against it. Rejected: detecting it, which rat could only do by the
+path, wrongly through a tunnel showing a remote ratd on a loopback address, the same paths on both
+machines. Rejected: comparing the options of a call with those of its job, which makes the answer
+depend on both and on the state of the job (the call refused while the job runs, joined once it
+wrote its file, or the job forgotten for the copy asked to start, its outcome never told): a case
+analysis an agent can not foresee from its call, to save it a call or two. Rejected: job
 identifiers, with tools to wait for, list and cancel jobs, which a context compaction loses, more
 tools for small models to juggle; a parameter for the wait, or a size choosing between waiting and
 a job, the speed of the link being unknown; MCP tasks (experimental in protocol 2025-11-25, an

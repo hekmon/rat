@@ -624,7 +624,9 @@ client checks, never through MCP: `/mcp` stays MCP only. The contract is declare
   directory) leaving the answer without them. A 201 names the directories created, as `write_file`
   does, and so does a failure leaving some, creating them included: the answer to an upload cut or
   canceled, nobody reads. A 204, which carries no body, tells in `Rat-Note` the setuid or setgid
-  bit the file replaced showed and the file written lost (see L2), encoded as `Rat-Error` is.
+  bit the file replaced showed and the file written lost (see L2), encoded as `Rat-Error` is, and
+  in `Rat-In-Place` that the file was written into: asked in place, a file appearing at a path
+  found empty is replaced by a new one, which rat would otherwise tell written in place.
 - **`GET /download`**: the body of the answer is the file at the path `Rat-Path` names, with its
   permission bits in `Rat-Mode` and its size in `Rat-Size`. HEAD answers the headers alone.
 - The answers of both endpoints carry `Rat-Version`, the version of ratd: a 404 without it comes

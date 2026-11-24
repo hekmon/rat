@@ -677,6 +677,48 @@ func TestUploadSpecialBits(t *testing.T) {
 	expectNoTemporary(t, home)
 }
 
+// TestUploadTellsInPlace guards what the answer of an upload replacing a file tells of how it did:
+// Rat-In-Place when ratd wrote into the file, nothing when it put a new file in its place, asked in
+// place included. A file appearing while the bytes come, at a path found empty, is replaced by a
+// new file, its hard link keeping what appeared: told from what was asked, it would be told written
+// in place, its hard links believed to follow.
+func TestUploadTellsInPlace(t *testing.T) {
+	r, client, home := transferRatd(t)
+	path := filepath.Join(home, "app.bin")
+	link := filepath.Join(home, "app.link")
+	expect := func(name string, req *http.Request, inPlace bool) {
+		t.Helper()
+		resp, body, err := sendTransfer(client, req)
+		if err != nil || resp.StatusCode != http.StatusNoContent {
+			t.Fatalf("%s: expected 204, got %v, %v: %q", name, resp, err, body)
+		}
+		if told := resp.Header.Get(connect.HeaderInPlace); (told == "true") != inPlace || (told != "" && !inPlace) {
+			t.Errorf("%s: expected in place %v told, got %s %q", name, inPlace, connect.HeaderInPlace, told)
+		}
+	}
+	if err := os.WriteFile(path, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expect("in place", newUploadInPlace(t, r.addr, path, &fileBody{content: []byte("into")}, true), true)
+	expect("not in place", newUpload(t, r.addr, path, &fileBody{content: []byte("new")}, "0644", true), false)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	appear := func() {
+		if err := os.WriteFile(path, []byte("appeared"), 0o600); err != nil {
+			t.Error(err)
+		}
+		if err := os.Link(path, link); err != nil {
+			t.Error(err)
+		}
+	}
+	expect("appeared, asked in place", newUploadInPlace(t, r.addr, path, &fileBody{content: []byte("uploaded"),
+		atEnd: appear}, true), false)
+	expectFile(t, path, "uploaded", 0o600)
+	expectFile(t, link, "appeared", 0o600)
+	expectNoTemporary(t, home)
+}
+
 // TestUploadInPlaceCut guards an upload in place whose body is cut short (its client failing it, as
 // rat does when its file changed): the file is left partly written, the beginning of the new
 // content, rather than as it was, the log telling the bytes written in place. The file is read

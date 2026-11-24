@@ -236,6 +236,35 @@ func TestUploadNote(t *testing.T) {
 	}
 }
 
+// TestUploadInPlaceTold guards how an upload tells its file written into: from Rat-In-Place in the
+// answer of ratd to a file replaced, rather than from what was asked, ratd putting a new file in
+// place of one that appeared meanwhile; never for a file created, nor from a value that is not
+// true.
+func TestUploadInPlaceTold(t *testing.T) {
+	server, client := fakeRatd(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set(HeaderMode, "0644")
+		status := http.StatusNoContent
+		switch r.Header.Get(HeaderPath) {
+		case "/into":
+			w.Header().Set(HeaderInPlace, "true")
+		case "/unreadable":
+			w.Header().Set(HeaderInPlace, "yes")
+		case "/created":
+			w.Header().Set(HeaderInPlace, "true")
+			status = http.StatusCreated
+		}
+		w.WriteHeader(status)
+	})
+	for path, inPlace := range map[string]bool{"/into": true, "/new": false, "/unreadable": false, "/created": false} {
+		up, err := Upload(context.Background(), nil, client, server, &testFile{content: []byte("data"), mode: 0o644},
+			path, UploadOptions{Overwrite: true, InPlace: true})
+		if err != nil || up.InPlace != inPlace {
+			t.Errorf("%s: expected in place %v, got %+v, %v", path, inPlace, up, err)
+		}
+	}
+}
+
 // TestUploadRefused guards the refusals of ratd: from the headers alone, before any byte of the
 // file is read, as a Refusal with the sentence of ratd; a 404 without the version of ratd telling
 // a ratd older than the transfers, one with it a refusal like the others.

@@ -36,7 +36,9 @@ const (
 	// file in its place: true or false, false when absent, the all or nothing side. Written into,
 	// the file keeps its hard links, owner and extended attributes, and its directory needs no
 	// write permission, the file's own deciding instead, but a body cut short leaves it partly
-	// written. A missing file is created all or nothing whatever it says.
+	// written. A missing file is created all or nothing whatever it says. In the answer to an
+	// upload, true tells the file was written into: asked in place, a file appearing at a path
+	// found empty is replaced by a new one all the same, which the request alone would not tell.
 	HeaderInPlace = "Rat-In-Place"
 	// HeaderMode holds the nine permission bits in octal ([FormatMode]): of the file sent, in an
 	// upload and in the answer to a download; of the file as written, in the answer to an upload.

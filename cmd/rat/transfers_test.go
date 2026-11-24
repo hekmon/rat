@@ -38,7 +38,9 @@ const fakeChunk = 32 << 10
 // after its first chunk until stall is closed, failing with the sentence failWith (a download in
 // its trailer, an upload once received whole, writing nothing but what it wrote in place), cutting
 // a transfer after its first chunk, losing the answer to an upload it received whole (dropAnswer),
-// answering an upload written without the mode of the file (noMode), or calling meanwhile as a
+// answering an upload written without the mode of the file (noMode), putting a new file in place
+// of the one an upload in place replaces, as ratd does of a file appearing at a path it found empty
+// (newFile), or calling meanwhile as a
 // download comes, before answering it, as another transfer acting in between. It is for what a test must provoke: what ratd does by itself, successes and refusals,
 // is tested against ratd (see ratd_unix_test.go), and the answers the tests of the fake go through
 // are those of ratd, which TestRealRatdAnswersAsFake checks, TestRealRatdEmptiesInPlaceAsFake
@@ -54,6 +56,7 @@ type fakeTransfers struct {
 	cut        bool
 	dropAnswer bool
 	noMode     bool
+	newFile    bool
 	meanwhile  func()
 	// inPlace is the in place of each upload received
 	inPlace []bool
@@ -130,7 +133,10 @@ func (f *fakeTransfers) upload(w http.ResponseWriter, r *http.Request) {
 	var into io.Writer = &received
 	// in place, as ratd writes a file replaced: emptied once the body comes, then written into, a
 	// cut leaving it partly written
-	intoFile := inPlace && statErr == nil
+	f.mu.Lock()
+	newFile := f.newFile
+	f.mu.Unlock()
+	intoFile := inPlace && statErr == nil && !newFile
 	var inPlaceFile *emptiedOnWrite
 	if intoFile {
 		file, err := os.OpenFile(path, os.O_WRONLY, 0)
@@ -208,6 +214,10 @@ func (f *fakeTransfers) upload(w http.ResponseWriter, r *http.Request) {
 		// as ratd tells the setuid or setgid bit of the file replaced, from the look before the bytes
 		if note := connect.SpecialBitsNote(info.Mode()); note != "" {
 			w.Header().Set(connect.HeaderNote, connect.EncodeError(note))
+		}
+		if intoFile {
+			// as ratd tells a file written into
+			w.Header().Set(connect.HeaderInPlace, "true")
 		}
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -422,7 +432,8 @@ func shortWait(t *testing.T, wait time.Duration) {
 
 // TestTransferTools guards the tools rat offers: none of its own without a transfers directory;
 // with one, upload_file and download_file next to the tools of ratd, their descriptions naming the
-// directory and what a cancel leaves (a file written in place partly written, upload_file alone
+// directory, that a copy under way is joined as it was asked, canceled to change it, and what a
+// cancel leaves (a file written in place partly written, upload_file alone
 // writing in place), in_place telling what each choice costs (room for a second copy, or a file
 // partly written) and warning against writing into the file uploaded itself, their paths
 // required; and a transfers directory that is not one fails the start.
@@ -462,6 +473,10 @@ func TestTransferTools(t *testing.T) {
 		}
 		if !strings.Contains(tool.Description, "local_path is relative to "+dir+",") {
 			t.Errorf("%s: expected the directory named, got %q", name, tool.Description)
+		}
+		if !strings.Contains(tool.Description, "the copy keeping the parameters it started with: to change them, "+
+			"cancel it, then call again.") {
+			t.Errorf("%s: expected a copy under way told joined as asked, got %q", name, tool.Description)
 		}
 		schema, _ := tool.InputSchema.(map[string]any)
 		if required, _ := schema["required"].([]any); len(required) != 2 {
@@ -568,7 +583,7 @@ func TestUploadFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	args["overwrite"] = true
-	tt.expect(t, uploadTool, args, false, "Uploaded sub/app.bin to "+remote+" (300 KiB): replaced. It kept its "+
+	tt.expect(t, uploadTool, args, false, "Uploaded sub/app.bin to "+remote+" (300 KiB): replaced by a new file. It kept its "+
 		"permissions (0600), not those of your file (0750): change them in a terminal (chmod) if it needs yours.")
 	expectContent(t, remote, content, 0o600)
 	if !strings.Contains(tt.rat.logs.String(), "msg=transfer direction=upload_file local=sub/app.bin remote="+remote+
@@ -619,10 +634,10 @@ func TestTransferSpecialBits(t *testing.T) {
 	}
 
 	randomFile(t, filepath.Join(tt.local, "new"), 1<<10, 0o700)
-	for _, inPlace := range []bool{false, true} {
+	for inPlace, how := range map[bool]string{false: "replaced by a new file", true: "written in place"} {
 		setuid(remote)
 		tt.expect(t, uploadTool, map[string]any{"local_path": "new", "remote_path": remote, "overwrite": true,
-			"in_place": inPlace}, false, "Uploaded new to "+remote+" ("+size+"): replaced. It kept its permissions "+
+			"in_place": inPlace}, false, "Uploaded new to "+remote+" ("+size+"): "+how+". It kept its permissions "+
 			"(0755), not those of your file (0700): change them in a terminal (chmod) if it needs yours. "+note)
 	}
 }
@@ -640,9 +655,10 @@ func TestTransferModesNotTold(t *testing.T) {
 	remote := filepath.Join(tt.remote, "app.bin")
 	randomFile(t, remote, 1<<10, 0o644)
 	args := map[string]any{"local_path": "app.bin", "remote_path": remote, "overwrite": true}
-	for _, tool := range []string{uploadTool, downloadTool} {
+	for tool, replaced := range map[string]string{uploadTool: "(1 KiB): replaced by a new file.",
+		downloadTool: "(1 KiB): replaced."} {
 		text, isError := tt.call(t, tool, args)
-		if isError || !strings.HasSuffix(text, "(1 KiB): replaced.") {
+		if isError || !strings.HasSuffix(text, replaced) {
 			t.Errorf("%s: expected the file replaced, its permissions untold, got %q", tool, text)
 		}
 	}
@@ -815,17 +831,31 @@ func TestUploadModeNotTold(t *testing.T) {
 	randomFile(t, filepath.Join(tt.local, "up.bin"), 1<<10, 0o644)
 	remote := filepath.Join(tt.remote, "app.bin")
 	randomFile(t, remote, 10, 0o640)
-	told := "Uploaded up.bin to " + remote + " (1 KiB): replaced."
+	told := "Uploaded up.bin to " + remote + " (1 KiB): replaced by a new file."
 	if text := tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote,
 		"overwrite": true}, false, told); text != told {
 		t.Errorf("expected %q alone, got %q", told, text)
 	}
 }
 
+// TestUploadInPlaceNewFile guards an upload with in_place and overwrite whose file ratd replaced by
+// a new one (newFile), as it does of a file appearing at a path it found empty: told replaced by a
+// new file, from the answer of ratd, rather than written in place, from what was asked, the agent
+// then believing the hard links of the file to follow.
+func TestUploadInPlaceNewFile(t *testing.T) {
+	tt := startTransfers(t)
+	tt.fake.set(func(f *fakeTransfers) { f.newFile = true })
+	randomFile(t, filepath.Join(tt.local, "up.bin"), 1<<10, 0o644)
+	remote := filepath.Join(tt.remote, "app.bin")
+	randomFile(t, remote, 10, 0o640)
+	tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote, "overwrite": true,
+		"in_place": true}, false, "Uploaded up.bin to "+remote+" (1 KiB): replaced by a new file.")
+}
+
 // TestUploadFileInPlace guards an upload with in_place and overwrite: sent with Rat-In-Place, ratd
-// (the fake, as ratd does) writing into the file replaced, its hard link following, told replaced
-// as any upload; a call with the same paths, in_place left out, joining the job of its paths, as a
-// call without overwrite joins any job, asking nothing more; a cancel telling the file, written in
+// (the fake, as ratd does) writing into the file replaced, its hard link following, told written in
+// place; a call with the same paths, in_place left out, joining the job of its paths, as any call
+// with them joins it; a cancel telling the file, written in
 // place, may be partly written, rather than as it was. Without overwrite, in_place asks nothing.
 func TestUploadFileInPlace(t *testing.T) {
 	shortWait(t, 300*time.Millisecond)
@@ -838,7 +868,7 @@ func TestUploadFileInPlace(t *testing.T) {
 	}
 	content := randomFile(t, filepath.Join(tt.local, "up.bin"), 1<<10, 0o644)
 	tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote, "overwrite": true,
-		"in_place": true}, false, "Uploaded up.bin to "+remote+" (1 KiB): replaced.")
+		"in_place": true}, false, "Uploaded up.bin to "+remote+" (1 KiB): written in place.")
 	expectContent(t, link, content, 0o640)
 	tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote, "in_place": true}, true,
 		remote+" exists: set overwrite to replace it.")
@@ -1440,250 +1470,236 @@ func TestTransferRemoteSpellings(t *testing.T) {
 		"Canceled the copy of up.bin to "+remote+" after ")
 }
 
-// TestTransferEndedOverwrite guards a transfer without overwrite met by a call setting it: refused
-// while the transfer runs (its local check held past the wait of its call), as it may refuse a file
-// existing, rather than joined; once it ended refused (its file existing) or canceled, its outcome
-// not told yet, forgotten, the call copying the file, rather than told, as the outcome of another
-// request, to set the overwrite it set, or that the copy was canceled; once it ended creating its
-// file, joined, told how it ended, once, rather than the file copied again.
-func TestTransferEndedOverwrite(t *testing.T) {
-	shortWait(t, 300*time.Millisecond)
-	held := make(chan struct{})
-	release := sync.OnceFunc(func() { close(held) })
-	// set before rat starts, and restored once it stopped (cleanups run in reverse order)
-	hookPreparing, hookDownloaded := preparing, downloaded
+// holdFirst sets preparing, until the test ends, to hold the first job of each destination named,
+// by its base name, as a file system not answering would, until the function returned for that
+// name is called. Set before rat starts, restored once it stopped (cleanups run in reverse order):
+// the caller registers the functions returned as cleanups once rat started, rat waiting for its
+// transfers as it stops.
+func holdFirst(t *testing.T, names ...string) map[string]func() {
+	t.Helper()
+	var mu sync.Mutex
+	holds := map[string]chan struct{}{}
+	releases := map[string]func(){}
+	for _, name := range names {
+		hold := make(chan struct{})
+		holds[name] = hold
+		releases[name] = sync.OnceFunc(func() { close(hold) })
+	}
+	hook := preparing
 	preparing = func(q transferRequest) {
-		if !q.overwrite {
-			<-held
+		mu.Lock()
+		hold := holds[filepath.Base(q.destination())]
+		delete(holds, filepath.Base(q.destination()))
+		mu.Unlock()
+		if hold != nil {
+			<-hold
 		}
 	}
-	// the transfer to canceled.bin canceled once its file came whole, long after its call
+	t.Cleanup(func() { preparing = hook })
+	return releases
+}
+
+// untilTold calls tool with args until its answer is no longer the progress of a copy, and returns
+// it.
+func (tt *transferTest) untilTold(t *testing.T, tool string, args map[string]any) (string, bool) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+		if text, isError := tt.call(t, tool, args); !strings.HasPrefix(text, "Still copying") {
+			return text, isError
+		}
+	}
+	t.Fatalf("%s %v: still copying 10 seconds on", tool, args)
+	return "", false
+}
+
+// untilLogged waits for rat to log the end of the transfer of tool from local to remote, its
+// outcome set: ended, and not told yet by any call.
+func (tt *transferTest) untilLogged(t *testing.T, tool, local, remote string) {
+	t.Helper()
+	ended := "msg=transfer direction=" + tool + " local=" + local + " remote=" + remote + " outcome="
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if strings.Contains(tt.rat.logs.String(), ended) {
+			return
+		}
+	}
+	t.Fatalf("the transfer of %s to %s did not end 10 seconds on:\n%s", local, remote, tt.rat.logs)
+}
+
+// TestTransferJoinedWhateverOptions guards a call with the paths of a running job asking more than
+// that job (overwrite, overwrite and in_place): joined, told its progress, rather than refused or a
+// second copy started; told how the job ended, once, what the job was asked deciding (a file
+// created, sent without in_place); the same call again then starting the copy it asks.
+func TestTransferJoinedWhateverOptions(t *testing.T) {
+	shortWait(t, 300*time.Millisecond)
+	releases := holdFirst(t, "up.bin")
+	tt := startTransfers(t)
+	for _, release := range releases {
+		t.Cleanup(release)
+	}
+	randomFile(t, filepath.Join(tt.local, "up.bin"), 1<<10, 0o644)
+	remote := filepath.Join(tt.remote, "up.bin")
+	tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote}, false,
+		"Still copying up.bin to "+remote+": 0 B")
+	overwrite := map[string]any{"local_path": "up.bin", "remote_path": remote, "overwrite": true}
+	inPlace := map[string]any{"local_path": "up.bin", "remote_path": remote, "overwrite": true, "in_place": true}
+	for _, call := range []map[string]any{overwrite, inPlace} {
+		tt.expect(t, uploadTool, call, false, "Still copying up.bin to "+remote+": 0 B")
+	}
+	releases["up.bin"]()
+	if text, isError := tt.untilTold(t, uploadTool, inPlace); isError ||
+		!strings.HasPrefix(text, "Uploaded up.bin to "+remote+" (1 KiB): created.") {
+		t.Errorf("expected the job told, its file created, got %v: %q", isError, text)
+	}
+	if got := tt.fake.inPlaces(); !slices.Equal(got, []bool{false}) {
+		t.Errorf("expected one upload, without in_place, got the in place of %v", got)
+	}
+	tt.expect(t, uploadTool, inPlace, false, "Uploaded up.bin to "+remote+" (1 KiB): written in place.")
+	if got := tt.fake.inPlaces(); !slices.Equal(got, []bool{false, true}) {
+		t.Errorf("expected the same call again to upload in place, got the in place of %v", got)
+	}
+}
+
+// TestTransferJoinedTellsHowReplaced guards the answer of an upload that replaced its file, told to
+// a call joining it with other options: how that upload replaced it, a new file put in place of the
+// old one, whose hard link keeps the old content, or the file written in place, its hard link
+// following, rather than "replaced" alone, which a call asking the other way would read as its own.
+func TestTransferJoinedTellsHowReplaced(t *testing.T) {
+	shortWait(t, 300*time.Millisecond)
+	releases := holdFirst(t, "new.bin", "into.bin")
+	tt := startTransfers(t)
+	for _, release := range releases {
+		t.Cleanup(release)
+	}
+	content := randomFile(t, filepath.Join(tt.local, "up.bin"), 1<<10, 0o644)
+	for _, replaced := range []struct {
+		name            string
+		inPlace, joined bool
+		how             string
+	}{{"new.bin", false, true, "replaced by a new file"}, {"into.bin", true, false, "written in place"}} {
+		remote := filepath.Join(tt.remote, replaced.name)
+		old := randomFile(t, remote, 10, 0o644)
+		link := remote + ".link"
+		if err := os.Link(remote, link); err != nil {
+			t.Fatal(err)
+		}
+		tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote, "overwrite": true,
+			"in_place": replaced.inPlace}, false, "Still copying up.bin to "+remote+": 0 B")
+		joining := map[string]any{"local_path": "up.bin", "remote_path": remote, "overwrite": true,
+			"in_place": replaced.joined}
+		tt.expect(t, uploadTool, joining, false, "Still copying up.bin to "+remote+": 0 B")
+		releases[replaced.name]()
+		told := "Uploaded up.bin to " + remote + " (1 KiB): " + replaced.how + "."
+		if text, isError := tt.untilTold(t, uploadTool, joining); isError || !strings.HasPrefix(text, told) {
+			t.Errorf("expected %q, got %v: %q", told, isError, text)
+		}
+		if replaced.inPlace {
+			expectContent(t, link, content, 0o644)
+		} else {
+			expectContent(t, link, old, 0o644)
+		}
+	}
+	if got := tt.fake.inPlaces(); !slices.Equal(got, []bool{false, true}) {
+		t.Errorf("expected each upload sent as its job was asked, the calls joining them, got the in place of %v", got)
+	}
+}
+
+// TestTransferEndedToldWhateverOptions guards a job that ended without writing its file, its outcome
+// not told yet, met by a call with its paths asking more (overwrite, overwrite and in_place): told
+// that outcome, once, whatever the call asked (its file existing, refused without overwrite; its
+// answer lost; canceled), rather than forgotten untold for the copy asked to start; the same call
+// again then starts the copy it asks.
+func TestTransferEndedToldWhateverOptions(t *testing.T) {
+	shortWait(t, 300*time.Millisecond)
+	releases := holdFirst(t, "refused.bin", "lost.bin", "canceled.bin")
+	// the download to canceled.bin canceled once its file came whole, long after its call
+	hookDownloaded := downloaded
 	downloaded = func(j *job) {
 		if j.request.local == "canceled.bin" && !j.request.overwrite {
 			j.askCancel()
 		}
 	}
-	t.Cleanup(func() { preparing, downloaded = hookPreparing, hookDownloaded })
+	t.Cleanup(func() { downloaded = hookDownloaded })
 	tt := startTransfers(t)
-	// released before rat stops, which waits for its transfers
-	t.Cleanup(release)
-	remote := filepath.Join(tt.remote, "app.bin")
-	randomFile(t, remote, 1<<10, 0o644)
-	randomFile(t, filepath.Join(tt.local, "x.bin"), 10, 0o644)
-	// x.bin exists, which a transfer without overwrite refuses; new.bin does not, which it creates;
-	// neither does canceled.bin, which it does not
-	for _, local := range []string{"x.bin", "new.bin", "canceled.bin"} {
-		tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": local}, false,
-			"Still copying "+remote+" to "+local+": 0 B")
-	}
-	with := map[string]any{"remote_path": remote, "local_path": "x.bin", "overwrite": true}
-	newWith := map[string]any{"remote_path": remote, "local_path": "new.bin", "overwrite": true}
-	tt.expect(t, downloadTool, with, true, "A transfer to x.bin from "+remote+" is under way without overwrite: "+
-		"wait for it, calling again without overwrite, or stop it with cancel.")
-	release()
-	// asked until the job of its paths ended, refused as under way until then
-	untilEnded := func(call map[string]any) string {
-		t.Helper()
-		var text string
-		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
-			if text, _ = tt.call(t, downloadTool, call); !strings.Contains(text, "is under way") {
-				break
-			}
-		}
-		return text
-	}
-	if text := untilEnded(with); !strings.HasPrefix(text, "Downloaded "+remote+" to x.bin (1 KiB): replaced.") {
-		t.Errorf("expected the refused transfer forgotten, the file replaced, got %q", text)
-	}
-	canceledWith := map[string]any{"remote_path": remote, "local_path": "canceled.bin", "overwrite": true}
-	if text := untilEnded(canceledWith); !strings.HasPrefix(text, "Downloaded "+remote+" to canceled.bin (1 KiB): "+
-		"created.") {
-		t.Errorf("expected the canceled transfer forgotten, the file created, got %q", text)
-	}
-	if text := untilEnded(newWith); !strings.HasPrefix(text, "Downloaded "+remote+" to new.bin (1 KiB): created. "+
-		"It ended ") {
-		t.Errorf("expected the transfer creating the file told, got %q", text)
-	}
-	tt.expect(t, downloadTool, newWith, false, "Downloaded "+remote+" to new.bin (1 KiB): replaced.")
-}
-
-// TestTransferEndedInPlace guards an upload without in_place met by a call setting it, as one
-// without overwrite is met by a call setting overwrite: refused while the upload runs, as it may
-// be refused where writing in place would not (its new file denied a place); once it ended
-// failing so, its outcome not told yet, forgotten, the call copying the file in place, rather
-// than told, as the outcome of its own request, to set the in_place it set; once it ended writing
-// its file, joined, told how it ended, rather than the file copied again.
-func TestTransferEndedInPlace(t *testing.T) {
-	shortWait(t, 300*time.Millisecond)
-	holds := map[string]chan struct{}{"failed.bin": make(chan struct{}), "written.bin": make(chan struct{})}
-	releases := map[string]func(){}
-	for name, hold := range holds {
-		releases[name] = sync.OnceFunc(func() { close(hold) })
-	}
-	// set before rat starts, and restored once it stopped (cleanups run in reverse order)
-	hookPreparing := preparing
-	preparing = func(q transferRequest) {
-		if !q.inPlace {
-			<-holds[filepath.Base(q.remote)]
-		}
-	}
-	t.Cleanup(func() { preparing = hookPreparing })
-	tt := startTransfers(t)
-	// released before rat stops, which waits for its transfers
 	for _, release := range releases {
 		t.Cleanup(release)
 	}
 	randomFile(t, filepath.Join(tt.local, "up.bin"), 1<<10, 0o644)
-	failed, written := filepath.Join(tt.remote, "failed.bin"), filepath.Join(tt.remote, "written.bin")
-	inPlace := map[string]map[string]any{}
-	for _, remote := range []string{failed, written} {
-		randomFile(t, remote, 10, 0o644)
-		tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote, "overwrite": true}, false,
-			"Still copying up.bin to "+remote+": 0 B")
-		inPlace[remote] = map[string]any{"local_path": "up.bin", "remote_path": remote, "overwrite": true,
-			"in_place": true}
-	}
-	tt.expect(t, uploadTool, inPlace[failed], true, "A transfer to "+failed+" from up.bin is under way without "+
-		"in_place: wait for it, calling again without in_place, or stop it with cancel.")
-	// the upload to failed.bin fails once received whole, as ratd fails a new file denied its place;
-	// the fake reads failWith as a request comes
-	tt.fake.set(func(f *fakeTransfers) {
-		f.failWith = "Permission denied: an upload puts a new file in place of " + failed + ", which " + tt.remote +
-			" refuses to rat, the user the terminals run as: set in_place to write into " + failed + " itself, which " +
-			"a copy cut or canceled leaves partly written."
-	})
-	releases["failed.bin"]()
-	for deadline := time.Now().Add(10 * time.Second); tt.fake.count() == 0 && time.Now().Before(deadline); {
-		time.Sleep(10 * time.Millisecond)
-	}
-	tt.fake.set(func(f *fakeTransfers) { f.failWith = "" })
-	// called until the job of its paths ended, and the copy it starts then
-	untilEnded := func(call map[string]any) string {
+
+	// started, held past the wait of its call, released, and ended untold
+	endedUntold := func(tool, name string, args map[string]any) {
 		t.Helper()
-		var text string
-		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
-			if text, _ = tt.call(t, uploadTool, call); !strings.Contains(text, "is under way") &&
-				!strings.HasPrefix(text, "Still copying") {
-				break
-			}
-		}
-		return text
+		remote := args["remote_path"].(string)
+		tt.expect(t, tool, args, false, "Still copying ")
+		releases[name]()
+		tt.untilLogged(t, tool, args["local_path"].(string), remote)
 	}
-	if text := untilEnded(inPlace[failed]); !strings.HasPrefix(text, "Uploaded up.bin to "+failed+" (1 KiB): replaced.") {
-		t.Errorf("expected the failed upload forgotten, the file written in place, got %q", text)
+
+	refused := filepath.Join(tt.remote, "refused.bin")
+	randomFile(t, refused, 10, 0o644)
+	endedUntold(uploadTool, "refused.bin", map[string]any{"local_path": "up.bin", "remote_path": refused})
+	inPlace := map[string]any{"local_path": "up.bin", "remote_path": refused, "overwrite": true, "in_place": true}
+	tt.expect(t, uploadTool, inPlace, true, refused+" exists: set overwrite to replace it. It ended ")
+	tt.expect(t, uploadTool, inPlace, false, "Uploaded up.bin to "+refused+" (1 KiB): written in place.")
+
+	lost := filepath.Join(tt.remote, "lost.bin")
+	randomFile(t, lost, 10, 0o644)
+	tt.fake.set(func(f *fakeTransfers) { f.dropAnswer = true })
+	endedUntold(uploadTool, "lost.bin", map[string]any{"local_path": "up.bin", "remote_path": lost, "overwrite": true})
+	tt.fake.set(func(f *fakeTransfers) { f.dropAnswer = false })
+	inPlace = map[string]any{"local_path": "up.bin", "remote_path": lost, "overwrite": true, "in_place": true}
+	text := tt.expect(t, uploadTool, inPlace, true, "The answer of ratd to the copy of up.bin to "+lost+" was lost "+
+		"once all of it was sent (")
+	if !strings.Contains(text, ": "+lost+" may be written or not. Check it before using it, or call upload_file "+
+		"again with overwrite. It ended ") {
+		t.Errorf("expected the answer lost told as the job was asked, without in_place, got %q", text)
 	}
-	releases["written.bin"]()
-	if text := untilEnded(inPlace[written]); !strings.HasPrefix(text, "Uploaded up.bin to "+written+" (1 KiB): "+
-		"replaced. It ended ") {
-		t.Errorf("expected the upload writing its file told, got %q", text)
-	}
-	if got := tt.fake.inPlaces(); !slices.Equal(got, []bool{false, true, false}) {
-		t.Errorf("expected the upload without in_place, the one in place starting once it failed, and the other "+
-			"without, the one writing its file joined; got the in place of %v", got)
+	tt.expect(t, uploadTool, inPlace, false, "Uploaded up.bin to "+lost+" (1 KiB): written in place.")
+
+	remote := filepath.Join(tt.remote, "data.bin")
+	randomFile(t, remote, 1<<10, 0o644)
+	endedUntold(downloadTool, "canceled.bin", map[string]any{"remote_path": remote, "local_path": "canceled.bin"})
+	overwrite := map[string]any{"remote_path": remote, "local_path": "canceled.bin", "overwrite": true}
+	tt.expect(t, downloadTool, overwrite, false, "Canceled the copy of "+remote+" to canceled.bin after 1 KiB of "+
+		"1 KiB: canceled.bin is as it was. It ended ")
+	tt.expect(t, downloadTool, overwrite, false, "Downloaded "+remote+" to canceled.bin (1 KiB): created.")
+	if got := tt.fake.inPlaces(); !slices.Equal(got, []bool{false, true, false, true}) {
+		t.Errorf("expected each job sent as asked, the same call again in place, got the in place of %v", got)
 	}
 }
 
-// TestTransferInPlaceAloneJoins guards a call setting in_place without overwrite met by the job of
-// its paths without either: joined, in place changing nothing without overwrite (a missing file
-// created all or nothing, an existing one refused), rather than refused as asking more.
-func TestTransferInPlaceAloneJoins(t *testing.T) {
+// TestTransferCancelWhateverOptions guards a cancel with the paths of a running job, asking an
+// option the job was not asked (in_place, the job asked overwrite): the job canceled, told as it was asked (its
+// destination as it was, not written in place), rather than refused as another copy; the same paths
+// again then start the copy with the options they ask.
+func TestTransferCancelWhateverOptions(t *testing.T) {
 	shortWait(t, 300*time.Millisecond)
-	held := make(chan struct{})
-	release := sync.OnceFunc(func() { close(held) })
-	// set before rat starts, and restored once it stopped (cleanups run in reverse order)
-	hookPreparing := preparing
-	preparing = func(transferRequest) { <-held }
-	t.Cleanup(func() { preparing = hookPreparing })
 	tt := startTransfers(t)
-	// released before rat stops, which waits for its transfers
-	t.Cleanup(release)
-	randomFile(t, filepath.Join(tt.local, "up.bin"), 1<<10, 0o644)
-	remote := filepath.Join(tt.remote, "new.bin")
-	tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote}, false,
-		"Still copying up.bin to "+remote+": 0 B")
-	tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote, "in_place": true}, false,
-		"Still copying up.bin to "+remote+": 0 B")
-}
-
-// TestTransferUnderWayNamesWhatItLacks guards a call setting overwrite and in_place met by the
-// running job of its paths asked in_place alone: refused as asking overwrite, which the job lacks,
-// and told that alone, rather than "without overwrite and in_place", in_place being asked already;
-// told to call again without overwrite, which joins it.
-func TestTransferUnderWayNamesWhatItLacks(t *testing.T) {
-	shortWait(t, 300*time.Millisecond)
-	held := make(chan struct{})
-	release := sync.OnceFunc(func() { close(held) })
-	// set before rat starts, and restored once it stopped (cleanups run in reverse order)
-	hookPreparing := preparing
-	preparing = func(transferRequest) { <-held }
-	t.Cleanup(func() { preparing = hookPreparing })
-	tt := startTransfers(t)
-	// released before rat stops, which waits for its transfers
-	t.Cleanup(release)
-	randomFile(t, filepath.Join(tt.local, "up.bin"), 1<<10, 0o644)
-	remote := filepath.Join(tt.remote, "up.bin")
-	alone := map[string]any{"local_path": "up.bin", "remote_path": remote, "in_place": true}
-	tt.expect(t, uploadTool, alone, false, "Still copying up.bin to "+remote+": 0 B")
-	tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote, "overwrite": true,
-		"in_place": true}, true, "A transfer to "+remote+" from up.bin is under way without overwrite: wait for "+
-		"it, calling again without overwrite, or stop it with cancel.")
-	tt.expect(t, uploadTool, alone, false, "Still copying up.bin to "+remote+": 0 B")
-}
-
-// TestTransferJoinedNotInPlace guards a call setting in_place joining the job of its paths without
-// it, once that job wrote its file: told that the copy put a new file in place of the old one,
-// its hard links, owner and attributes not kept, which "replaced" alone would leave the agent to
-// believe kept, as in place was asked to; nothing added for a file the job created, which in place
-// would have created all the same.
-func TestTransferJoinedNotInPlace(t *testing.T) {
-	shortWait(t, 300*time.Millisecond)
-	held := make(chan struct{})
-	release := sync.OnceFunc(func() { close(held) })
-	// set before rat starts, and restored once it stopped (cleanups run in reverse order)
-	hookPreparing := preparing
-	preparing = func(q transferRequest) {
-		if !q.inPlace {
-			<-held
-		}
-	}
-	t.Cleanup(func() { preparing = hookPreparing })
-	tt := startTransfers(t)
-	// released before rat stops, which waits for its transfers
-	t.Cleanup(release)
-	randomFile(t, filepath.Join(tt.local, "up.bin"), 1<<10, 0o644)
-	replaced, created := filepath.Join(tt.remote, "replaced.bin"), filepath.Join(tt.remote, "created.bin")
-	old := randomFile(t, replaced, 10, 0o644)
-	link := filepath.Join(tt.remote, "replaced.link")
-	if err := os.Link(replaced, link); err != nil {
+	stall := make(chan struct{})
+	t.Cleanup(func() { close(stall) })
+	tt.fake.set(func(f *fakeTransfers) { f.stall = stall })
+	// zeros, sparse: far more than the buffers of the connection hold, the upload staying under way
+	if err := os.WriteFile(filepath.Join(tt.local, "up.bin"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, remote := range []string{replaced, created} {
-		tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote, "overwrite": true}, false,
-			"Still copying up.bin to "+remote+": 0 B")
+	if err := os.Truncate(filepath.Join(tt.local, "up.bin"), 64<<20); err != nil {
+		t.Fatal(err)
 	}
-	release()
-	told := map[string]string{}
-	for _, remote := range []string{replaced, created} {
-		call := map[string]any{"local_path": "up.bin", "remote_path": remote, "overwrite": true, "in_place": true}
-		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
-			if told[remote], _ = tt.call(t, uploadTool, call); !strings.Contains(told[remote], "is under way") {
-				break
-			}
-		}
+	remote := filepath.Join(tt.remote, "up.bin")
+	randomFile(t, remote, 10, 0o644)
+	tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote, "overwrite": true}, false,
+		"Still copying up.bin to "+remote+": ")
+	text := tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote, "overwrite": true,
+		"in_place": true, "cancel": true}, false, "Canceled the copy of up.bin to "+remote+" after ")
+	if !strings.HasSuffix(text, ": "+remote+" is as it was.") {
+		t.Errorf("expected the cancel told as the job was asked, not in place, got %q", text)
 	}
-	note := " That copy, asked without in_place, put a new file in place of the old one: its hard links, owner " +
-		"and attributes were not kept."
-	if text := told[replaced]; !strings.HasPrefix(text, "Uploaded up.bin to "+replaced+" (1 KiB): replaced. It ended ") ||
-		!strings.HasSuffix(text, note) {
-		t.Errorf("expected the file replaced told put in place as a new one, got %q", text)
-	}
-	expectContent(t, link, old, 0o644)
-	if text := told[created]; !strings.HasPrefix(text, "Uploaded up.bin to "+created+" (1 KiB): created. It ended ") ||
-		strings.Contains(text, "in_place") {
-		t.Errorf("expected the file created told with nothing added, got %q", text)
-	}
-	if n := tt.fake.count(); n != 2 {
-		t.Errorf("expected the two uploads joined, %d made", n)
+	tt.fake.set(func(f *fakeTransfers) { f.stall = nil })
+	content := randomFile(t, filepath.Join(tt.local, "up.bin"), 1<<10, 0o644)
+	tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote, "overwrite": true,
+		"in_place": true}, false, "Uploaded up.bin to "+remote+" (1 KiB): written in place.")
+	expectContent(t, remote, content, 0o644)
+	if got := tt.fake.inPlaces(); !slices.Equal(got, []bool{false, true}) {
+		t.Errorf("expected the job canceled without in_place, the copy after it in place, got the in place of %v", got)
 	}
 }
 
@@ -1716,48 +1732,6 @@ func TestTransferOverwriteLeftOut(t *testing.T) {
 	}
 	if n := tt.fake.count(); n != 1 {
 		t.Errorf("expected one transfer, %d requests made", n)
-	}
-}
-
-// TestTransferJoinLooksOnce guards a call setting overwrite met by a job without it, which writes
-// its file just as the call looks at it: decided on that one look, the job running, the call
-// refused as under way and the job kept for the next call to tell, rather than looked at again,
-// found ended, and forgotten untold, its copy started again.
-func TestTransferJoinLooksOnce(t *testing.T) {
-	without := transferRequest{tool: downloadTool, local: "x.bin", remote: "/r/x.bin"}
-	with := without
-	with.overwrite = true
-	j := &job{request: without, started: time.Now(), cancel: func() {}, done: make(chan struct{})}
-	// set before join runs, and restored once the test ended
-	hook := joinLooked
-	joinLooked = func(looked *job) {
-		if looked == j && !j.hasEnded() {
-			j.text, j.ended = "Downloaded /r/x.bin to x.bin (1 KiB): created.", time.Now()
-			close(j.done)
-		}
-	}
-	t.Cleanup(func() { joinLooked = hook })
-	// a directory at the destination: a copy started again ends at once, refused by its local side
-	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, "x.bin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = root.Close() })
-	tr := &transfers{logger: slog.New(slog.DiscardHandler), root: root, dir: dir, jobs: map[string]*job{without.key(): j}}
-	tr.ctx, tr.stop = context.WithCancel(context.Background())
-	t.Cleanup(tr.stop)
-	got, refused := tr.join(with)
-	tr.running.Wait()
-	if got != nil || refused != "A transfer to x.bin from /r/x.bin is under way without overwrite: wait for it, "+
-		"calling again without overwrite, or stop it with cancel." {
-		t.Errorf("expected the call refused as under way, got a job (its own: %v), %q", got == j, refused)
-	}
-	if tr.jobs[without.key()] != j {
-		t.Error("expected the job kept for the next call to tell how it ended")
 	}
 }
 
@@ -1944,7 +1918,8 @@ func TestTransferCanceledCallKeepsJob(t *testing.T) {
 
 // TestTransferCancelEnded guards a cancel of a transfer that ended before the call, its outcome not
 // told yet: told how it ended, too late or before any request, with how long ago, as a call waiting
-// for it tells, rather than as a transfer the cancel just missed.
+// for it tells, rather than as a transfer the cancel just missed; the same for a cancel asking
+// options the transfer was not asked (overwrite and in_place), its paths alone finding it.
 func TestTransferCancelEnded(t *testing.T) {
 	q := transferRequest{tool: uploadTool, local: "up.bin", remote: "/r/up.bin"}
 	for _, ended := range []struct {
@@ -1964,7 +1939,7 @@ func TestTransferCancelEnded(t *testing.T) {
 		close(j.done)
 		tr := &transfers{jobs: map[string]*job{q.key(): j}}
 		canceling := q
-		canceling.cancel = true
+		canceling.cancel, canceling.overwrite, canceling.inPlace = true, true, true
 		if text, isError := tr.cancel(context.Background(), canceling, time.Now()); text != ended.told ||
 			isError != ended.isError {
 			t.Errorf("expected %v: %q, got %v: %q", ended.isError, ended.told, isError, text)

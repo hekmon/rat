@@ -490,6 +490,9 @@ func (d *daemon) uploadInPlace(w http.ResponseWriter, req *http.Request, path st
 			attrs))
 	}
 	w.Header().Set(connect.HeaderMode, connect.FormatMode(opened.Mode()))
+	// the one answer of a file written into: asked in place, a file put in place of one that
+	// appeared meanwhile answers 204 too (see upload)
+	w.Header().Set(connect.HeaderInPlace, "true")
 	setNote(w, connect.SpecialBitsNote(lost))
 	w.WriteHeader(http.StatusNoContent)
 	return result{attrs: append(attrs, "replaced", true, "status", http.StatusNoContent)}

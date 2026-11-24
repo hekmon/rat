@@ -104,8 +104,9 @@ const transferDescription = "Its content never enters your context, whatever its
 	"its permissions; a new one gets those of %s. A symbolic link at the end of a path is refused, naming its target, " +
 	"and a file changing while it is copied fails the transfer: copy it once complete. The call waits up to %d " +
 	"seconds: a longer copy goes on in the background, the call telling its progress, and calling again with the " +
-	"same paths waits for the rest, or tells how it ended; cancel stops it, leaving the destination as it was%s, " +
-	"unless it comes too late, as the copy ends."
+	"same paths waits for the rest, or tells how it ended, the copy keeping the parameters it started with: to " +
+	"change them, cancel it, then call again. cancel stops it, leaving the destination as it was%s, unless it " +
+	"comes too late, as the copy ends."
 
 // toolDefinition is a tool as tools/list tells it.
 type toolDefinition struct {
@@ -309,14 +310,7 @@ func (t *transfers) call(ctx context.Context, tool string, arguments json.RawMes
 	if refused != "" {
 		return refused, true
 	}
-	text, isError := t.await(ctx, j, called)
-	if text != "" && q.writesInPlace() && !j.request.writesInPlace() && j.hasEnded() && j.newFile {
-		// joined once it wrote its file (see join): what in place was asked to keep is gone, which
-		// "replaced" alone would leave the agent to believe kept
-		text += " That copy, asked without in_place, put a new file in place of the old one: its hard links, " +
-			"owner and attributes were not kept."
-	}
-	return text, isError
+	return t.await(ctx, j, called)
 }
 
 // request reads the call of tool with arguments, or tells why it is refused. A path holding a NUL
@@ -359,52 +353,27 @@ func (t *transfers) request(tool string, arguments json.RawMessage) (transferReq
 	return q, ""
 }
 
-// join returns the job of q: the one of its paths doing what q asks, or a new one, which checks
-// the local file first (see run). A call joins the job of its paths whatever its overwrite and
-// in_place, as told to call again with the same paths, unless the call sets one the job does not
-// (in_place counting with overwrite alone, see writesInPlace). Such a call is refused while the
-// job runs, which may refuse a file existing (without overwrite) or be refused where writing in
-// place would not (without in_place, its new file denied a place), the refusal naming what the job
-// was not asked; joined once it wrote its file (a call writing in place then told, by call, when
-// that file replaced another, of the new file put in place of the old one); forgotten otherwise
-// (refused, failed or canceled), the call starting the copy asked, rather than told an outcome of
-// another request as its own (a file existing, refused without overwrite, to a call setting it; to
-// set in_place, to a call setting it). Another source to the same destination is refused while its
+// join returns the job of the destination of q, or a new one, which checks the local file first
+// (see run). A call from the source of that job joins it, running or ended, whatever its overwrite
+// and in_place: the job keeps what the call starting it asked, and the answer tells what the job
+// did (see runUpload), never what the joining call asked. Its options are not compared: a
+// comparison makes the answer depend on the call and on the state of the job at once (joined,
+// refused, or the job forgotten for the copy asked to start), a case analysis the agent can not
+// foresee from its call, and the job forgotten loses an outcome not told yet. The rule an agent
+// learns from the descriptions instead: the same paths join the copy as it was asked; to copy with
+// other options, cancel it (or let it end and be told), then call again, at the price of a call or
+// two. A call from another source is another copy rather than other options: refused while that
 // job runs, and once it ended, its outcome not told yet, told that outcome instead, the job
 // forgotten: the next call starts the transfer asked.
 func (t *transfers) join(q transferRequest) (*job, string) {
 	t.jobsMu.Lock()
 	defer t.jobsMu.Unlock()
 	if j := t.jobs[q.key()]; j != nil {
-		sameSource := j.request.source() == q.source()
-		// Looked at once: a job writing its file between two looks would be running for the first
-		// and ended for the second, forgotten untold and its copy started again.
-		ended := j.hasEnded()
-		joinLooked(j)
-		// its file written: what a call asking more asks too
-		wrote := ended && !j.isError && !j.canceled
-		// What the call sets that the job does not: in_place counts with overwrite alone (see
-		// writesInPlace), but is named only when the job was not asked it, rather than told missing
-		// from a job asked it without overwrite, which lacks overwrite, named instead.
-		var missing []string
-		if q.overwrite && !j.request.overwrite {
-			missing = append(missing, "overwrite")
-		}
-		if q.writesInPlace() && !j.request.inPlace {
-			missing = append(missing, "in_place")
-		}
 		switch {
-		case sameSource && (len(missing) == 0 || wrote):
+		case j.request.source() == q.source():
+			// running or ended: await tells which, an ended job told once, then forgotten
 			return j, ""
-		case sameSource && ended:
-			// ended without writing its file (refused, failed or canceled): forgotten, the copy asked
-			// starting
-			delete(t.jobs, q.key())
-		case sameSource:
-			without := strings.Join(missing, " and ")
-			return nil, fmt.Sprintf("A transfer to %s from %s is under way without %s: wait for it, calling "+
-				"again without %s, or stop it with cancel.", q.destination(), q.source(), without, without)
-		case ended:
+		case j.hasEnded():
 			delete(t.jobs, q.key())
 			return nil, endedText(j) + fmt.Sprintf(" Nothing was copied from %s: call again to copy it.", q.source())
 		default:
@@ -419,10 +388,6 @@ func (t *transfers) join(q transferRequest) (*job, string) {
 	go t.run(ctx, j)
 	return j, ""
 }
-
-// joinLooked is called with the job of the paths of a call once join looked whether it ended: a
-// hook for tests, which end it there.
-var joinLooked = func(*job) {}
 
 // preparing is called with the request of a job as it checks its local side (see prepare): a hook
 // for tests, which hold it as a file system not answering would.
@@ -662,9 +627,6 @@ type job struct {
 	canceled bool
 	refused  bool
 	ended    time.Time
-	// newFile tells an upload put a new file in place of the one it replaced, rather than wrote
-	// into it: its hard links, owner and attributes gone
-	newFile bool
 }
 
 // sample is the bytes a transfer moved, at a moment.
@@ -881,12 +843,18 @@ func (t *transfers) runUpload(ctx context.Context, j *job, source *os.File) (str
 	if err != nil {
 		return t.failureText(j, err)
 	}
+	// How the file was replaced, told by the answer itself rather than left to the call: a call
+	// joining the job may have asked otherwise (see join), and the two keep different things of the
+	// file replaced (its hard links, owner and attributes, kept written in place only). Told from
+	// the answer of ratd, not from what the job asked: asked in place, ratd puts a new file in
+	// place of one appearing at a path it found empty.
 	how := "created"
-	if up.Replaced {
-		how = "replaced"
+	switch {
+	case up.InPlace:
+		how = "written in place"
+	case up.Replaced:
+		how = "replaced by a new file"
 	}
-	// set before the job ends, read once it ended (see job.done)
-	j.newFile = up.Replaced && !j.request.writesInPlace()
 	text := fmt.Sprintf("Uploaded %s to %s (%s): %s.", j.request.local, j.request.remote, sizeText(up.Sent), how)
 	// told only from a mode ratd told: an answer without one is the file written all the same
 	if modesTold && up.ModeTold && up.Replaced && up.Mode != info.Mode().Perm() {

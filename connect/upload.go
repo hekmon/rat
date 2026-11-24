@@ -18,6 +18,9 @@ import (
 type Uploaded struct {
 	// Replaced tells an existing file was replaced (204), rather than created (201).
 	Replaced bool
+	// InPlace tells ratd wrote into the file replaced ([HeaderInPlace] in its answer), rather than
+	// put a new file in its place.
+	InPlace bool
 	// Mode is the permission bits of the file as written: those sent minus the umask of ratd for
 	// a file created, the nine of the file it replaced otherwise; nothing unless ModeTold.
 	Mode fs.FileMode
@@ -156,7 +159,10 @@ func Upload(ctx context.Context, cancel <-chan struct{}, client *http.Client, se
 	if value := resp.Header.Get(HeaderNote); value != "" {
 		note = DecodeError(value)
 	}
-	return &Uploaded{Replaced: resp.StatusCode == http.StatusNoContent, Mode: mode, ModeTold: modeErr == nil,
+	// an answer that can not be read tells nothing, the side of a new file
+	inPlace, _ := ParseInPlace(resp.Header.Get(HeaderInPlace))
+	replaced := resp.StatusCode == http.StatusNoContent
+	return &Uploaded{Replaced: replaced, InPlace: replaced && inPlace, Mode: mode, ModeTold: modeErr == nil,
 		Sent: body.read(), Note: note}, nil
 }
 

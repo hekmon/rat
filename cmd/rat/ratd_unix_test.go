@@ -268,7 +268,7 @@ func TestRealRatdRefusals(t *testing.T) {
 			", which "+locked+" refuses to "+me.Username+", the user the terminals run as: set in_place to write "+
 			"into "+conf+" itself, which a copy cut or canceled leaves partly written.")
 		args["in_place"] = true
-		tt.expect(t, uploadTool, args, false, "Uploaded app.bin to "+conf+" (64 KiB): replaced.")
+		tt.expect(t, uploadTool, args, false, "Uploaded app.bin to "+conf+" (64 KiB): written in place.")
 		expectContent(t, conf, content, 0o644)
 	}
 	if _, err := os.Lstat(filepath.Join(tt.local, "down.bin")); err == nil {
