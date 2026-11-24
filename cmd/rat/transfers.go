@@ -294,23 +294,35 @@ func (t *transfers) addTools(body []byte) []byte {
 	return added
 }
 
-// call runs a call of tool with arguments, and returns the text it tells the agent, and whether
-// it is an error. It waits for its transfer until ctx is done (the call canceled, or rat
-// stopping), which never cuts the transfer.
-func (t *transfers) call(ctx context.Context, tool string, arguments json.RawMessage) (string, bool) {
+// call runs a call of tool with arguments, and returns the text it tells the agent, whether it is
+// an error, and told, never nil, which the caller calls as it writes that text, and only then: it
+// forgets the job whose outcome the text tells. Forgotten before, by call itself, the outcome
+// would be lost with a text dropped, the harness having canceled the call meanwhile (G8: kept
+// until told). It waits for its transfer until ctx is done (the call canceled, or rat stopping),
+// which never cuts the transfer.
+func (t *transfers) call(ctx context.Context, tool string, arguments json.RawMessage) (text string, isError bool,
+	told func()) {
 	q, refused := t.request(tool, arguments)
 	if refused != "" {
-		return refused, true
+		return refused, true, func() {}
 	}
 	called := time.Now()
 	if q.cancel {
 		return t.cancel(ctx, q, called)
 	}
-	j, refused := t.join(q)
+	j, refused, ended := t.join(q)
 	if refused != "" {
-		return refused, true
+		return refused, true, t.forgetting(ended)
 	}
 	return t.await(ctx, j, called)
+}
+
+// forgetting returns the function forgetting j, its outcome told, which does nothing without a job.
+func (t *transfers) forgetting(j *job) func() {
+	if j == nil {
+		return func() {}
+	}
+	return func() { t.forget(j) }
 }
 
 // request reads the call of tool with arguments, or tells why it is refused. A path holding a NUL
@@ -363,30 +375,29 @@ func (t *transfers) request(tool string, arguments json.RawMessage) (transferReq
 // learns from the descriptions instead: the same paths join the copy as it was asked; to copy with
 // other options, cancel it (or let it end and be told), then call again, at the price of a call or
 // two. A call from another source is another copy rather than other options: refused while that
-// job runs, and once it ended, its outcome not told yet, told that outcome instead, the job
-// forgotten: the next call starts the transfer asked.
-func (t *transfers) join(q transferRequest) (*job, string) {
+// job runs, and once it ended, its outcome not told yet, told that outcome instead, the job, ended,
+// for the caller to forget once told: the next call starts the transfer asked.
+func (t *transfers) join(q transferRequest) (j *job, refused string, ended *job) {
 	t.jobsMu.Lock()
 	defer t.jobsMu.Unlock()
 	if j := t.jobs[q.key()]; j != nil {
 		switch {
 		case j.request.source() == q.source():
 			// running or ended: await tells which, an ended job told once, then forgotten
-			return j, ""
+			return j, "", nil
 		case j.hasEnded():
-			delete(t.jobs, q.key())
-			return nil, endedText(j) + fmt.Sprintf(" Nothing was copied from %s: call again to copy it.", q.source())
+			return nil, endedText(j) + fmt.Sprintf(" Nothing was copied from %s: call again to copy it.", q.source()), j
 		default:
 			return nil, fmt.Sprintf("A transfer to %s from %s is under way: wait for it with its paths, or stop it "+
-				"with cancel.", q.destination(), j.request.source())
+				"with cancel.", q.destination(), j.request.source()), nil
 		}
 	}
 	ctx, cancel := context.WithCancel(t.ctx)
-	j := &job{request: q, started: time.Now(), cancel: cancel, done: make(chan struct{})}
+	j = &job{request: q, started: time.Now(), cancel: cancel, done: make(chan struct{})}
 	t.jobs[q.key()] = j
 	t.running.Add(1)
 	go t.run(ctx, j)
-	return j, ""
+	return j, "", nil
 }
 
 // preparing is called with the request of a job as it checks its local side (see prepare): a hook
@@ -503,27 +514,24 @@ func sentence(err error) string {
 }
 
 // await waits for j, for a call made at called, until it ends, transferWait passes, or ctx is done,
-// and returns what the call tells: how the transfer ended, or its progress. A job ended is told
-// once, then forgotten: the same call again starts a new transfer. A call canceled tells nothing
-// and forgets nothing, even as its job ends, which select may pick as well: the harness drops its
-// text (see callTransfer), and the next call tells how the job ended.
-func (t *transfers) await(ctx context.Context, j *job, called time.Time) (string, bool) {
+// and returns what the call tells: how the transfer ended, or its progress, with told (see call). A
+// job ended is told once, then forgotten, by told: the same call again starts a new transfer. A
+// call canceled as its job ends may be handed its outcome all the same, select picking either: the
+// caller, which alone knows whether it writes it, drops the text and does not call told, and the
+// next call tells how the job ended. Rejected: looking at ctx here before forgetting, a cancel
+// coming right after the look losing the outcome.
+func (t *transfers) await(ctx context.Context, j *job, called time.Time) (text string, isError bool, told func()) {
 	before := j.moved.Load()
 	timer := time.NewTimer(transferWait)
 	defer timer.Stop()
 	select {
 	case <-j.done:
 	case <-timer.C:
-		return t.progressText(j, before), false
+		return t.progressText(j, before), false, func() {}
 	case <-ctx.Done():
-		return "", false
+		return "", false, func() {}
 	}
-	if ctx.Err() != nil {
-		// canceled as the job ended: kept for the next call
-		return "", false
-	}
-	t.forget(j)
-	return j.text + endedAgo(j, called), j.isError
+	return j.text + endedAgo(j, called), j.isError, t.forgetting(j)
 }
 
 // endedAgo tells how long ago j ended, for a call made at called, if it ended before the call: the
@@ -554,21 +562,21 @@ func (t *transfers) forget(j *job) {
 
 // cancel stops the transfer of the paths of q, for a call made at called, and tells how it ended:
 // canceled, the destination left as it was, or ended before the cancel could stop it, how long ago
-// if before the call (see endedAgo).
-func (t *transfers) cancel(ctx context.Context, q transferRequest, called time.Time) (string, bool) {
+// if before the call (see endedAgo), with told, which forgets the job told (see call).
+func (t *transfers) cancel(ctx context.Context, q transferRequest, called time.Time) (text string, isError bool,
+	told func()) {
 	t.jobsMu.Lock()
 	j := t.jobs[q.key()]
 	t.jobsMu.Unlock()
 	switch {
 	case j == nil:
-		return fmt.Sprintf("No transfer to %s is under way: nothing to cancel.", q.destination()), false
+		return fmt.Sprintf("No transfer to %s is under way: nothing to cancel.", q.destination()), false, func() {}
 	case j.request.source() != q.source() && j.hasEnded():
-		// ended, its outcome not told yet: told now, and forgotten, as join does
-		t.forget(j)
-		return endedText(j) + " Nothing to cancel.", false
+		// ended, its outcome not told yet: told now, and forgotten once told, as join does
+		return endedText(j) + " Nothing to cancel.", false, t.forgetting(j)
 	case j.request.source() != q.source():
 		return fmt.Sprintf("The transfer to %s under way is from %s, not %s: nothing canceled.", q.destination(),
-			j.request.source(), q.source()), true
+			j.request.source(), q.source()), true, func() {}
 	}
 	j.askCancel()
 	timer := time.NewTimer(transferWait)
@@ -577,27 +585,24 @@ func (t *transfers) cancel(ctx context.Context, q transferRequest, called time.T
 	case <-j.done:
 	case <-timer.C:
 		return fmt.Sprintf("The transfer to %s is still ending: call %s again with the same paths to know how it "+
-			"ended.", q.destination(), q.tool), true
+			"ended.", q.destination(), q.tool), true, func() {}
 	case <-ctx.Done():
-		return "", false
+		return "", false, func() {}
 	}
-	if ctx.Err() != nil {
-		// canceled as the job ended: kept for the next call (see await)
-		return "", false
-	}
-	t.forget(j)
+	// its call canceled as the job ended, the caller drops the text and keeps the job (see await)
+	told = t.forgetting(j)
 	ago := endedAgo(j, called)
 	switch {
 	case j.canceled, j.refused:
 		// stopped, or refused by its local side before any request: nothing ran for the cancel to
 		// come too late for
-		return j.text + ago, j.isError
+		return j.text + ago, j.isError, told
 	case j.isError:
 		// a failure, or an answer lost: told first, rather than behind "too late to cancel", which
 		// reads as a copy done
-		return j.text + " The cancel came too late to stop it." + ago, true
+		return j.text + " The cancel came too late to stop it." + ago, true, told
 	default:
-		return "Too late to cancel: " + j.text + ago, false
+		return "Too late to cancel: " + j.text + ago, false, told
 	}
 }
 

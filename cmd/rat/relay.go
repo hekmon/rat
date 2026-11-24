@@ -80,8 +80,29 @@ type call struct {
 	cancel context.CancelFunc
 	// timeout bounds the request relaying the call (see requestTimeout)
 	timeout time.Duration
-	// canceled tells the harness canceled the call: nothing is written for it
-	canceled atomic.Bool
+	// state tells whether the harness canceled the call, nothing then written for it, or whether
+	// its answer is being written, a cancel then coming too late: one or the other, decided once
+	// (see answering). A transfer forgets a job as it tells how it ended: told to a call canceled
+	// meanwhile, its text dropped, the outcome would be lost.
+	state atomic.Int32
+}
+
+// The states of a call, after callOpen, its zero value.
+const (
+	callOpen int32 = iota
+	callCanceled
+	callAnswering
+)
+
+// canceled tells whether the harness canceled the call.
+func (c *call) canceled() bool {
+	return c.state.Load() == callCanceled
+}
+
+// answering tells whether the answer of the call is to be written, the harness not having canceled
+// it: from then on a cancel comes too late, and the answer is written.
+func (c *call) answering() bool {
+	return c.state.CompareAndSwap(callOpen, callAnswering)
 }
 
 // newRelay returns a relay to the ratd of target, through client, writing the answers to out.
@@ -260,13 +281,21 @@ func (r *relay) callTransfer(ctx context.Context, id jsonrpc.ID, msg message, p 
 	c := &call{cancel: cancel}
 	newProtocol := r.protocol(p) >= headersProtocol
 	r.start(id, c, func() {
-		text, isError := r.transfers.call(callCtx, p.Name, p.Arguments)
-		if c.canceled.Load() || errors.Is(context.Cause(callCtx), context.Canceled) {
+		text, isError, told := r.transfers.call(callCtx, p.Name, p.Arguments)
+		transferAnswering(c)
+		// rat stopping writes nothing; a call canceled neither, its job kept for the next call
+		if stopping := c.state.Load() == callOpen && errors.Is(context.Cause(callCtx), context.Canceled); stopping ||
+			!c.answering() {
 			return
 		}
+		told()
 		r.writeToolResult(msg.ID, text, isError, newProtocol)
 	})
 }
+
+// transferAnswering is called with the call of a transfer tool once its text is known, before it
+// is decided whether to write it: a hook for tests, which cancel the call there.
+var transferAnswering = func(*call) {}
 
 // writeToolResult writes the result of a tool call rat answers itself, of identifier rawID: its
 // text, and whether it is an error. From protocol 2026-07-28 on, a result tells it is complete.
@@ -315,7 +344,8 @@ func (r *relay) cancelCall(requestID any) {
 	c := r.calls[id]
 	r.callsMu.Unlock()
 	if c != nil {
-		c.canceled.Store(true)
+		// too late once its answer is being written: the harness then reads it or drops it
+		c.state.CompareAndSwap(callOpen, callCanceled)
 		c.cancel()
 		r.logger.Debug("call canceled", "id", id.Raw())
 	}
@@ -399,7 +429,7 @@ func (r *relay) post(ctx context.Context, data []byte, header http.Header) (resp
 func (r *relay) relayCall(ctx context.Context, c *call, msg message, data []byte, header http.Header) {
 	start := time.Now()
 	resp, err := r.post(ctx, data, header)
-	if c.canceled.Load() || errors.Is(context.Cause(ctx), context.Canceled) {
+	if c.canceled() || errors.Is(context.Cause(ctx), context.Canceled) {
 		return
 	}
 	r.logger.Debug("message", "method", msg.Method, "id", string(msg.ID), "status", resp.status,

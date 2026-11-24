@@ -1890,12 +1890,14 @@ func TestTransferEndedOtherSource(t *testing.T) {
 }
 
 // TestTransferCanceledCallKeepsJob guards a call that the harness cancels as its job ends, waiting
-// for it or canceling it: the call tells nothing, its text dropped, and keeps the job for the next
-// call to tell how it ended, rather than forget it untold, select picking at random between the
-// end of the job and the cancel of the call.
+// for it or canceling it, or as it finds the job of another source ended: whatever text it is
+// handed, select picking at random between the end of the job and the cancel of the call, the job
+// is kept until told is called, which the caller does only as it writes the text, rather than
+// forgotten by the call itself, its outcome lost with a text dropped.
 func TestTransferCanceledCallKeepsJob(t *testing.T) {
 	q := transferRequest{tool: uploadTool, local: "up.bin", remote: "/r/up.bin"}
-	for _, way := range []string{"waiting", "canceling"} {
+	other := transferRequest{tool: uploadTool, local: "other.bin", remote: "/r/up.bin"}
+	for _, way := range []string{"waiting", "canceling", "another source", "canceling another source"} {
 		for range 20 {
 			j := &job{request: q, cancel: func() {}, done: make(chan struct{}), text: "Uploaded up.bin to /r/up.bin."}
 			close(j.done)
@@ -1903,17 +1905,62 @@ func TestTransferCanceledCallKeepsJob(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
 			var text string
-			if way == "waiting" {
-				text, _ = tr.await(ctx, j, time.Now())
-			} else {
-				text, _ = tr.cancel(ctx, q, time.Now())
+			var told func()
+			switch way {
+			case "waiting":
+				text, _, told = tr.await(ctx, j, time.Now())
+			case "canceling":
+				text, _, told = tr.cancel(ctx, q, time.Now())
+			case "another source":
+				var ended *job
+				_, text, ended = tr.join(other)
+				told = tr.forgetting(ended)
+			default:
+				text, _, told = tr.cancel(ctx, other, time.Now())
 			}
-			if text != "" || tr.jobs[q.key()] != j {
-				t.Fatalf("%s, the call canceled as its job ended: expected nothing told and the job kept, got %q, "+
-					"kept %v", way, text, tr.jobs[q.key()] == j)
+			if tr.jobs[q.key()] != j {
+				t.Fatalf("%s, the call canceled as its job ended: expected the job kept until told, forgotten "+
+					"(text %q)", way, text)
+			}
+			told()
+			if kept := tr.jobs[q.key()] == j; kept != (text == "") {
+				t.Fatalf("%s: expected the job forgotten once its outcome is told, and only then, got text %q, "+
+					"kept %v", way, text, kept)
 			}
 		}
 	}
+}
+
+// TestTransferCanceledAsAnswered guards a call the harness cancels once its transfer ended and rat
+// holds its answer, not yet written (transferAnswering): nothing is written for it, and the job is
+// kept, the same call again telling how it ended, rather than forgotten with the text dropped, the
+// call again then finding the file it just copied and telling it exists.
+func TestTransferCanceledAsAnswered(t *testing.T) {
+	tt := startTransfers(t)
+	remote := filepath.Join(tt.remote, "data.bin")
+	randomFile(t, remote, 1<<10, 0o644)
+	args := map[string]any{"remote_path": remote, "local_path": "data.bin"}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	hook := transferAnswering
+	t.Cleanup(func() { transferAnswering = hook })
+	var once sync.Once
+	transferAnswering = func(c *call) {
+		once.Do(func() {
+			// the harness gives up: rat reads its cancellation while it holds the answer
+			cancel()
+			for deadline := time.Now().Add(5 * time.Second); !c.canceled(); time.Sleep(time.Millisecond) {
+				if time.Now().After(deadline) {
+					t.Error("expected rat to read the cancellation of the call")
+					return
+				}
+			}
+		})
+	}
+	if _, err := tt.session.CallTool(ctx, &mcp.CallToolParams{Name: downloadTool, Arguments: args}); err == nil {
+		t.Fatal("expected the call canceled")
+	}
+	tt.expect(t, downloadTool, args, false, "Downloaded "+remote+" to data.bin (1 KiB): created. It ended ")
 }
 
 // TestTransferCancelEnded guards a cancel of a transfer that ended before the call, its outcome not
@@ -1940,7 +1987,7 @@ func TestTransferCancelEnded(t *testing.T) {
 		tr := &transfers{jobs: map[string]*job{q.key(): j}}
 		canceling := q
 		canceling.cancel, canceling.overwrite, canceling.inPlace = true, true, true
-		if text, isError := tr.cancel(context.Background(), canceling, time.Now()); text != ended.told ||
+		if text, isError, _ := tr.cancel(context.Background(), canceling, time.Now()); text != ended.told ||
 			isError != ended.isError {
 			t.Errorf("expected %v: %q, got %v: %q", ended.isError, ended.told, isError, text)
 		}

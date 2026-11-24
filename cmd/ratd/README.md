@@ -764,6 +764,10 @@ as it was.
   not name them.
 - **L15. File systems without permission bits** (FAT, exFAT): G6 does not hold, a new file showing
   what the file system gives, untold.
+- **L16. A call canceled as it is answered.** rat forgets a transfer as it writes how it ended,
+  never before. A harness canceling its call at that instant, its cancellation crossing the answer,
+  may drop that answer: the outcome is then told to nobody (G8), the file being what the transfer
+  left.
 
 ### How a transfer keeps them
 
