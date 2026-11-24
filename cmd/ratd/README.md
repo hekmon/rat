@@ -416,7 +416,9 @@ Only a regular file is written: a FIFO would block, and a device is not a file t
 file is checked before opening (opening some devices has effects), opened without blocking (a
 FIFO without a reader then fails at once), and checked again once opened, as the file opened may
 not be the one checked. Whether it is created or replaced is told by opening: exclusively first,
-then the existing file.
+then the existing file, then creating again, for a symbolic link whose target is missing, which
+the first open refuses and the second finds no file behind. The former size is that of the file
+once no other write through ratd holds it (see G7 in File transfers).
 
 Errors of the file system are told as the system gives them ("no space left on device",
 "read-only file system"), unlike tmux messages: an agent expects a low level operation to fail

@@ -52,6 +52,26 @@ func umask() fs.FileMode {
 	return fs.FileMode(mask)
 }
 
+// TestWriteFileDanglingLink guards write_file through a symbolic link whose target is missing: the
+// target created, as a human writing to the link would create it, and told created, rather than
+// replaced, 0 B before, of a file that did not exist; written again, the link now leading to a
+// file, it is told replaced.
+func TestWriteFileDanglingLink(t *testing.T) {
+	session, _, home := connectFiles(t)
+	link, target := filepath.Join(home, "link.conf"), filepath.Join(home, "target.conf")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if text := expectTool(t, session, "write_file", map[string]any{"path": link, "content": "hello"}, false,
+		"Created "+link+" (5 B)."); strings.Contains(text, "before") {
+		t.Errorf("expected nothing told of a file before, got %q", text)
+	}
+	expectFile(t, target, "hello", 0o644&^umask())
+	expectTool(t, session, "write_file", map[string]any{"path": link, "content": "again"}, false,
+		"Replaced "+link+" (5 B, 5 B before).")
+	expectFile(t, target, "again", 0o644&^umask())
+}
+
 // TestWriteFile guards writing files: created with the exact content, nothing added, and a mode
 // going through the umask; replaced in place, keeping its mode, with its former size told; missing
 // directories created and named; a symbolic link followed, writing its target; and the log line
@@ -285,7 +305,9 @@ func TestWriteFileTimeout(t *testing.T) {
 // TestWriteFileWaitsForWriteEnding guards write_file into a file a write in place is still writing
 // into (G7: an upload canceled, going on with the bytes already sent): it waits for that write to
 // end, its last bytes written, then the file holds exactly its content, rather than torn, the late
-// bytes of the other left after it. The lock of the file is dropped once both ended.
+// bytes of the other left after it, and its answer tells the size that write left, the file it
+// replaced, rather than the size it found before waiting. The lock of the file is dropped once both
+// ended.
 func TestWriteFileWaitsForWriteEnding(t *testing.T) {
 	waiting := waitingLocks(t)
 	d := &daemon{user: "u"}
@@ -329,8 +351,9 @@ func TestWriteFileWaitsForWriteEnding(t *testing.T) {
 	if !answered {
 		r = <-written
 	}
-	if r.outcome == failed || !strings.HasPrefix(r.text, "Replaced "+path+" (3 B,") {
-		t.Errorf("expected the file replaced once the write ended, got %v: %s", r.err, r.text)
+	// "old and late bytes", what the write under way left
+	if told := "Replaced " + path + " (3 B, 18 B before)."; r.outcome == failed || r.text != told {
+		t.Errorf("expected %q once the write ended, got %v: %s", told, r.err, r.text)
 	}
 	expectFile(t, path, "new", 0o644)
 	if n := len(d.inPlace.files); n != 0 {

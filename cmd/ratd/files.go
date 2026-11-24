@@ -198,6 +198,9 @@ func (d *daemon) writeFileNow(ctx context.Context, path, content string) result 
 			_ = file.Close()
 			return fileTimeout(err, path)
 		}
+		// looked at again once the lock is held: a write waited for changed the file, and the size
+		// told as the one before is that of the file this write replaces, not of the one it found
+		info, err = file.Stat()
 	}
 	defer release()
 	// once truncated, a failure leaves the file partial
@@ -286,17 +289,24 @@ func (e *notRegularError) Error() string {
 	return "not a regular file: " + e.info.Mode().Type().String()
 }
 
-// openRegular opens path for writing, creating it if missing, and tells whether it created it. It
+// openRegular opens path for writing, creating it if missing, and tells whether it created it,
+// from the open that succeeded: exclusively first, then the existing file, then creating again. It
 // never blocks on a FIFO (without a reader, opening it fails), and refuses what it opened if it is
 // not a regular file, with a notRegularError: checked again on the file opened, which may have
 // replaced the one checked before opening.
 func openRegular(path string) (file *os.File, created bool, err error) {
 	file, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NONBLOCK, 0o644)
+	created = err == nil
 	if errors.Is(err, fs.ErrExist) {
-		// O_CREATE again: a dangling symbolic link creates its target, as a human writing to it would
-		file, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE|syscall.O_NONBLOCK, 0o644)
-	} else {
-		created = err == nil
+		file, err = os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0)
+		if errors.Is(err, fs.ErrNotExist) {
+			// A name existing without a file behind it: a dangling symbolic link, which O_EXCL
+			// refuses and O_CREATE alone follows, creating its target, as a human writing to it
+			// would; or a file removed in between. Created either way, which one open with O_CREATE
+			// for both the existing file and the link would tell replaced, 0 B before.
+			file, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE|syscall.O_NONBLOCK, 0o644)
+			created = err == nil
+		}
 	}
 	if err != nil {
 		return nil, false, err
