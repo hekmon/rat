@@ -263,6 +263,42 @@ func TestRelayUntouched(t *testing.T) {
 	}
 }
 
+// TestRelayCancelTooLate guards a relayed call canceled once rat took its answer, which it is
+// writing, the harness not reading yet: the cancel comes too late, the answer is written, once,
+// and rat logs the cancel as too late, rather than take the call as canceled and write its answer
+// all the same. A call is canceled or answered, one or the other.
+func TestRelayCancelTooLate(t *testing.T) {
+	bundle := newBundle(t)
+	p := startRat(t, bundle, fakeRatd(t, bundle, newMCPServer().handler, nil), slog.LevelDebug)
+	send := func(line string) {
+		t.Helper()
+		if _, err := io.WriteString(p.stdin, line+"\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	logged := func(text string) {
+		t.Helper()
+		for deadline := time.Now().Add(5 * time.Second); !strings.Contains(p.logs.String(), text); {
+			if time.Now().After(deadline) {
+				t.Fatalf("expected %q logged:\n%s", text, p.logs)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	send(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{"text":"relayed"}}}`)
+	// ratd answered: rat holds the answer, and blocks writing it, nobody reading its output
+	logged("method=tools/call")
+	send(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1}}`)
+	logged("call canceled too late")
+	line, err := p.stdout.ReadString('\n')
+	if err != nil || !strings.Contains(line, `"id":1`) || !strings.Contains(line, "relayed") {
+		t.Errorf("expected the answer of the call written, got %q, %v", line, err)
+	}
+	if logs := p.logs.String(); strings.Contains(logs, `msg="call canceled" `) {
+		t.Errorf("expected the call not taken as canceled, its answer written:\n%s", logs)
+	}
+}
+
 // TestRelayCancel guards that a call the harness cancels is canceled in ratd: rat ends the
 // request carrying it (the only cancellation a stateless server sees), and writes nothing for it.
 func TestRelayCancel(t *testing.T) {

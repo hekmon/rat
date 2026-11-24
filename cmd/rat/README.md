@@ -94,7 +94,8 @@ ending the HTTP request, which ratd propagates to the call (`PropagateRequestCan
 The harness still cancels with the notification, on stdio. rat keeps the calls in flight by
 identifier (as JSON-RPC compares them: 1 and "1" differ), registered before relaying them and
 dropped once done, and ends the request of a call canceled. Nothing is written for it, as
-JSON-RPC expects no response to a canceled request. The notification is relayed all the same.
+JSON-RPC expects no response to a canceled request, unless rat had already taken its answer to
+write it: a call is canceled or answered, one or the other, a cancel coming too late then. The notification is relayed all the same.
 Whatever the version: before 2026-07-28, ratd lets the call finish, within its 10 seconds.
 
 Canceling a call ending in tmux kills its tmux client, which pastes all of a text or none of it

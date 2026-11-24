@@ -82,8 +82,9 @@ type call struct {
 	timeout time.Duration
 	// state tells whether the harness canceled the call, nothing then written for it, or whether
 	// its answer is being written, a cancel then coming too late: one or the other, decided once
-	// (see answering). A transfer forgets a job as it tells how it ended: told to a call canceled
-	// meanwhile, its text dropped, the outcome would be lost.
+	// (see answering), for every call. A transfer forgets a job as it tells how it ended: told to a
+	// call canceled meanwhile, its text dropped, the outcome would be lost. A relayed call has
+	// nothing to lose, but an answer written for a call rat took as canceled is one too many.
 	state atomic.Int32
 }
 
@@ -99,9 +100,14 @@ func (c *call) canceled() bool {
 	return c.state.Load() == callCanceled
 }
 
-// answering tells whether the answer of the call is to be written, the harness not having canceled
-// it: from then on a cancel comes too late, and the answer is written.
-func (c *call) answering() bool {
+// answering tells whether the answer of the call, which ran with ctx, is to be written: not once
+// the harness canceled it, nor while rat stops. From then on a cancel comes too late, and the
+// answer is written.
+func (c *call) answering(ctx context.Context) bool {
+	// ctx ended without a cancel of the harness, which sets the state first: rat is stopping
+	if c.state.Load() == callOpen && errors.Is(context.Cause(ctx), context.Canceled) {
+		return false
+	}
 	return c.state.CompareAndSwap(callOpen, callAnswering)
 }
 
@@ -283,9 +289,8 @@ func (r *relay) callTransfer(ctx context.Context, id jsonrpc.ID, msg message, p 
 	r.start(id, c, func() {
 		text, isError, told := r.transfers.call(callCtx, p.Name, p.Arguments)
 		transferAnswering(c)
-		// rat stopping writes nothing; a call canceled neither, its job kept for the next call
-		if stopping := c.state.Load() == callOpen && errors.Is(context.Cause(callCtx), context.Canceled); stopping ||
-			!c.answering() {
+		// nothing written, the job is kept for the next call
+		if !c.answering(callCtx) {
 			return
 		}
 		told()
@@ -334,7 +339,8 @@ func makeID(raw json.RawMessage) (jsonrpc.ID, error) {
 }
 
 // cancelCall cancels the call requestID names, if still in flight: its request to ratd ends,
-// which cancels it in ratd from protocol 2026-07-28 on, and nothing is written for it.
+// which cancels it in ratd from protocol 2026-07-28 on, and nothing is written for it, unless its
+// answer is already being written (see call.state), the cancel then coming too late.
 func (r *relay) cancelCall(requestID any) {
 	id, err := jsonrpc.MakeID(requestID)
 	if err != nil {
@@ -345,9 +351,13 @@ func (r *relay) cancelCall(requestID any) {
 	r.callsMu.Unlock()
 	if c != nil {
 		// too late once its answer is being written: the harness then reads it or drops it
-		c.state.CompareAndSwap(callOpen, callCanceled)
+		took := c.state.CompareAndSwap(callOpen, callCanceled) || c.canceled()
 		c.cancel()
-		r.logger.Debug("call canceled", "id", id.Raw())
+		if took {
+			r.logger.Debug("call canceled", "id", id.Raw())
+		} else {
+			r.logger.Debug("call canceled too late, its answer being written", "id", id.Raw())
+		}
 	}
 }
 
@@ -425,11 +435,11 @@ func (r *relay) post(ctx context.Context, data []byte, header http.Header) (resp
 
 // relayCall relays the call msg, data as read, and writes the answer: the response of ratd, or an
 // error telling why there is none. Nothing is written for a call the harness canceled, nor while
-// rat stops.
+// rat stops; once it takes the answer, a cancel comes too late (see call.answering).
 func (r *relay) relayCall(ctx context.Context, c *call, msg message, data []byte, header http.Header) {
 	start := time.Now()
 	resp, err := r.post(ctx, data, header)
-	if c.canceled() || errors.Is(context.Cause(ctx), context.Canceled) {
+	if !c.answering(ctx) {
 		return
 	}
 	r.logger.Debug("message", "method", msg.Method, "id", string(msg.ID), "status", resp.status,
