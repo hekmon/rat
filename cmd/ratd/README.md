@@ -677,8 +677,9 @@ mark with the change making it true.
 - **G4. Nothing replaced unasked.** Without `overwrite`, an existing file is never replaced, one
   appearing during the copy included.
 - **G5. Regular files, where asked.** A transfer reads and writes regular files only. It never
-  follows a symbolic link at the end of a path, and never blocks on a FIFO. rat reads and writes
-  nothing outside its transfers directory.
+  follows a symbolic link at the end of a path, and never blocks on a FIFO. rat opens no file
+  outside its transfers directory: of a symbolic link leading out of it, it tells that much, having
+  followed it to know.
 - **G6. Nine bits of mode.** A new file takes the permission bits (rwx) of its source minus the
   umask; a replaced file keeps its own. Nothing else of the metadata of a file is promised (see L1
   and L2).
@@ -693,14 +694,14 @@ mark with the change making it true.
   never content.
 
 **Outcomes.** Every answer about a transfer that ended conveys one of three states, decided from
-three facts: what ratd answered (done, a refusal, nothing, or never reached), whether it was asked
-in place, whether the whole file was sent.
+three facts: what ratd answered (done, a refusal, its go-ahead and nothing after, or nothing at
+all), whether it was asked in place, whether the whole file was sent.
 
 | State | When | What the agent does |
 |---|---|---|
 | Done | ratd answered 201 or 204; a download was placed | nothing |
-| Untouched | refused by the local side; ratd never reached; any end without `in_place`, the answer lost aside | fixes the cause, copies again |
-| Unknown | `in_place`, ratd reached and answering nothing, or the copy canceled, whenever the cancel came; the answer lost once the whole file was sent (without `in_place`: the old file or the new one, whole) | checks the file in a terminal, or copies again |
+| Untouched | refused by the local side; ratd answering nothing at all, never reached or lost before its go-ahead, before which it writes nothing; any end without `in_place`, the answer lost aside | fixes the cause, copies again |
+| Unknown | `in_place`, ratd giving its go-ahead and answering nothing after, or the copy canceled, whenever the cancel came; the answer lost once the whole file was sent (without `in_place`: the old file or the new one, whole) | checks the file in a terminal, or copies again |
 
 A refusal of ratd is relayed as it is: ratd, which knows whether it emptied a file written in
 place, tells which state it left. rat, which does not know, never derives it from the bytes it
@@ -743,6 +744,10 @@ as it was.
 - **L11. Windows** (rat only): built and vetted, not tested.
 - **L12. rat restarting** cuts its transfers and forgets their outcomes: G3 holds, a file written
   in place is unknown.
+- **L13. One file, two transfers.** rat knows a transfer by its destination as written, cleaned:
+  `~/x` and the absolute path it stands for, or two paths through a link of ratd's machine, are
+  two transfers of rat to one file. G3 and G7 hold for each: without `in_place` the last one
+  placed stays, whole, and writes in place go one at a time.
 
 ### How a transfer keeps them
 
