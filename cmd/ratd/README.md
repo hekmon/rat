@@ -642,6 +642,108 @@ where a header says, which is what POST means; PUT would claim to replace `/uplo
 headers of rat are prefixed `Rat-`: `Rat-Overwrite` rather than WebDAV's `Overwrite`, whose
 absence means overwrite, the opposite of ours.
 
+### What a transfer promises
+
+A transfer copies one regular file, whole, by path. Its model is `rsync` for one file: a new file
+written next to the target and renamed over it once complete, or, asked in place, the target
+written into, as `rsync --inplace`, `cp` and `scp` write it; permissions as `rsync` and `scp`
+without `-p`. It departs from them three times, each for an agent that does not watch its copy: an
+existing file is replaced only when asked (`overwrite`, where they replace), a symbolic link at
+the end of a path is refused (where they follow it), and a source changing while it is read fails
+the copy (where GNU tar warns, and the others copy it torn). Where the list below is silent, a
+transfer does what these tools do, or less, never more.
+
+The list is what a review checks the code against, and nothing else. A finding is a bug when it
+breaks a guarantee, with a reproduction on a local file system on Linux or macOS. Otherwise it is
+a limit, a line below and no code, or nothing. A fix adds no promise: a new one is a line here
+first, decided on its own. Without a list, every true statement about files is a promise to keep:
+a file system, a kernel and a network have more cases than a review has rounds, each fix stating a
+new one for the next review to test. A line marked *Not yet* is ahead of the code, and loses its
+mark with the change making it true.
+
+**Guarantees.**
+
+- **G1. The bytes.** A transfer told done left at its destination the bytes its source held, for a
+  source whose size, modification time and change time did not move while it was read (see The
+  change check).
+- **G2. Done is told from the fact.** "Uploaded" is told from ratd's 201 or 204 alone, "Downloaded"
+  once the file is placed: never from what was sent or read.
+- **G3. Whole or untouched.** Without `in_place`, the destination names its previous file, whole,
+  or the new one, whole, whatever ends the transfer: a cancel, a connection lost, ratd or rat
+  stopping, a full disk, a source that changed (see All or nothing).
+- **G4. Nothing replaced unasked.** Without `overwrite`, an existing file is never replaced, one
+  appearing during the copy included.
+- **G5. Regular files, where asked.** A transfer reads and writes regular files only. It never
+  follows a symbolic link at the end of a path, and never blocks on a FIFO. rat reads and writes
+  nothing outside its transfers directory.
+- **G6. Nine bits of mode.** A new file takes the permission bits (rwx) of its source minus the
+  umask; a replaced file keeps its own. Nothing else of the metadata of a file is promised (see L1
+  and L2). *Not yet: a new file put in place of another takes its setuid, setgid and sticky bits
+  too, by ratd as by rat, a setuid bit then being for the user writing it.*
+- **G7. One write in place at a time.** Two writes in place into one file through ratd
+  (`write_file`, an upload with `in_place`) never interleave: the second waits for the first, which
+  keeps G1 for an upload in place following one canceled, whose handler may still write the bytes
+  already sent. *Not yet: they interleave.*
+- **G8. Nothing waits on a transfer.** A tool call waits 50 seconds at most
+  (`tools.MaxWaitSeconds`), and stopping ratd or rat cuts their transfers at once. A transfer still
+  running is found again by its paths, and its outcome kept until told.
+- **G9. No byte to the model.** A transfer tells paths, sizes, modes and the errors of the system,
+  never content.
+
+**Outcomes.** Every answer about a transfer that ended conveys one of three states, decided from
+three facts: what ratd answered (done, a refusal, nothing, or never reached), whether it was asked
+in place, whether the whole file was sent.
+
+| State | When | What the agent does |
+|---|---|---|
+| Done | ratd answered 201 or 204; a download was placed | nothing |
+| Untouched | refused by the local side; ratd never reached; any end without `in_place`, the answer lost aside | fixes the cause, copies again |
+| Unknown | `in_place`, ratd reached and answering nothing; the answer lost once the whole file was sent (without `in_place`: the old file or the new one, whole) | checks the file in a terminal, or copies again |
+
+A refusal of ratd is relayed as it is: ratd, which knows whether it emptied a file written in
+place, tells which state it left. rat, which does not know, never derives it from the bytes it
+read or the size it saw: each such case is a proof to hold (an empty file, one emptied between two
+looks, a body buffered), where an agent with a terminal checks in one command. The price: an
+upload in place canceled before its first byte is told to check the file, rather than told it is
+as it was. *Not yet: rat tells an upload in place cut or canceled "as it was" or "partly written"
+from the bytes it read and the size it saw.*
+
+**Limits.** Each is a line a finding is closed with.
+
+- **L1. Metadata.** Replaced by a new file, a file loses its hard links, extended attributes, ACLs
+  and file capabilities, and its owner and group become those of a new file of the user writing
+  it. Written in place, it keeps them, its capabilities aside. As `mv` and `cp`.
+- **L2. Setuid and setgid.** They never travel from a source, and a file written loses them, as
+  with `cp` and `scp`: a new file put in place has none, and the system clears those of a file
+  written in place. The answer tells it when the file replaced showed one, looked at once, before
+  the bytes. Rejected: putting them back, with a chmod once written, and a chown before the rename
+  for the owner the bit is for. ratd's chmod is that of the user of the terminals, where the agent
+  sets the bit again itself (`chmod u+s`): it added no ability, and took a sync before the chmod
+  for network file systems, a look after it for a chmod dropping setgid without an error, and a
+  lock for two writes clearing and putting back in turn. Rejected as well: refusing such a file,
+  which an agent then replaces in a terminal, with the same result. *Not yet: see G6; and nothing
+  is told.*
+- **L3. Power and kills.** No fsync. A ratd or a rat killed leaves `.NAME.rat-RANDOM` behind.
+- **L4. No hard links.** On a file system without them (FAT, sshfs), G4 does not cover a file
+  appearing during the copy: it is replaced.
+- **L5. Network file systems.** A transfer tells what the system tells it. What the cache of a
+  client shows, a reply lost, an error told at close: nothing specific is promised.
+- **L6. The change check.** It misses a rewrite keeping the size within a tick of the clock, writes
+  through a memory mapping and, on Windows, what the modification time does not show.
+- **L7. Files without a true size** (`/proc`, `/sys`) are refused.
+- **L8. Other writers.** For a file another program writes or swaps during a transfer, G5 holds,
+  and nothing else. G7 covers the writes of one ratd only.
+- **L9. Early refusals.** An existing file without `overwrite`, a link, what is not a regular file
+  and a path ratd can not read are refused before any byte is sent. Any other refusal comes when
+  the system gives it.
+- **L10. Wording.** The sentences are not the contract, the state they convey is. Progress, rate,
+  time left and "ended N ago" are estimates.
+- **L11. Windows** (rat only): built and vetted, not tested.
+- **L12. rat restarting** cuts its transfers and forgets their outcomes: G3 holds, a file written
+  in place is unknown.
+
+### How a transfer keeps them
+
 **All or nothing.** Unless asked in place (see In place), an upload goes to a temporary file next
 to its target (`.NAME.rat-RANDOM`, with the permission bits sent minus the umask), put in its place
 once complete: an upload cut midway leaves the previous version whole. Its path, absolute, is 14
