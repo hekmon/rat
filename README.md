@@ -213,7 +213,7 @@ A transfer call waits 50 seconds at most: a longer copy goes on, the call tellin
 and the same call again waits for the rest; `cancel` stops it, leaving the destination as it was
 (an upload in place, partly written), unless it comes too late, as the copy ends, the call then
 telling how it ended.
-Local paths are relative to the transfers directory, and stay within it.
+Local paths are within the transfers directory: relative to it, or absolute and beginning with it.
 
 Paths are absolute or start with `~/`. What `read_window` and `read_file` return is bounded by
 the read budget of ratd (64 KiB by default, `--read-budget`): a longer output is read a range at

@@ -471,7 +471,7 @@ func TestTransferTools(t *testing.T) {
 		if tool == nil {
 			continue
 		}
-		if !strings.Contains(tool.Description, "local_path is relative to "+dir+",") {
+		if !strings.Contains(tool.Description, "local_path is within "+dir+", relative to it or absolute,") {
 			t.Errorf("%s: expected the directory named, got %q", name, tool.Description)
 		}
 		if !strings.Contains(tool.Description, "the copy keeping the parameters it started with: to change them, "+
@@ -682,8 +682,13 @@ func TestUploadFileRefused(t *testing.T) {
 		local, text string
 	}{
 		{"", "local_path and remote_path are both required."},
-		{"../app.bin", `local_path "../app.bin" is not within ` + tt.local + ": give a path relative to it, without going up (..)."},
+		{"../app.bin", `local_path "../app.bin" is not within ` + tt.local + ": give a path within it, relative to it or absolute."},
 		{"/etc/hosts", `local_path "/etc/hosts" is not within ` + tt.local},
+		// absolute: under the directory by its whole names once cleaned, or refused
+		{tt.local + "x/app.bin", "local_path " + strconv.Quote(tt.local+"x/app.bin") + " is not within " + tt.local},
+		{tt.local + "/sub/../../app.bin", "local_path " + strconv.Quote(tt.local+"/sub/../../app.bin") + " is not within " + tt.local},
+		{tt.local + "/nope.bin", "Reading nope.bin failed: no such file or directory."},
+		{tt.local + "/sub", "sub is a directory, not a file."},
 		{"nope.bin", "Reading nope.bin failed: no such file or directory."},
 		{"sub", "sub is a directory, not a file."},
 		{"link.bin", "link.bin is a symbolic link to sub/app.bin, which transfers do not follow: use that path instead."},
@@ -850,6 +855,27 @@ func TestUploadInPlaceNewFile(t *testing.T) {
 	randomFile(t, remote, 10, 0o640)
 	tt.expect(t, uploadTool, map[string]any{"local_path": "up.bin", "remote_path": remote, "overwrite": true,
 		"in_place": true}, false, "Uploaded up.bin to "+remote+" (1 KiB): replaced by a new file.")
+}
+
+// TestTransferAbsoluteLocalPath guards a local path given absolute, under the transfers directory,
+// as an agent gives back a full path rat told it: the same file as its relative path, uploaded and
+// downloaded as it, told by its relative name, one job with it (a download to it then finds the
+// file the relative path wrote), and one naming a directory refused as its relative form is. The
+// contract of a local path is its prefix.
+func TestTransferAbsoluteLocalPath(t *testing.T) {
+	tt := startTransfers(t)
+	content := randomFile(t, filepath.Join(tt.local, "sub", "up.bin"), 1<<10, 0o644)
+	remote := filepath.Join(tt.remote, "up.bin")
+	tt.expect(t, uploadTool, map[string]any{"local_path": filepath.Join(tt.local, "sub", "up.bin"), "remote_path": remote},
+		false, "Uploaded "+filepath.Join("sub", "up.bin")+" to "+remote+" (1 KiB): created.")
+	expectContent(t, remote, content, 0o644)
+	down := map[string]any{"remote_path": remote, "local_path": "down.bin"}
+	tt.expect(t, downloadTool, down, false, "Downloaded "+remote+" to down.bin (1 KiB): created.")
+	down["local_path"] = filepath.Join(tt.local, "down.bin")
+	tt.expect(t, downloadTool, down, true, "down.bin exists: set overwrite to replace it.")
+	down["local_path"] = tt.local + "/logs/"
+	tt.expect(t, downloadTool, down, true, "local_path "+strconv.Quote(tt.local+"/logs/")+" names a directory: give the "+
+		"name of the file to write in it.")
 }
 
 // TestUploadFileInPlace guards an upload with in_place and overwrite: sent with Rat-In-Place, ratd

@@ -80,7 +80,7 @@ const (
 
 // uploadInput is the input of upload_file.
 type uploadInput struct {
-	LocalPath  string `json:"local_path" jsonschema:"the file to copy, relative to the transfers directory"`
+	LocalPath  string `json:"local_path" jsonschema:"the file to copy, within the transfers directory: relative to it, or absolute"`
 	RemotePath string `json:"remote_path" jsonschema:"where to write it on the machine of the terminals: absolute, or starting with ~/"`
 	Overwrite  bool   `json:"overwrite,omitempty" jsonschema:"true replaces an existing file; false, the default, refuses it"`
 	InPlace    bool   `json:"in_place,omitempty" jsonschema:"false, the default, copies into a new file put in place of the old one once whole: never partly written, but the disk must hold both meanwhile. true, with overwrite, writes into the file itself: no room needed for a second copy, nor write permission on its directory (the file's own decides), the file keeping its hard links, owner and attributes; but a copy cut or canceled leaves it partly written, harmless for a file nothing uses until it is uploaded whole. A missing file is created as usual. Never into the very file you upload, when the terminals run on your machine: emptied as it is read, it would be lost"`
@@ -90,7 +90,7 @@ type uploadInput struct {
 // downloadInput is the input of download_file.
 type downloadInput struct {
 	RemotePath string `json:"remote_path" jsonschema:"the file to copy from the machine of the terminals: absolute, or starting with ~/"`
-	LocalPath  string `json:"local_path" jsonschema:"where to write it, relative to the transfers directory"`
+	LocalPath  string `json:"local_path" jsonschema:"where to write it, within the transfers directory: relative to it, or absolute"`
 	Overwrite  bool   `json:"overwrite,omitempty" jsonschema:"true replaces an existing file; false, the default, refuses it"`
 	Cancel     bool   `json:"cancel,omitempty" jsonschema:"true stops the transfer of these paths under way, leaving the destination as it was, unless too late"`
 }
@@ -99,7 +99,8 @@ type downloadInput struct {
 // directory, other the side whose permissions a new file takes, and inPlace what a cancel leaves
 // of a file written in place, which upload_file alone writes.
 const transferDescription = "Its content never enters your context, whatever its size, binary included. local_path " +
-	"is relative to %s, the only directory rat copies files from and to on your machine; remote_path is absolute or " +
+	"is within %s, relative to it or absolute, the only directory rat copies files from and to on your machine; " +
+	"remote_path is absolute or " +
 	"starts with ~/. Missing directories are created. An existing file is replaced only with overwrite, and keeps " +
 	"its permissions; a new one gets those of %s minus the umask. A symbolic link at the end of a path is refused, never followed, " +
 	"and a file changing while it is copied fails the transfer: copy it once complete. The call waits up to %d " +
@@ -352,8 +353,8 @@ func (t *transfers) request(tool string, arguments json.RawMessage) (transferReq
 		return q, fmt.Sprintf("local_path %q holds a NUL byte, which no file name can hold.", q.local)
 	case strings.ContainsRune(q.remote, 0):
 		return q, fmt.Sprintf("remote_path %q holds a NUL byte, which no file name can hold.", q.remote)
-	case !filepath.IsLocal(q.local):
-		return q, fmt.Sprintf("local_path %q is not within %s: give a path relative to it, without going up (..).",
+	case !filepath.IsLocal(t.withinDir(q.local)):
+		return q, fmt.Sprintf("local_path %q is not within %s: give a path within it, relative to it or absolute.",
 			q.local, t.dir)
 	// the destination naming a directory, which cleaning would turn into the name of a file
 	case !q.upload() && connect.NamesDirectory(filepath.ToSlash(q.local)):
@@ -361,8 +362,28 @@ func (t *transfers) request(tool string, arguments json.RawMessage) (transferReq
 	case q.upload() && connect.NamesDirectory(q.remote):
 		return q, fmt.Sprintf("remote_path %q names a directory: give the name of the file to write in it.", q.remote)
 	}
-	q.local, q.remote = filepath.Clean(q.local), cleanRemote(q.remote)
+	q.local, q.remote = filepath.Clean(t.withinDir(q.local)), cleanRemote(q.remote)
 	return q, ""
+}
+
+// withinDir returns local as a path relative to the transfers directory: itself when relative, and
+// what follows the directory when absolute and under it, for an agent giving back a full path rat
+// told it. The contract of rat for a local path is its prefix, the transfers directory, checked on
+// the path cleaned, by whole names (x/../../etc and a sibling named as the directory with more
+// letters are not under it). An absolute path elsewhere is returned as it is, for the caller to
+// refuse, as one going up. A final separator is kept: it names a directory, refused as such.
+func (t *transfers) withinDir(local string) string {
+	if !filepath.IsAbs(local) {
+		return local
+	}
+	within, err := filepath.Rel(t.dir, local)
+	if err != nil || !filepath.IsLocal(within) {
+		return local
+	}
+	if os.IsPathSeparator(local[len(local)-1]) {
+		within += string(filepath.Separator)
+	}
+	return within
 }
 
 // join returns the job of the destination of q, or a new one, which checks the local file first
