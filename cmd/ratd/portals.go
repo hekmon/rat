@@ -163,6 +163,8 @@ type portal struct {
 	path, session string
 	// made is the pipe as ratd made it, told apart from what may take its path later
 	made fs.FileInfo
+	// unpin lets go of what keeps made the pipe of the portal alone, once it packed up (see pinPipe)
+	unpin func()
 	// closeAsked is closed once a close is asked (askClose)
 	closeAsked chan struct{}
 	askOnce    sync.Once
@@ -188,7 +190,7 @@ type portal struct {
 // newPortal returns a portal of way at path for session, not registered yet.
 func newPortal(way direction, path, session string) *portal {
 	return &portal{way: way, path: path, session: session, closeAsked: make(chan struct{}),
-		packed: make(chan struct{}), ending: endedOtherwise}
+		packed: make(chan struct{}), unpin: func() {}, ending: endedOtherwise}
 }
 
 // portalEnding is how a portal ended.
@@ -205,6 +207,12 @@ const (
 	// endedOtherwise: cut, failed or ratd stopping
 	endedOtherwise
 )
+
+// finish ends p, packed up: what pinned its pipe is let go, and those waiting for it are told.
+func (p *portal) finish() {
+	p.unpin()
+	close(p.packed)
+}
 
 // askClose asks p to close; closeText tells, once it packed up, what its command saw.
 func (p *portal) askClose() {
@@ -235,11 +243,12 @@ var endsClosing = func(string) {}
 var pumpOpening = func(string) {}
 
 // openEnd opens the end of p for flag, blocking, as a command opening the pipe: it returns once a
-// command opens the other end. O_NOFOLLOW, for a link put in its place meanwhile to fail rather
-// than be followed. It returns the end opened, or how the pump ends.
+// command opens the other end. What it opened is then checked to be the pipe ratd made: a file or
+// a link someone else put at its path meanwhile is not the portal's, and is left untouched, opening
+// it changing nothing of it. It returns the end opened, or how the pump ends.
 func (p *portal) openEnd(flag int) (*os.File, *pumpEnd) {
 	pumpOpening(p.path)
-	file, err := os.OpenFile(p.path, flag|syscall.O_NOFOLLOW, 0)
+	file, err := os.OpenFile(p.path, flag, 0)
 	if err != nil {
 		return nil, &pumpEnd{pipeErr: err}
 	}
@@ -502,13 +511,14 @@ func (d *daemon) stopBodyRead(p *portal, controller *http.ResponseController) {
 }
 
 // otherEnd opens the other end of the pipe of p, for reading and writing without blocking, and
-// tells whether it reached it: only the pipe ratd made, looked at by its path, opened without
-// following a link, and checked once opened.
+// tells whether it reached it: only the pipe ratd made, looked at by its path before it is opened,
+// another pipe put there not being opened even for an instant (it would let a command waiting at
+// it in, then end its input), and checked once opened, the path possibly taken in between.
 func (p *portal) otherEnd() (int, bool) {
 	if info, err := os.Lstat(p.path); err != nil || !os.SameFile(info, p.made) {
 		return -1, false
 	}
-	fd, err := unix.Open(p.path, unix.O_RDWR|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	fd, err := unix.Open(p.path, unix.O_RDWR|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return -1, false
 	}
@@ -561,7 +571,7 @@ func (d *daemon) openPortal(w http.ResponseWriter, req *http.Request, way direct
 	}
 	failed := func(status int, r result) (*portal, []any, *result) {
 		d.portals.remove(p)
-		close(p.packed)
+		p.finish()
 		r = refuse(w, status, r)
 		return nil, nil, &r
 	}
@@ -580,6 +590,13 @@ func (d *daemon) openPortal(w http.ResponseWriter, req *http.Request, way direct
 		return failed(transferStatus(err), withAttrs(d.fileFailure(err, "Making the pipe "+path, written, false), attrs))
 	}
 	p.made = made
+	unpin, err := pinPipe(path, made)
+	if err != nil {
+		// not removed: what is there now is not the pipe made
+		return failed(http.StatusConflict, result{err: err, attrs: attrs, text: fmt.Sprintf("%s was taken by "+
+			"something else as the portal made its pipe there: nothing was opened.", path)})
+	}
+	p.unpin = unpin
 	return p, attrs, nil
 }
 
@@ -604,7 +621,7 @@ func (d *daemon) downloadPipe(w http.ResponseWriter, req *http.Request) result {
 	}
 	path := p.path
 	defer d.portals.remove(p)
-	defer close(p.packed)
+	defer p.finish()
 	header := w.Header()
 	header.Set("Content-Type", connect.OctetStream)
 	header.Set("Trailer", connect.HeaderError)
@@ -693,7 +710,7 @@ func (d *daemon) uploadPipe(w http.ResponseWriter, req *http.Request) result {
 	defer func() {
 		if !held {
 			d.portals.remove(p)
-			close(p.packed)
+			p.finish()
 		}
 	}()
 	controller := http.NewResponseController(w)
@@ -824,7 +841,7 @@ func (d *daemon) hold(p *portal, file *os.File) {
 			_ = file.Close()
 		}
 		d.portals.remove(p)
-		close(p.packed)
+		p.finish()
 		d.logger.Info("held portal packed up", "path", p.path, "session", p.session, "closed", p.ending == endedClosed,
 			"bytes", p.moved.Load())
 	})
