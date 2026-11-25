@@ -98,6 +98,10 @@ limit, a line below and no code, or nothing. A fix adds no promise.
 - **Q13. Nothing between rat and ratd.** A portal's upload is answered before its body is sent
   (see The link). A proxy between the two may hold that answer until the body ended, and "ready"
   with it: a portal is promised on a direct connection, which mutual TLS makes the usual one.
+- **Q14. A local pipe is where its path says.** rat makes it at the path given, under its
+  transfers directory, and tells the agent its full path. Every path rat writes begins with that
+  directory, and that is all it promises there: a symbolic link among the directories of the path
+  is followed as the system follows it, and is the business of whoever put it there.
 
 **For the descriptions of the tools**, not promises: a command at a local pipe runs in the
 background of the agent's shell, which otherwise waits on it; to stop a stream midway, stop the
@@ -139,12 +143,14 @@ the common path, but it gives an upload and a download two different ways to say
 "the headers say ready, the body waits" is one rule for both. It stays the way back if this one
 meets an obstacle: it is still to confirm over TLS, on the real pair.
 
-## Not decided yet
+## To confirm when it is written
 
-To settle with measurements before any code:
+No design question is left open. Two facts are to check on the real pair, rat and ratd over TLS:
 
-- whether ratd sees its client leave while a portal is ready and idle;
-- how rat makes a pipe within its transfers directory (`os.Root` has no call for it).
+- that an upload answered before its body is sent works there as it did without TLS;
+- that a side touching a connection whose other end is gone gets an error in a bounded time. No
+  timeout and no heartbeat of ours: a portal waits to be used or closed, and a side needs to know
+  the other is gone only when it has something to do with it, which is when the connection tells.
 
 Measured so far, on macOS and Linux unless said: a pipe deleted under a command reading it
 changes nothing for that command, which ends with status 0 on what it got once the other end
