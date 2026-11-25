@@ -120,8 +120,8 @@ const downloadPortalDescription = " With remote_pipe, the source is a portal rat
 	"example: tar -c dir > PIPE, PIPE being remote_path), and call download_file again with the same paths to " +
 	"follow the copy. The local file is put in place once that command closes the pipe, its exit status telling " +
 	"whether what it wrote was all. There is no size: progress tells bytes only. cancel closes the portal, " +
-	"deleting the pipe, the command writing into it getting a broken pipe, and works with the same paths and " +
-	"remote_pipe even after rat restarted."
+	"deleting the pipe, the command writing into it getting a broken pipe, and works with the same paths even " +
+	"after rat restarted."
 
 // uploadPortalDescription tells, after transferDescription, what upload_file does with remote_pipe:
 // to stop midway, the command reading goes first, a close ending its input (Q2).
@@ -133,7 +133,7 @@ const uploadPortalDescription = " With remote_pipe, the destination is a portal 
 	"pipe and its end closed, the command seeing the end of its input: its exit status tells what it made of it. " +
 	"To stop midway, stop the command reading first, then cancel: cancel closes the portal, deleting the pipe, a " +
 	"command still reading it seeing the end of its input on a stream that is not whole; it works with the same " +
-	"paths and remote_pipe even after rat restarted."
+	"paths even after rat restarted."
 
 // toolDefinition is a tool as tools/list tells it.
 type toolDefinition struct {
@@ -675,15 +675,15 @@ func (t *transfers) cancel(ctx context.Context, q transferRequest, called time.T
 	j := t.jobs[q.key()]
 	t.jobsMu.Unlock()
 	switch {
-	case j == nil && q.remotePipe:
-		// rat restarted, or the link cut: ratd may still hold the portal, known by its path alone.
-		// One request, made by the call, which waits transferWait at most (P12).
+	case j == nil:
+		// rat holds no job at these paths, which it would not after a restart, or once a cut was told:
+		// ratd may still hold a portal there, known by its path alone (P8), so it is asked whatever the
+		// call says of a pipe, an agent coming back to a portal not having to remember how it opened
+		// it. One request, made by the call, which waits transferWait at most (P12).
 		closing, stop := context.WithTimeout(ctx, transferWait)
 		defer stop()
-		text, isError := t.closeRemote(closing, q)
+		text, isError := t.closeUnknown(closing, q)
 		return text, isError, func() {}
-	case j == nil:
-		return fmt.Sprintf("No transfer to %s is under way: nothing to cancel.", q.destination()), false, func() {}
 	case j.request.source() != q.source() && j.hasEnded():
 		// ended, its outcome not told yet: told now, and forgotten once told, as join does
 		return endedText(j) + " Nothing to cancel.", false, t.forgetting(j)
@@ -1028,10 +1028,12 @@ func isReady(j *job) bool {
 // pipe deleted by ratd as it sees the cut, the command writing into it getting a broken pipe, and
 // that the agent opens it again once the cause is fixed. Its destination a pipe, broken: ratd keeps
 // the end of the command reading open, which sees no end (P5), until the portal is closed; rat
-// does not know whether a command was reading.
+// does not know whether a command was reading, and ratd sees the cut only as one reads (Q15), its
+// pipe there until then: the agent is told the portal is not closed.
 func portalCutText(j *job) string {
 	if j.request.upload() {
-		return fmt.Sprintf("If a command was reading %s it still waits, it has seen no end: stop it in its terminal, "+
+		return fmt.Sprintf("The portal is not closed on the machine of the terminals, which sees the cut only as a "+
+			"command reads its pipe. If a command was reading %s it still waits, it has seen no end: stop it in its terminal, "+
 			"then call %s again with cancel to close the portal.", j.request.remote, j.request.tool)
 	}
 	return fmt.Sprintf("%s is as it was. ratd deletes the pipe on the machine of the terminals as it sees the cut, "+
@@ -1043,6 +1045,31 @@ func portalCutText(j *job) string {
 func noPortalsText(server string) string {
 	return fmt.Sprintf("The ratd at %s is older than this rat and opens no portal: whoever runs it must upgrade it.",
 		server)
+}
+
+// closeUnknown asks ratd to close the portal it may hold at the remote path of q, a cancel finding
+// no job of rat there, and tells what it closed; holding none, or older than the portals, that
+// nothing is under way; not reached, or failing, that its side could not be asked.
+func (t *transfers) closeUnknown(ctx context.Context, q transferRequest) (string, bool) {
+	endpoint := connect.DownloadPath
+	if q.upload() {
+		endpoint = connect.UploadPath
+	}
+	none := fmt.Sprintf("No transfer to %s is under way: nothing to cancel.", q.destination())
+	text, closed, err := connect.ClosePortal(ctx, t.client, t.server, endpoint, q.remote)
+	var refused *connect.Refusal
+	switch {
+	case closed:
+		return text, false
+	case err == nil, errors.Is(err, connect.ErrNoPortals), errors.Is(err, connect.ErrNoTransfers):
+		return none, false
+	case errors.As(err, &refused):
+		return fmt.Sprintf("No transfer to %s is under way on this side. %s %s", q.destination(), refused.Text,
+			notToldText(q)), true
+	default:
+		return fmt.Sprintf("No transfer to %s is under way on this side. %s %s", q.destination(), t.reachText(err),
+			notToldText(q)), true
+	}
 }
 
 // closeRemote asks ratd to close the portal of q it holds at its remote path, and tells its answer,

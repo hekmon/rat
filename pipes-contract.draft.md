@@ -43,8 +43,8 @@ limit, a line below and no code, or nothing. A fix adds no promise.
   deletes its pipe. The paths alone name it: it works after a cut, from a rat started again, from
   another rat of the session. A portal broken is known by its paths until closed, and opening
   another there is refused meanwhile.
-- **P9. The names go first.** At a cut and at a close, each side deletes its pipe at once,
-  whatever becomes of a command still at it: a command arriving later is told there is no such
+- **P9. The names go first.** At a close, and at a cut as it sees it (Q15), each side deletes its
+  pipe at once, whatever becomes of a command still at it: a command arriving later is told there is no such
   file, rather than left waiting at a pipe nobody serves.
 - **P10. Nothing left.** Once a portal closed, by itself or asked, and after a clean stop of rat
   or of ratd: no pipe, no temporary file, no end left open.
@@ -102,6 +102,11 @@ limit, a line below and no code, or nothing. A fix adds no promise.
   transfers directory, and tells the agent its full path. Every path rat writes begins with that
   directory, and that is all it promises there: a symbolic link among the directories of the path
   is followed as the system follows it, and is the business of whoever put it there.
+- **Q15. An upload's cut is seen once a command reads.** ratd reads the body of an upload only
+  when a command opened its pipe, and the system tells it nothing of a client gone behind data it
+  has not read. Until then the pipe stays, and a command arriving is given what ratd received: all
+  of a file received whole, with its end; otherwise its beginning, then nothing, the portal
+  broken. `cancel` closes it, and opening another there is refused meanwhile.
 
 **For the descriptions of the tools**, not promises: a command at a local pipe runs in the
 background of the agent's shell, which otherwise waits on it; to stop a stream midway, stop the
@@ -151,6 +156,14 @@ No design question is left open. Two facts are to check on the real pair, rat an
 - that a side touching a connection whose other end is gone gets an error in a bounded time. No
   timeout and no heartbeat of ours: a portal waits to be used or closed, and a side needs to know
   the other is gone only when it has something to do with it, which is when the connection tells.
+
+Measured on 2026-11-25, on macOS and Linux, over TLS, for Q15: the context of a request ends
+when its client leaves only if something reads its body; asked about the socket without reading
+it, the system tells a client that reset the connection, and one that closed it once all it sent
+was received, but not one that closed it while sending a file larger than the connection holds,
+the notice of the close travelling behind that data. Rejected with it: a buffer read ahead of the
+command, which sees the cut of a file smaller than itself alone; rat asking ratd to close at its
+own cut, one more message between the two.
 
 Measured so far, on macOS and Linux unless said: a pipe deleted under a command reading it
 changes nothing for that command, which ends with status 0 on what it got once the other end

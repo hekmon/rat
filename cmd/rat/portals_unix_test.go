@@ -162,12 +162,12 @@ func TestRealRatdPortalCancel(t *testing.T) {
 
 // TestRealRatdPortalCancelWithoutJob guards a cancel of a portal rat holds no job of (rat started
 // again, another rat of the session): with remote_pipe, rat asks ratd to close the portal at the
-// path all the same, and tells its answer; ratd holding none, that there is nothing to close.
+// path all the same, and tells its answer; ratd holding none, that nothing is under way.
 func TestRealRatdPortalCancelWithoutJob(t *testing.T) {
 	tt := startRatdTransfers(t, "test-rat-portalnojob")
 	pipe := filepath.Join(tt.remote, "out.pipe")
 	args := map[string]any{"remote_path": pipe, "local_path": "out.tar", "remote_pipe": true, "cancel": true}
-	tt.expect(t, downloadTool, args, false, "No portal is open at "+pipe+": nothing to close.")
+	tt.expect(t, downloadTool, args, false, "No transfer to out.tar is under way: nothing to cancel.")
 	// a portal opened by another client of the session, as a rat gone would have left it
 	client := aliceClient(t, tt)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -393,15 +393,15 @@ func TestRealRatdPipeUploadCancel(t *testing.T) {
 
 // TestRealRatdPipeUploadCancelWithoutJob guards a cancel of an upload portal rat holds no job of
 // (rat started again, another rat of the session): with remote_pipe, rat asks ratd to close the
-// portal at the path all the same, and tells its answer; ratd holding none, that there is nothing
-// to close; the portal of the other client then ends with the close told in its trailer.
+// portal at the path all the same, and tells its answer; ratd holding none, that nothing is under
+// way; the portal of the other client then ends with the close told in its trailer.
 func TestRealRatdPipeUploadCancelWithoutJob(t *testing.T) {
 	tt := startRatdTransfers(t, "test-rat-pipenojob")
 	pipe := filepath.Join(tt.remote, "in.pipe")
 	path := filepath.Join(tt.local, "in.bin")
 	randomFile(t, path, 1<<20, 0o644)
 	args := map[string]any{"local_path": "in.bin", "remote_path": pipe, "remote_pipe": true, "cancel": true}
-	tt.expect(t, uploadTool, args, false, "No portal is open at "+pipe+": nothing to close.")
+	tt.expect(t, uploadTool, args, false, "No transfer to "+pipe+" is under way: nothing to cancel.")
 	file, err := os.Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -455,7 +455,8 @@ func TestRealRatdPipeUploadChanged(t *testing.T) {
 	defer unix.Close(look)
 	read, _ := readPipe(t, pipe, 0, nil)
 	tt.expect(t, uploadTool, args, true, "in.bin changed while it was read: it may still be written. The portal "+
-		"from in.bin to "+pipe+" is cut after 64 MiB of 64 MiB sent. If a command was reading "+pipe+" it still "+
+		"from in.bin to "+pipe+" is cut after 64 MiB of 64 MiB sent. The portal is not closed on the machine of the "+
+		"terminals, which sees the cut only as a command reads its pipe. If a command was reading "+pipe+" it still "+
 		"waits, it has seen no end: stop it in its terminal, then call upload_file again with cancel to close the "+
 		"portal.")
 	expectNoPipe(t, pipe)
@@ -798,4 +799,41 @@ func TestRealRatdPipeUploadLinkLost(t *testing.T) {
 	if len(data) >= len(content) || !bytes.Equal(data, content[:len(data)]) {
 		t.Errorf("expected a beginning of the file, got %d bytes", len(data))
 	}
+}
+
+// TestRealRatdPipeUploadCutUnread guards the way back from an upload portal cut before any command
+// read its pipe, which ratd does not see, reading the body only once a command opened the pipe: rat
+// tells the cut, the pipe stays on ratd's machine, and opening a portal there again is refused,
+// telling to cancel; a cancel with the paths alone, without remote_pipe, rat holding no job any
+// more, closes ratd's portal and deletes its pipe; the portal then opens again.
+func TestRealRatdPipeUploadCutUnread(t *testing.T) {
+	tt := startRatdTransfers(t, "test-rat-pipeunread")
+	relay := startRelay(t, tt.addr)
+	direct := tt.addr
+	tt.addr = relay.listener.Addr().String()
+	cut := inProcess(t, tt, tt.local)
+	tt.addr = direct
+	pipe := filepath.Join(tt.remote, "in.pipe")
+	randomFile(t, filepath.Join(tt.local, "in.bin"), 64<<20, 0o644)
+	args := map[string]any{"local_path": "in.bin", "remote_path": pipe, "remote_pipe": true}
+	if text, _ := callTold(t, cut, context.Background(), uploadTool, args); !strings.HasPrefix(text, "The portal is open: ") {
+		t.Fatalf("expected the portal ready, got %q", text)
+	}
+	relay.cut()
+	if text, isError := callTold(t, cut, context.Background(), uploadTool, args); !isError ||
+		!strings.HasPrefix(text, "The portal from in.bin to "+pipe+" was cut after ") {
+		t.Fatalf("expected the portal told cut, got %v: %q", isError, text)
+	}
+	// ratd saw nothing: its pipe is there, and its portal holds the path
+	expectFIFO(t, pipe)
+	tt.expect(t, uploadTool, args, true, "A portal is open at "+pipe+": close it with cancel before opening another "+
+		"there.")
+	expectFIFO(t, pipe)
+	tt.expect(t, uploadTool, map[string]any{"local_path": "in.bin", "remote_path": pipe, "cancel": true}, false,
+		"Closed the portal at "+pipe+": the pipe is deleted. No command had opened it.")
+	expectNoPipe(t, pipe)
+	tt.expect(t, uploadTool, args, false, "The portal is open: ")
+	args["cancel"] = true
+	tt.expect(t, uploadTool, args, false, "Closed the portal from in.bin to "+pipe)
+	expectNoPipe(t, pipe)
 }
