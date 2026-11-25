@@ -95,18 +95,54 @@ limit, a line below and no code, or nothing. A fix adds no promise.
 - **Q11. File systems without pipes** (FAT, some network ones) refuse a portal, as the system
   tells it.
 - **Q12. The limits of a transfer hold** for a file end, and for the link: L1 to L16.
+- **Q13. Nothing between rat and ratd.** A portal's upload is answered before its body is sent
+  (see The link). A proxy between the two may hold that answer until the body ended, and "ready"
+  with it: a portal is promised on a direct connection, which mutual TLS makes the usual one.
 
 **For the descriptions of the tools**, not promises: a command at a local pipe runs in the
 background of the agent's shell, which otherwise waits on it; to stop a stream midway, stop the
 command reading first, then cancel.
 
+## How a portal waits
+
+Opening one end of a pipe waits until a command opens the other: a portal sits in that open, and
+needs to know nothing more. It moves what comes through; until then it waits, to be closed or
+used. So no byte is ever written into a pipe nobody reads, and Done is never told of a stream
+nobody took. Rejected: taking our end at once and then looking for a command at the other, which
+writes into an empty pipe and no longer sees a stream end. The price: a progress answer says
+that nothing came through yet, not whether a command is there.
+
+A close takes a side out of that open by opening the other end itself for an instant, then
+closing both, the name deleted first. A command arriving at that very instant gets what a close
+asked gives any command (P6, Q2).
+
+## The link
+
+One HTTP request is the portal: opened as the portal opens, alive for as long as it is, ended as
+it closes. Its headers say ready, and only its body waits. A download does so already: ratd
+answers its headers, then the body comes as the command writes. An upload does the same the
+other way: ratd answers its headers before it reads any byte of the body, which then waits for
+the command reading. The status being sent by then, how the portal ended is told after the
+stream, in a trailer, as a download tells a failure today.
+
+Measured on 2026-11-25 with Go's server and client, HTTP/1.1, without TLS: the headers of the
+answer reach the client at once, 3 MiB of body sent after them arrive whole, and the trailer
+tells the outcome. Two conditions: the server allows both directions at once
+(`EnableFullDuplex`), and the request does not ask for a go-ahead (`Expect: 100-continue`), which
+a final answer cancels, the client then sending no body at all.
+
+For an upload this means an answer that starts before its request was sent whole. HTTP/1.1
+allows it, and few programs expect it: it is the one unusual thing a portal does on the wire,
+and the reason it is written here at length. Rejected: an interim answer (`100 Continue`, as the
+go-ahead of a file upload today, or `102`) saying ready, the real answer coming at the end. It is
+the common path, but it gives an upload and a download two different ways to say ready, where
+"the headers say ready, the body waits" is one rule for both. It stays the way back if this one
+meets an obstacle: it is still to confirm over TLS, on the real pair.
+
 ## Not decided yet
 
-Mechanisms, to settle with measurements before any code:
+To settle with measurements before any code:
 
-- how a side learns that a command opened its pipe, and tells "still waits for the command at P"
-  from "N bytes through";
-- how a side gives up waiting for a command at a close, without handing it an end;
 - whether ratd sees its client leave while a portal is ready and idle;
 - how rat makes a pipe within its transfers directory (`os.Root` has no call for it).
 
