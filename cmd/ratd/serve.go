@@ -119,6 +119,8 @@ type daemon struct {
 	stopping <-chan struct{}
 	// inPlace serializes the writes in place into a file (see fileLocks)
 	inPlace fileLocks
+	// portals are the portals open, which a close finds by their path (see portal)
+	portals portals
 	// status is what systemd shows of ratd to a human operator
 	status *status
 	// notifier tells systemd the state of ratd, when started by it (see takeNotifySocket)

@@ -53,12 +53,21 @@ const (
 	HeaderSize = "Rat-Size"
 	// HeaderError is a trailer of a download, telling why the file was not sent whole as it was
 	// opened (it changed while being read, a read failed, its size was not that of its content),
-	// for the agent: a download is complete only without it. Its sentence travels encoded (see
-	// [EncodeError]): it names a path, which may hold what a header can not carry.
+	// for the agent: a download is complete only without it. It is the trailer of the answer to an
+	// upload into a pipe too, telling how the portal ended otherwise than done (see
+	// [PipeUpload.Wait]). Its sentence travels encoded (see [EncodeError]): it names a path, which
+	// may hold what a header can not carry.
 	HeaderError = "Rat-Error"
 	// HeaderVersion is the version of ratd, in every answer of the transfer endpoints: a 404
 	// without it comes from a ratd older than the transfers, one with it from a missing file.
 	HeaderVersion = "Rat-Version"
+	// HeaderPipe asks for a portal: true or false, false when absent. The remote end is then a
+	// named pipe ratd makes at [HeaderPath]: on a download, whatever a command writes into it is the
+	// body (see [StartDownload]); on an upload, the body is written into it for a command to read
+	// (see [StartPipeUpload]). ratd echoes it, true, in every answer to such a request: an
+	// answer without it comes from a ratd older than the portals, which took the request for a
+	// file transfer, [ErrNoPortals].
+	HeaderPipe = "Rat-Pipe"
 )
 
 // OctetStream is the media type of the files transferred: bytes copied exactly, never
@@ -73,6 +82,10 @@ var (
 	ErrRefused = errors.New("transfer refused")
 	// ErrNoTransfers is the error of a transfer to a ratd older than the transfers.
 	ErrNoTransfers = errors.New("ratd serves no file transfers: it is older than them")
+	// ErrNoPortals is the error of a portal asked of a ratd serving the file transfers but older
+	// than the portals: it answers without echoing [HeaderPipe], and its answer, a file sent or
+	// refused, tells nothing of a pipe.
+	ErrNoPortals = errors.New("ratd opens no portal: it is older than them")
 	// ErrChanged is the error of an upload whose file changed while it was read: ratd wrote
 	// nothing, or, writing in place ([UploadOptions]), part of it.
 	ErrChanged = errors.New("the file changed while it was read")
@@ -283,6 +296,11 @@ func ParseOverwrite(value string) (bool, error) {
 // ParseInPlace returns what [HeaderInPlace] carries in value: true or false, false when absent.
 func ParseInPlace(value string) (bool, error) {
 	return parseFlag(HeaderInPlace, value)
+}
+
+// ParsePipe returns what [HeaderPipe] carries in value: true or false, false when absent.
+func ParsePipe(value string) (bool, error) {
+	return parseFlag(HeaderPipe, value)
 }
 
 // parseFlag returns what the header name carries in value: true or false, false when absent,

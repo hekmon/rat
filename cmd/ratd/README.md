@@ -654,6 +654,66 @@ where a header says, which is what POST means; PUT would claim to replace `/uplo
 headers of rat are prefixed `Rat-`: `Rat-Overwrite` rather than WebDAV's `Overwrite`, whose
 absence means overwrite, the opposite of ours.
 
+### Portals
+
+A portal is a transfer with a named pipe at its remote end where a file transfer has a file: a
+command of the agent, in a terminal, writes into the pipe, and what it writes is the download; or
+reads from it, and what it reads is the upload. One request is the portal: its headers say ready,
+and only its body waits, for the command. On the wire, so far:
+
+- **`GET /download` with `Rat-Pipe: true`**: ratd makes a named pipe (mode 0600) at the path
+  `Rat-Path` names, where nothing may be (409 otherwise, touching nothing; a missing directory is
+  refused as the system tells it, none created), and answers 200 at once, flushed, before any
+  command: the headers say ready, the pipe existing and nothing having flowed. The answer carries
+  no `Rat-Size` nor `Rat-Mode`, a pipe having neither, and every answer to such a request, a
+  refusal included, echoes `Rat-Pipe: true`: one without it comes from a ratd older than the
+  portals, which took the request for a file download. The body is then what the command writes,
+  flushed as it comes. It ends cleanly, without `Rat-Error`, once the command closed its end, all
+  of it sent; a close asked, ratd stopping, or a read of the pipe failing end it with `Rat-Error`
+  telling why (or the connection cut). HEAD with `Rat-Pipe` is refused (400).
+- **`POST /upload` with `Rat-Pipe: true`**, a chunked body, and no `Expect: 100-continue`: ratd
+  makes the pipe as for a download, refusing alike, and answers 200 at once, flushed, with
+  `Trailer: Rat-Error` and the `Rat-Pipe` echo, **before it reads any byte of the body**: the
+  headers say ready, the body waits. Once a command opened the pipe for reading, ratd writes the
+  body into it as it comes, as fast as the command reads. How the portal ended is told after the
+  stream, in the trailer, the status being sent by then: a clean end without `Rat-Error` is done,
+  the body ended and all of it written into the pipe, whose end ratd then closes, the command
+  seeing the end of its input; `Rat-Error` tells the command reading left before the end (a write
+  of the pipe failing with a broken pipe), a close asked, or a write failing. `Rat-Overwrite`,
+  `Rat-In-Place` and `Rat-Mode` mean nothing for a pipe made where nothing is, and are not read.
+  A body cut (the link lost, or the client failing it, its file having changed) once a command
+  opened the pipe holds the portal: its pipe deleted, its end kept open, the command seeing no
+  end, until `DELETE`.
+- **`DELETE /download`** and **`DELETE /upload`** close the portal ratd holds at the path
+  `Rat-Path` names, for the session of the client certificate, and answer once it packed up: 200
+  with a sentence telling what the command at the pipe saw, or 404, with `Rat-Version`, when it
+  holds none there for that session (a portal of another session is none). A ratd older than the
+  portals answers 405, its mux knowing no DELETE.
+
+**An answer before its body.** An upload answered before ratd reads its body is the one unusual
+thing a portal does on the wire: HTTP/1.1 allows an answer starting before its request was sent
+whole, and few programs expect it. It takes two conditions, both measured with Go 1.27 over TLS.
+The server allows both directions at once (`EnableFullDuplex`): without it, Go's server disposes
+of an unread body as it answers, and the exchange hangs or the body is lost; with it, the headers
+reach the client in milliseconds, no byte of the body taken by then, and 8 MiB sent afterwards
+arrive whole, the trailer telling the outcome. And the request asks for no go-ahead: a final
+answer where Go's client waits for a `100 Continue` makes it send no body at all. The request
+carries no `Rat-Mode` either, which a file upload requires: a ratd older than the portals, which
+reads no `Rat-Pipe` and takes the request for a file upload, refuses it before reading its body,
+writing nothing, where with it the body sent at once would be written at the path as a file.
+Rejected: an interim answer (`100 Continue`, or `102`) saying ready, the final answer at the end,
+which gives an upload and a download two ways to say ready. The limit: a proxy between rat and
+ratd may hold the answer until the body ended, and ready with it; a portal is promised on a direct
+connection, which mutual TLS makes the usual one.
+
+Whatever ends a portal (the end of its source, the link lost, a close, ratd stopping), ratd
+deletes the pipe first, then closes its end: a command writing then gets a broken pipe at its next
+write, a command reading sees the end of its input, and one coming later finds no such file. Two
+events keep the end of a command reading open instead, as no end of input must come of them: the
+body of an upload cut once a command opened the pipe, and ratd stopping, whose terminals stop the
+command after the door; the portal is then held, known by its path (another portal there
+refused), until a close, or until the terminals stopped. The design is in `portals.go`.
+
 ### What a transfer promises
 
 A transfer copies one regular file, whole, by path. Its model is `rsync` for one file: a new file

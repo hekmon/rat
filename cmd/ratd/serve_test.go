@@ -110,6 +110,8 @@ func serveRatd(t *testing.T, bundle string, level slog.Level) *servedRatd {
 		if err := stop(); err != nil {
 			t.Error(err)
 		}
+		// as run does once the terminals stopped, which these tests do not start
+		d.portals.release()
 	})
 	return &servedRatd{addr: listener.Addr().String(), logs: logs, d: d, stop: stop}
 }

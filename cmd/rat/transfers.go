@@ -86,6 +86,7 @@ type uploadInput struct {
 	Overwrite  bool   `json:"overwrite,omitempty" jsonschema:"true replaces an existing file; false, the default, refuses it"`
 	InPlace    bool   `json:"in_place,omitempty" jsonschema:"false, the default, copies into a new file put in place of the old one once whole: never partly written, but the disk must hold both meanwhile. true, with overwrite, writes into the file itself: no room needed for a second copy, nor write permission on its directory (the file's own decides), the file keeping its hard links, owner and attributes; but a copy cut or canceled leaves it partly written, harmless for a file nothing uses until it is uploaded whole. A missing file is created as usual. Never into the very file you upload, when the terminals run on your machine: emptied as it is read, it would be lost"`
 	Cancel     bool   `json:"cancel,omitempty" jsonschema:"true stops the transfer of these paths under way, leaving the destination as it was (written in place, partly written), unless too late"`
+	RemotePipe bool   `json:"remote_pipe,omitempty" jsonschema:"true makes remote_path a named pipe, created on the machine of the terminals where nothing exists yet, and copies your file into it for a command of yours to read: see the description"`
 }
 
 // downloadInput is the input of download_file.
@@ -94,6 +95,7 @@ type downloadInput struct {
 	LocalPath  string `json:"local_path" jsonschema:"where to write it, within the transfers directory: relative to it, or absolute"`
 	Overwrite  bool   `json:"overwrite,omitempty" jsonschema:"true replaces an existing file; false, the default, refuses it"`
 	Cancel     bool   `json:"cancel,omitempty" jsonschema:"true stops the transfer of these paths under way, leaving the destination as it was, unless too late"`
+	RemotePipe bool   `json:"remote_pipe,omitempty" jsonschema:"true makes remote_path a named pipe, created on the machine of the terminals where nothing exists yet, and copies what a command of yours writes into it: see the description"`
 }
 
 // transferDescription tells what both tools do, after their first sentence: dir is the transfers
@@ -110,6 +112,29 @@ const transferDescription = "Its content never enters your context, whatever its
 	"change them, cancel it, then call again. cancel stops it, leaving the destination as it was%s, unless it " +
 	"comes too late, as the copy ends."
 
+// downloadPortalDescription tells, after transferDescription, what download_file does with
+// remote_pipe.
+const downloadPortalDescription = " With remote_pipe, the source is a portal rather than a file: rat creates a named pipe " +
+	"at remote_path on the machine of the terminals (nothing may exist there, its directory must) and answers as " +
+	"soon as it is ready, before anything flowed. Then start, in a terminal, the command writing into it (for " +
+	"example: tar -c dir > PIPE, PIPE being remote_path), and call download_file again with the same paths to " +
+	"follow the copy. The local file is put in place once that command closes the pipe, its exit status telling " +
+	"whether what it wrote was all. There is no size: progress tells bytes only. cancel closes the portal, " +
+	"deleting the pipe, the command writing into it getting a broken pipe, and works with the same paths and " +
+	"remote_pipe even after rat restarted."
+
+// uploadPortalDescription tells, after transferDescription, what upload_file does with remote_pipe:
+// to stop midway, the command reading goes first, a close ending its input (Q2).
+const uploadPortalDescription = " With remote_pipe, the destination is a portal rather than a file: rat creates a " +
+	"named pipe at remote_path on the machine of the terminals (nothing may exist there, its directory must; " +
+	"overwrite and in_place mean nothing then) and answers as soon as it is ready, before anything flowed. Then " +
+	"start, in a terminal, the command reading it (for example: tar -x < PIPE, PIPE being remote_path), and call " +
+	"upload_file again with the same paths to follow the copy. Done means your file was delivered whole into the " +
+	"pipe and its end closed, the command seeing the end of its input: its exit status tells what it made of it. " +
+	"To stop midway, stop the command reading first, then cancel: cancel closes the portal, deleting the pipe, a " +
+	"command still reading it seeing the end of its input on a stream that is not whole; it works with the same " +
+	"paths and remote_pipe even after rat restarted."
+
 // toolDefinition is a tool as tools/list tells it.
 type toolDefinition struct {
 	Name        string             `json:"name"`
@@ -125,6 +150,9 @@ type transferRequest struct {
 	overwrite, cancel bool
 	// inPlace writes an upload into the file it replaces (connect.UploadOptions)
 	inPlace bool
+	// remotePipe makes the remote end a pipe ratd makes, a portal: the source of a download
+	// (connect.DownloadOptions), the destination of an upload (connect.StartPipeUpload)
+	remotePipe bool
 }
 
 // upload tells whether the request copies a file to the machine of ratd.
@@ -219,20 +247,20 @@ func newTransfers(logger *slog.Logger, client *http.Client, server, dir string, 
 		jobs: map[string]*job{}}
 	t.ctx, t.stop = context.WithCancel(context.Background())
 	for _, tool := range []struct {
-		name, first, other, inPlace string
-		input                       reflect.Type
+		name, first, other, inPlace, more string
+		input                             reflect.Type
 	}{
 		{uploadTool, "Copy a file from your filesystem to the machine of the terminals, by path.", "your file",
-			" (written in place, partly written)", reflect.TypeFor[uploadInput]()},
+			" (written in place, partly written)", uploadPortalDescription, reflect.TypeFor[uploadInput]()},
 		{downloadTool, "Copy a file from the machine of the terminals to your filesystem, by path.", "the remote file",
-			"", reflect.TypeFor[downloadInput]()},
+			"", downloadPortalDescription, reflect.TypeFor[downloadInput]()},
 	} {
 		schema, err := jsonschema.ForType(tool.input, &jsonschema.ForOptions{})
 		if err != nil {
 			return nil, fmt.Errorf("input schema of %s: %w", tool.name, err)
 		}
 		description := tool.first + " " + fmt.Sprintf(transferDescription, absolute, tool.other,
-			tools.MaxWaitSeconds, tool.inPlace)
+			tools.MaxWaitSeconds, tool.inPlace) + tool.more
 		definition, err := json.Marshal(toolDefinition{
 			Name:        tool.name,
 			Description: description,
@@ -333,11 +361,12 @@ func (t *transfers) request(tool string, arguments json.RawMessage) (transferReq
 		var in uploadInput
 		err = json.Unmarshal(arguments, &in)
 		q.local, q.remote, q.overwrite, q.cancel = in.LocalPath, in.RemotePath, in.Overwrite, in.Cancel
-		q.inPlace = in.InPlace
+		q.inPlace, q.remotePipe = in.InPlace, in.RemotePipe
 	} else {
 		var in downloadInput
 		err = json.Unmarshal(arguments, &in)
 		q.local, q.remote, q.overwrite, q.cancel = in.LocalPath, in.RemotePath, in.Overwrite, in.Cancel
+		q.remotePipe = in.RemotePipe
 	}
 	within, underDir := "", false
 	if q.local != "" {
@@ -358,8 +387,14 @@ func (t *transfers) request(tool string, arguments json.RawMessage) (transferReq
 	// the destination naming a directory, which cleaning would turn into the name of a file
 	case !q.upload() && connect.NamesDirectory(filepath.ToSlash(q.local)):
 		return q, fmt.Sprintf("local_path %q names a directory: give the name of the file to write in it.", q.local)
+	case q.remotePipe && connect.NamesDirectory(q.remote):
+		return q, fmt.Sprintf("remote_path %q names a directory: give the name of the pipe to make in it.", q.remote)
 	case q.upload() && connect.NamesDirectory(q.remote):
 		return q, fmt.Sprintf("remote_path %q names a directory: give the name of the file to write in it.", q.remote)
+	case q.upload() && q.remotePipe && (q.overwrite || q.inPlace):
+		// what they choose for a file replaced, a pipe made where nothing is has no use for
+		return q, "overwrite and in_place mean nothing with remote_pipe: rat makes the pipe at remote_path, where " +
+			"nothing may exist. Call upload_file again without them."
 	}
 	q.local, q.remote = filepath.Clean(within), cleanRemote(q.remote)
 	return q, ""
@@ -425,7 +460,8 @@ func (t *transfers) join(q transferRequest) (j *job, refused string, ended *job)
 		}
 	}
 	ctx, cancel := context.WithCancel(t.ctx)
-	j = &job{request: q, started: time.Now(), cancel: cancel, done: make(chan struct{})}
+	j = &job{request: q, started: time.Now(), cancel: cancel, ready: make(chan struct{}), done: make(chan struct{}),
+		closeAsked: make(chan struct{})}
 	t.jobs[q.key()] = j
 	t.running.Add(1)
 	go t.run(ctx, j)
@@ -552,18 +588,54 @@ func sentence(err error) string {
 // caller, which alone knows whether it writes it, drops the text and does not call told, and the
 // next call tells how the job ended. Rejected: looking at ctx here before forgetting, a cancel
 // coming right after the look losing the outcome.
+//
+// A portal (remote_pipe) is answered as soon as it is ready, unless that was told already: the call
+// returns without waiting for a command, which the agent starts once told. Ready is marked told by
+// told, as an outcome is forgotten: a ready answer dropped is told by the next call. A portal ended
+// before its ready was told tells its outcome instead.
 func (t *transfers) await(ctx context.Context, j *job, called time.Time) (text string, isError bool, told func()) {
 	before := j.moved.Load()
 	timer := time.NewTimer(transferWait)
 	defer timer.Stop()
+	var ready <-chan struct{}
+	// not of a portal whose close was asked: it is being closed, whatever the call asking it was told
+	closing := j.request.remotePipe && j.cancelWasAsked()
+	if j.request.remotePipe && !j.readyWasTold() && !closing {
+		ready = j.ready
+	}
 	select {
 	case <-j.done:
+	case <-ready:
+		if !j.hasEnded() {
+			return readyText(j), false, j.tellReady
+		}
+		<-j.done
 	case <-timer.C:
+		if closing {
+			// as the cancel that asked it tells a close ratd has not answered yet
+			return fmt.Sprintf("The transfer to %s is still ending: call %s again with the same paths to know how it "+
+				"ended.", j.request.destination(), j.request.tool), true, func() {}
+		}
 		return t.progressText(j, before), false, func() {}
 	case <-ctx.Done():
 		return "", false, func() {}
 	}
 	return j.text + endedAgo(j, called), j.isError, t.forgetting(j)
+}
+
+// readyText tells the portal of j open: its pipe made on the machine of the terminals, nothing
+// flowed, the command at it, writing or reading, the agent's to start.
+func readyText(j *job) string {
+	if j.request.upload() {
+		return fmt.Sprintf("The portal is open: %[1]s is a pipe on the machine of the terminals, and what a command "+
+			"reads from it is %[2]s. Start that command in a terminal (for example: tar -x < %[1]s), then call %[3]s "+
+			"again with the same paths to follow it, or with cancel to close it.", j.request.remote, j.request.local,
+			j.request.tool)
+	}
+	return fmt.Sprintf("The portal is open: %[1]s is a pipe on the machine of the terminals, and what a command writes "+
+		"into it is copied to %[2]s. Start that command in a terminal (for example: tar -c dir > %[1]s), then call %[3]s "+
+		"again with the same paths to follow it, or with cancel to close it.", j.request.remote, j.request.local,
+		j.request.tool)
 }
 
 // endedAgo tells how long ago j ended, for a call made at called, if it ended before the call: the
@@ -594,13 +666,22 @@ func (t *transfers) forget(j *job) {
 
 // cancel stops the transfer of the paths of q, for a call made at called, and tells how it ended:
 // canceled, the destination left as it was, or ended before the cancel could stop it, how long ago
-// if before the call (see endedAgo), with told, which forgets the job told (see call).
+// if before the call (see endedAgo), with told, which forgets the job told (see call). It waits
+// for the job transferWait at most, whatever the cancel takes, the job going on after: a portal
+// closed by its job (see closeOnCancel), the outcome then told by the next call.
 func (t *transfers) cancel(ctx context.Context, q transferRequest, called time.Time) (text string, isError bool,
 	told func()) {
 	t.jobsMu.Lock()
 	j := t.jobs[q.key()]
 	t.jobsMu.Unlock()
 	switch {
+	case j == nil && q.remotePipe:
+		// rat restarted, or the link cut: ratd may still hold the portal, known by its path alone.
+		// One request, made by the call, which waits transferWait at most (P12).
+		closing, stop := context.WithTimeout(ctx, transferWait)
+		defer stop()
+		text, isError := t.closeRemote(closing, q)
+		return text, isError, func() {}
 	case j == nil:
 		return fmt.Sprintf("No transfer to %s is under way: nothing to cancel.", q.destination()), false, func() {}
 	case j.request.source() != q.source() && j.hasEnded():
@@ -610,7 +691,14 @@ func (t *transfers) cancel(ctx context.Context, q transferRequest, called time.T
 		return fmt.Sprintf("The transfer to %s under way is from %s, not %s: nothing canceled.", q.destination(),
 			j.request.source(), q.source()), true, func() {}
 	}
-	j.askCancel()
+	// A portal is closed by its job (see closeOnCancel), which asks ratd, then cuts its link, and
+	// keeps ratd's answer in its outcome: the cancel only marks it, the close outliving the call, and
+	// waits for the job as for a file transfer.
+	if j.request.remotePipe {
+		j.markCancel()
+	} else {
+		j.askCancel()
+	}
 	timer := time.NewTimer(transferWait)
 	defer timer.Stop()
 	select {
@@ -625,9 +713,9 @@ func (t *transfers) cancel(ctx context.Context, q transferRequest, called time.T
 	told = t.forgetting(j)
 	ago := endedAgo(j, called)
 	switch {
-	case j.canceled, j.refused:
-		// stopped, or refused by its local side before any request: nothing ran for the cancel to
-		// come too late for
+	case j.canceled, j.refused, j.request.remotePipe && !isReady(j):
+		// stopped; refused by its local side before any request; or a portal that never opened,
+		// refused or failing: nothing ran for the cancel to come too late for
 		return j.text + ago, j.isError, told
 	case j.isError:
 		// a failure, or an answer lost: told first, rather than behind "too late to cancel", which
@@ -655,6 +743,15 @@ type job struct {
 	// cancelAsked tells a cancel was asked; placing that a download is being put in place, too
 	// late to cancel
 	cancelAsked, placing bool
+	// closeAsked is closed once a cancel of a portal was marked (see markCancel), for its job to
+	// close it (see closeOnCancel)
+	closeAsked chan struct{}
+	// readyTold tells the ready of a portal was told (see await)
+	readyTold bool
+	// ready is closed once the portal of the job is ready: ratd made its pipe, the local file was
+	// checked (opened and stamped for an upload, its temporary file created for a download), nothing
+	// flowed into a pipe. Never closed for a file transfer.
+	ready chan struct{}
 	// done is closed once the transfer ended, its outcome set: what it tells, whether it is an
 	// error, whether a cancel stopped it, whether its local side refused it before any request,
 	// and when it ended
@@ -714,6 +811,31 @@ func (j *job) rate(now time.Time) float64 {
 		return float64(moved-from.bytes) / elapsed
 	}
 	return 0
+}
+
+// markCancel marks a cancel of a portal asked, without cutting the transfer, unless a download is
+// being put in place already: its job closes the portal (see closeOnCancel).
+func (j *job) markCancel() {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if !j.placing && !j.cancelAsked {
+		j.cancelAsked = true
+		close(j.closeAsked)
+	}
+}
+
+// readyWasTold tells whether the ready of the portal of j was told.
+func (j *job) readyWasTold() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.readyTold
+}
+
+// tellReady marks the ready of the portal of j told, as the answer telling it is written.
+func (j *job) tellReady() {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.readyTold = true
 }
 
 // askCancel asks the transfer to stop, unless a download is being put in place already.
@@ -792,6 +914,15 @@ func (t *transfers) run(ctx context.Context, j *job) {
 // canceledText tells j canceled, its destination left as it was, or partly written in place (see
 // destinationText).
 func canceledText(j *job) string {
+	if j.request.remotePipe && j.request.upload() {
+		// what the command reading saw, ratd tells (see closedText)
+		return fmt.Sprintf("Closed the portal from %s to %s after %s sent.", j.request.local, j.request.remote,
+			sentText(j))
+	}
+	if j.request.remotePipe {
+		return fmt.Sprintf("Closed the portal from %s to %s after %s: %s.", j.request.remote, j.request.local,
+			sizeText(j.moved.Load()), destinationText(j))
+	}
 	text := fmt.Sprintf("Canceled the copy of %s to %s after %s", j.request.source(), j.request.destination(),
 		sizeText(j.moved.Load()))
 	if size := j.size.Load(); size > 0 {
@@ -814,7 +945,8 @@ func destinationText(j *job) string {
 // failureText tells j failing with err: its answer lost once all of it was sent, ratd possibly
 // having written it (partly, written in place), a cancel coming then too late to cut it; refused or failed by ratd (its
 // sentence), an answer of ratd, which a cancel never brings, cutting the connection first: a cancel
-// came too late then; canceled (whatever the error the cut gave), unless rat is stopping, which
+// came too late then; a file transfer canceled (whatever the error the cut gave; a portal closed is
+// told by its job, see closedText), unless rat is stopping, which
 // cuts an upload whatever was sent, ratd possibly writing it; ratd older than the transfers or
 // not reached; the file changed while read, or failing to read, as the system tells it; the copy
 // cut.
@@ -833,24 +965,172 @@ func (t *transfers) failureText(j *job, err error) (string, bool, bool) {
 		return fmt.Sprintf("The answer of ratd to the copy of %s to %s was lost once all of it was sent (%s): %s. "+
 			"Check it before using it, or call %s again with %s.", j.request.source(), j.request.destination(),
 			sentence(failed.Reason), left, j.request.tool, again), true, false
+	case errors.As(err, &refused) && j.request.remotePipe && j.request.upload() && refused.Status == http.StatusOK:
+		// the trailer of a portal: the command reading left, closed by another rat, a write of its pipe
+		// failing
+		return fmt.Sprintf("The portal from %s to %s ended after %s sent: %s", j.request.local, j.request.remote,
+			sentText(j), refused.Text), true, false
+	case errors.As(err, &refused) && j.request.remotePipe && refused.Status == http.StatusOK:
+		// the trailer of a portal: closed by another rat, ratd stopping, a read of its pipe failing
+		return fmt.Sprintf("The portal from %s to %s was cut after %s: %s %s", j.request.remote, j.request.local,
+			sizeText(j.moved.Load()), refused.Text, portalCutText(j)), true, false
 	case errors.As(err, &refused):
 		return refused.Text, true, false
-	case j.cancelWasAsked() && t.ctx.Err() == nil:
+	case !j.request.remotePipe && j.cancelWasAsked() && t.ctx.Err() == nil:
+		// a portal closed is told by its job, from what the close did (see closedText): a portal
+		// refused or failing as it opens is told as it is, a cancel racing it or not
 		return canceledText(j), false, true
+	case errors.Is(err, connect.ErrNoPortals):
+		return noPortalsText(t.server), true, false
 	case errors.Is(err, connect.ErrNoTransfers):
 		return fmt.Sprintf("The ratd at %s is older than this rat and serves no file transfers: whoever runs it must "+
 			"upgrade it.", t.server), true, false
+	case errors.Is(err, connect.ErrChanged) && j.request.remotePipe:
+		return fmt.Sprintf("%s changed while it was read: it may still be written. The portal from %s to %s is cut "+
+				"after %s sent. %s", j.request.local, j.request.local, j.request.remote, sentText(j), portalCutText(j)),
+			true, false
+	case errors.Is(err, connect.ErrRead) && errors.As(err, &failed) && j.request.remotePipe:
+		return fmt.Sprintf("%s The portal from %s to %s is cut after %s sent. %s", t.localFailure(failed.Reason,
+			"Reading", j.request.local), j.request.local, j.request.remote, sentText(j), portalCutText(j)), true, false
 	case errors.Is(err, connect.ErrChanged):
 		return fmt.Sprintf("%s changed while it was read: it may still be written. Upload it again once it is "+
 			"complete. %s.", j.request.local, destinationText(j)), true, false
 	case errors.Is(err, connect.ErrRead) && errors.As(err, &failed):
 		return t.localFailure(failed.Reason, "Reading", j.request.local) + " " + destinationText(j) + ".", true, false
+	case errors.Is(err, connect.ErrCut) && errors.As(err, &failed) && j.request.remotePipe && j.request.upload():
+		return fmt.Sprintf("The portal from %s to %s was cut after %s sent: %s. %s", j.request.local, j.request.remote,
+			sentText(j), sentence(failed.Reason), portalCutText(j)), true, false
+	case errors.Is(err, connect.ErrCut) && errors.As(err, &failed) && j.request.remotePipe:
+		return fmt.Sprintf("The portal from %s to %s was cut after %s: %s. %s", j.request.remote, j.request.local,
+			sizeText(j.moved.Load()), sentence(failed.Reason), portalCutText(j)), true, false
 	case errors.Is(err, connect.ErrCut) && errors.As(err, &failed):
 		return fmt.Sprintf("The copy of %s to %s was cut: %s. %s.", j.request.source(), j.request.destination(),
 			sentence(failed.Reason), destinationText(j)), true, false
+	case j.request.remotePipe && isReady(j):
+		// ratd lost once the portal was ready: the link is cut, ratd packs up as it sees it
+		return t.reachText(err) + " " + portalCutText(j), true, false
 	default:
 		return t.reachText(err), true, false
 	}
+}
+
+// isReady tells whether the portal of j was ready.
+func isReady(j *job) bool {
+	select {
+	case <-j.ready:
+		return true
+	default:
+		return false
+	}
+}
+
+// portalCutText tells what a portal cut leaves. Its destination a file: the file as it was, the
+// pipe deleted by ratd as it sees the cut, the command writing into it getting a broken pipe, and
+// that the agent opens it again once the cause is fixed. Its destination a pipe, broken: ratd keeps
+// the end of the command reading open, which sees no end (P5), until the portal is closed; rat
+// does not know whether a command was reading.
+func portalCutText(j *job) string {
+	if j.request.upload() {
+		return fmt.Sprintf("If a command was reading %s it still waits, it has seen no end: stop it in its terminal, "+
+			"then call %s again with cancel to close the portal.", j.request.remote, j.request.tool)
+	}
+	return fmt.Sprintf("%s is as it was. ratd deletes the pipe on the machine of the terminals as it sees the cut, "+
+		"the command writing into it getting a broken pipe: open the portal again once the cause is fixed.",
+		j.request.local)
+}
+
+// noPortalsText tells the ratd at server older than the portals.
+func noPortalsText(server string) string {
+	return fmt.Sprintf("The ratd at %s is older than this rat and opens no portal: whoever runs it must upgrade it.",
+		server)
+}
+
+// closeRemote asks ratd to close the portal of q it holds at its remote path, and tells its answer,
+// whether it closed one or held none: what the command at its pipe saw (see connect.ClosePortal).
+// ratd not reached, it tells so, and to cancel again, its side not told to close.
+func (t *transfers) closeRemote(ctx context.Context, q transferRequest) (string, bool) {
+	endpoint := connect.DownloadPath
+	if q.upload() {
+		endpoint = connect.UploadPath
+	}
+	remote := q.remote
+	text, _, err := connect.ClosePortal(ctx, t.client, t.server, endpoint, remote)
+	var refused *connect.Refusal
+	switch {
+	case err == nil:
+		return text, false
+	case errors.Is(err, connect.ErrNoPortals):
+		return noPortalsText(t.server), true
+	case errors.Is(err, connect.ErrNoTransfers):
+		return fmt.Sprintf("The ratd at %s is older than this rat and serves no file transfers: whoever runs it must "+
+			"upgrade it.", t.server), true
+	case errors.As(err, &refused):
+		return refused.Text + " " + notToldText(q), true
+	default:
+		return t.reachText(err) + " " + notToldText(q), true
+	}
+}
+
+// notToldText tells ratd not told to close the portal of q.
+func notToldText(q transferRequest) string {
+	return fmt.Sprintf("Its side of the portal at %s could not be told to close, and may still be open: call %s again "+
+		"with cancel.", q.remote, q.tool)
+}
+
+// closeAnswer is how the job of a portal closed it, a cancel asked (see closeOnCancel): asked tells
+// it asked ratd; text is what ratd answered of its pipe, or why it could not be told, failed then.
+type closeAnswer struct {
+	asked, failed bool
+	text          string
+}
+
+// closeOnCancel watches j, its portal ready, for a cancel (see markCancel): once one is asked, it
+// asks ratd to close the portal, then cuts its link with cut, ending the job's request. It returns
+// the function the job calls once its request ended, by itself or so cut, which returns how the
+// portal was closed, asked false without a cancel asked by then. Run under the context of rat
+// rather than of the call asking the cancel: the close is the job's, kept in its outcome whoever
+// tells it and whenever (G8), and never delays a stop of rat, which cancels it. ratd asked first,
+// then the link cut: a link cut first would leave the portal of an upload held, broken, on its
+// side.
+func (t *transfers) closeOnCancel(j *job, cut context.CancelFunc) func() closeAnswer {
+	stop, done := make(chan struct{}), make(chan struct{})
+	var answer closeAnswer
+	go func() {
+		defer close(done)
+		select {
+		case <-j.closeAsked:
+		case <-stop:
+			// a cancel asked before the request ended is a close all the same
+			select {
+			case <-j.closeAsked:
+			default:
+				return
+			}
+		}
+		answer.asked = true
+		answer.text, answer.failed = t.closeRemote(t.ctx, j.request)
+		cut()
+	}()
+	return func() closeAnswer {
+		close(stop)
+		<-done
+		return answer
+	}
+}
+
+// closedText tells j, a portal, closed as a cancel asked, its outcome: its local side as
+// canceledText tells it, then what ratd answered of its pipe (P11). ratd not told, it is an error,
+// its side possibly still open, the agent to cancel again.
+func closedText(j *job, answer closeAnswer) (string, bool, bool) {
+	if !answer.failed {
+		return canceledText(j) + " " + answer.text, false, true
+	}
+	if j.request.upload() {
+		return fmt.Sprintf("Cut the portal from %s to %s on this side after %s sent. %s", j.request.local,
+			j.request.remote, sentText(j), answer.text), true, true
+	}
+	return fmt.Sprintf("Cut the portal from %s to %s on this side after %s: %s. %s", j.request.remote,
+		j.request.local, sizeText(j.moved.Load()), destinationText(j), answer.text), true, true
 }
 
 // countedFile counts the bytes read from the file uploaded by its job.
@@ -875,6 +1155,9 @@ func (t *transfers) runUpload(ctx context.Context, j *job, source *os.File) (str
 		return t.localFailure(err, "Reading", j.request.local), true, false
 	}
 	j.size.Store(info.Size())
+	if j.request.remotePipe {
+		return t.runUploadPipe(ctx, j, source)
+	}
 	up, err := connect.Upload(t.ctx, ctx.Done(), t.client, t.server, countedFile{File: source, job: j},
 		j.request.remote, connect.UploadOptions{Overwrite: j.request.overwrite, InPlace: j.request.inPlace})
 	if err != nil {
@@ -904,6 +1187,39 @@ func (t *transfers) runUpload(ctx context.Context, j *job, source *os.File) (str
 	return text, false, false
 }
 
+// runUploadPipe uploads source, the local file of j, into the pipe of a portal, and tells how it
+// ended: the portal opened, ratd making its pipe, the job is ready (see await), then the file goes
+// as a command reads the pipe, until the portal ends. ctx, which the job ends once a cancel asked
+// ratd to close the portal (see closeOnCancel), and rat stopping, cut it whatever was sent: a
+// portal closed always closes, where a file upload sent whole waits for its answer.
+func (t *transfers) runUploadPipe(ctx context.Context, j *job, source *os.File) (string, bool, bool) {
+	up, err := connect.StartPipeUpload(ctx, t.client, t.server, countedFile{File: source, job: j}, j.request.remote)
+	if err != nil {
+		return t.failureText(j, err)
+	}
+	defer up.Close()
+	closed := t.closeOnCancel(j, j.cancel)
+	close(j.ready)
+	_, err = up.Wait()
+	answer := closed()
+	switch {
+	case err != nil && answer.asked:
+		// the close in its trailer, or the cut that followed it
+		return closedText(j, answer)
+	case err != nil:
+		return t.failureText(j, err)
+	}
+	// Q4: delivered, not used
+	return fmt.Sprintf("Delivered %s into %s (%s): all of it was written into the pipe, and the command reading it "+
+		"saw the end of its input; the pipe is deleted. Its exit status tells what it made of it.", j.request.local,
+		j.request.remote, sizeText(j.moved.Load())), false, false
+}
+
+// sentText tells the bytes of the file of j, an upload, read and sent, of its size.
+func sentText(j *job) string {
+	return sizeText(j.moved.Load()) + " of " + sizeText(j.size.Load())
+}
+
 // countedWriter counts the bytes written to the file a download of its job writes.
 type countedWriter struct {
 	w   io.Writer
@@ -920,9 +1236,16 @@ func (w countedWriter) Write(p []byte) (int, error) {
 // place once complete and no cancel asked, and tells how it ended. Missing directories are
 // created, and named; a failure to look at the local path under them refuses the download before
 // any byte is written.
+//
+// A portal (remote_pipe) goes the same way, its local file being a file end as any download's:
+// checked before any request (see prepare), then ratd makes its pipe and answers, then the
+// directories, the second look and the temporary file, and only then is the job ready (see await),
+// nothing having flowed. A failure in between closes the download, cutting the link, which ratd
+// takes as the end of the portal, deleting its pipe.
 func (t *transfers) runDownload(ctx context.Context, j *job) (string, bool, bool) {
 	local := j.request.local
-	download, err := connect.StartDownload(ctx, t.client, t.server, j.request.remote)
+	download, err := connect.StartDownload(ctx, t.client, t.server, j.request.remote,
+		connect.DownloadOptions{Pipe: j.request.remotePipe})
 	if err != nil {
 		return t.failureText(j, err)
 	}
@@ -962,21 +1285,38 @@ func (t *transfers) runDownload(ctx context.Context, j *job) (string, bool, bool
 			t.logger.Warn("failed to remove the temporary file of a download", "path", tmpName, "error", err)
 		}
 	}()
+	// how the portal was closed, a cancel asked: nothing for a file
+	closed := func() closeAnswer { return closeAnswer{} }
+	if download.Pipe {
+		closed = t.closeOnCancel(j, j.cancel)
+		close(j.ready)
+	}
 	_, err = download.WriteTo(countedWriter{w: tmp, job: j})
 	if closeErr := tmp.Close(); err == nil {
 		err = closeErr
 	}
+	answer := closed()
 	if err == nil {
 		downloaded(j)
 	}
 	var pathErr *fs.PathError
 	switch {
+	case err != nil && answer.asked:
+		// the close in its trailer, or the cut that followed it
+		return failed(closedText(j, answer))
+	case errors.As(err, &pathErr) && download.Pipe:
+		// writing the local file failed: the portal is cut, the download closed on return
+		return failed(t.localFailure(err, "Writing", local)+" "+portalCutText(j), true, false)
 	case errors.As(err, &pathErr):
 		// writing the local file failed
 		return failed(t.localFailure(err, "Writing", local), true, false)
 	case err != nil:
 		return failed(t.failureText(j, err))
 	case !j.beginPlacing():
+		if answer.asked {
+			// the portal had ended by itself as its close was asked: what ratd answered is told
+			return failed(closedText(j, answer))
+		}
 		return failed(canceledText(j), false, true)
 	}
 	replaced, found, refused, err := t.place(tmpName, local, j.request.overwrite)
@@ -991,7 +1331,14 @@ func (t *transfers) runDownload(ctx context.Context, j *job) (string, bool, bool
 		how = "replaced"
 	}
 	text := fmt.Sprintf("Downloaded %s to %s (%s): %s.", j.request.remote, local, sizeText(j.moved.Load()), how)
-	if modesTold && replaced && found.Perm() != download.Mode {
+	if download.Pipe {
+		// Q3: a command failing closes the pipe too, the end of the source all the same
+		text = fmt.Sprintf("Downloaded what was written into %s to %s (%s): %s. The command writing closed its end "+
+			"of the pipe: its exit status tells whether that was all.", j.request.remote, local,
+			sizeText(j.moved.Load()), how)
+	}
+	// the bits of a pipe are not those of what came through: a file replaced keeps its own unsaid
+	if modesTold && replaced && !download.Pipe && found.Perm() != download.Mode {
 		text += fmt.Sprintf(" It kept its permissions (%s), not those of the remote file (%s).",
 			connect.FormatMode(found), connect.FormatMode(download.Mode))
 	}
@@ -1128,6 +1475,9 @@ func (t *transfers) progressText(j *job, before int64) string {
 	// tells the end of the body, under its lock, which the bytes read do not show (a link stalled on
 	// the last chunk, an empty file waiting for the go-ahead). The cancel offered may then come too
 	// late, which its call tells, with how the transfer ended.
+	if j.request.remotePipe {
+		return portalProgressText(j, before)
+	}
 	text := fmt.Sprintf("Still copying %s to %s: %s", j.request.source(), j.request.destination(), sizeText(moved))
 	if size > 0 {
 		text += " of " + sizeText(size)
@@ -1148,6 +1498,56 @@ func (t *transfers) progressText(j *job, before int64) string {
 	}
 	return text + fmt.Sprintf(". The copy goes on while you do something else: call %s again with the same paths "+
 		"for the rest, or with cancel to stop it.", j.request.tool)
+}
+
+// portalProgressText tells the progress of the portal of j, still under way after a wait, before
+// being the bytes it had moved as the wait began: that nothing came through yet, rat not knowing
+// whether a command is at the pipe; or the bytes moved and the rate, a pipe having no size, nor
+// time left.
+func portalProgressText(j *job, before int64) string {
+	moved := j.moved.Load()
+	follow := fmt.Sprintf("Call %s again with the same paths to keep following it, or with cancel to close it.",
+		j.request.tool)
+	if j.request.upload() {
+		return uploadPortalProgressText(j, before, follow)
+	}
+	switch {
+	case !isReady(j):
+		return fmt.Sprintf("Still opening the portal from %s to %s. %s", j.request.remote, j.request.local, follow)
+	case moved == 0:
+		return fmt.Sprintf("The portal from %s to %s is open, and nothing came through yet. %s", j.request.remote,
+			j.request.local, follow)
+	case moved == before:
+		return fmt.Sprintf("Still copying what is written into %s to %s: %s, and nothing moved in the last %d seconds. "+
+			"%s", j.request.remote, j.request.local, sizeText(moved), int(transferWait.Round(time.Second).Seconds()),
+			follow)
+	}
+	return fmt.Sprintf("Still copying what is written into %s to %s: %s, %s/s. The copy goes on while you do "+
+		"something else: call %s again with the same paths for the rest, or with cancel to close it.",
+		j.request.remote, j.request.local, sizeText(moved), sizeText(int64(j.rate(time.Now()))), j.request.tool)
+}
+
+// uploadPortalProgressText tells the progress of the portal of j, an upload, as portalProgressText
+// does, follow telling how to go on: what was read from the file and sent, rat not knowing what a
+// command took of it, nor whether one reads (the connection holds part of the file before any
+// does); and, once the whole file was sent, that the portal waits for the command reading to take
+// it.
+func uploadPortalProgressText(j *job, before int64, follow string) string {
+	moved, size := j.moved.Load(), j.size.Load()
+	switch {
+	case !isReady(j):
+		return fmt.Sprintf("Still opening the portal from %s to %s. %s", j.request.local, j.request.remote, follow)
+	case moved >= size:
+		return fmt.Sprintf("All of %s (%s) was sent into the portal at %s: it ends once the command reading %s took "+
+			"it. %s", j.request.local, sizeText(size), j.request.remote, j.request.remote, follow)
+	case moved == before:
+		return fmt.Sprintf("The portal from %s to %s is open: %s sent so far, and nothing moved in the last %d "+
+			"seconds, which a command reading %s slowly, or none reading it, would show. %s", j.request.local,
+			j.request.remote, sentText(j), int(transferWait.Round(time.Second).Seconds()), j.request.remote, follow)
+	}
+	return fmt.Sprintf("Still sending %s into %s: %s sent so far, %s/s. The copy goes on while you do something "+
+		"else: call %s again with the same paths for the rest, or with cancel to close it.", j.request.local,
+		j.request.remote, sentText(j), sizeText(int64(j.rate(time.Now()))), j.request.tool)
 }
 
 // leftText tells a time left, coarsely: an estimate from a rate that varies claims no precision.

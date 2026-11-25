@@ -1418,7 +1418,7 @@ func TestDownloadLongTrailer(t *testing.T) {
 		}
 		look.Store(func(file *os.File) (fs.FileInfo, error) { return file.Stat() })
 		change.Store(c.change)
-		download, err := connect.StartDownload(context.Background(), client, r.addr, c.path)
+		download, err := connect.StartDownload(context.Background(), client, r.addr, c.path, connect.DownloadOptions{})
 		if err != nil {
 			t.Fatalf("%s: %v", c.what, err)
 		}
@@ -1617,7 +1617,7 @@ func TestTransferClient(t *testing.T) {
 		t.Errorf("without overwrite: expected the refusal of ratd, got %v", err)
 	}
 
-	download, err := connect.StartDownload(ctx, client, r.addr, "~/sub/app.bin")
+	download, err := connect.StartDownload(ctx, client, r.addr, "~/sub/app.bin", connect.DownloadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1630,7 +1630,7 @@ func TestTransferClient(t *testing.T) {
 			download.Size, n, err)
 	}
 	missing := filepath.Join(home, "missing")
-	if _, err = connect.StartDownload(ctx, client, r.addr, missing); !errors.As(err, &refused) ||
+	if _, err = connect.StartDownload(ctx, client, r.addr, missing, connect.DownloadOptions{}); !errors.As(err, &refused) ||
 		refused.Status != http.StatusNotFound || refused.Text != "Reading "+missing+" failed: no such file or directory." {
 		t.Errorf("a missing file: expected the refusal of ratd, got %v", err)
 	}

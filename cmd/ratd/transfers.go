@@ -49,10 +49,13 @@ var errChanged = errors.New("file changed while read")
 var errNoTrueSize = errors.New("size not that of the content")
 
 // addTransfers serves the file transfers on mux, behind the same client checks as MCP requests.
-// GET also answers HEAD, with the headers of a download and no body.
+// GET also answers HEAD, with the headers of a download and no body. A POST or a GET asking
+// Rat-Pipe opens a portal (see uploadPipe and downloadPipe), which DELETE closes (see closePortal).
 func (d *daemon) addTransfers(mux *http.ServeMux) {
 	mux.Handle(http.MethodPost+" "+connect.UploadPath, d.transferHandler(upload, d.upload))
 	mux.Handle(http.MethodGet+" "+connect.DownloadPath, d.transferHandler(download, d.download))
+	mux.Handle(http.MethodDelete+" "+connect.DownloadPath, d.closePortal(download))
+	mux.Handle(http.MethodDelete+" "+connect.UploadPath, d.closePortal(upload))
 }
 
 // transferHandler returns the handler of the transfers going way, which serve runs, writing the
@@ -262,15 +265,18 @@ func transferNotRegular(path string, info fs.FileInfo, way direction) *result {
 // replaced is written into instead (see uploadInPlace); without it, one ratd's user can write but
 // not replace by a new file (its directory refusing a new file, the sticky bit a file of another
 // user) is refused telling the agent to set in_place: before any byte is sent when the temporary
-// file can not be created, once they all came when the rename is refused.
+// file can not be created, once they all came when the rename is refused. With Rat-Pipe, the
+// upload is a portal instead (see uploadPipe).
 func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
-	// No Content-Type reads as bytes (RFC 9110). Another one is refused: a client sending a form
-	// (curl -d @file strips the new lines of the file) must find out.
-	if declared := req.Header.Get("Content-Type"); declared != "" {
-		if media, _, err := mime.ParseMediaType(declared); err != nil || media != connect.OctetStream {
-			return refuse(w, http.StatusUnsupportedMediaType, result{err: connect.ErrHeader, text: fmt.Sprintf(
-				"Content-Type %q: files travel as %s.", declared, connect.OctetStream)})
-		}
+	pipe, err := connect.ParsePipe(req.Header.Get(connect.HeaderPipe))
+	if err != nil {
+		return refuse(w, http.StatusBadRequest, result{err: err, text: err.Error() + "."})
+	}
+	if pipe {
+		return d.uploadPipe(w, req)
+	}
+	if refused := octetStreamRefusal(req); refused != nil {
+		return refuse(w, http.StatusUnsupportedMediaType, *refused)
 	}
 	path, refused := transferPath(req, upload)
 	if refused != nil {
@@ -398,6 +404,21 @@ func (d *daemon) upload(w http.ResponseWriter, req *http.Request) result {
 		_, _ = io.WriteString(w, createdText(created))
 	}
 	return result{attrs: append(attrs, "status", http.StatusCreated)}
+}
+
+// octetStreamRefusal refuses the body of req, an upload, unless it is bytes: no Content-Type reads
+// as bytes (RFC 9110). Another one is refused: a client sending a form (curl -d @file strips the
+// new lines of the file) must find out.
+func octetStreamRefusal(req *http.Request) *result {
+	declared := req.Header.Get("Content-Type")
+	if declared == "" {
+		return nil
+	}
+	if media, _, err := mime.ParseMediaType(declared); err != nil || media != connect.OctetStream {
+		return &result{err: connect.ErrHeader, text: fmt.Sprintf("Content-Type %q: files travel as %s.", declared,
+			connect.OctetStream)}
+	}
+	return nil
 }
 
 // inPlaceOpening is called with the path of an upload in place once looked at, before it is
@@ -681,8 +702,16 @@ var downloadOpened = func(string) {}
 // acts on what is not a regular file: it releases a command waiting to write into a FIFO, whose
 // next write then fails once the refusal closes it, and a device may act on it (a tape rewinds).
 // The file opened is checked again, as it may have been replaced meanwhile, opened without
-// blocking (a FIFO without a writer would block forever).
+// blocking (a FIFO without a writer would block forever). With Rat-Pipe, the download is a portal
+// instead (see downloadPipe).
 func (d *daemon) download(w http.ResponseWriter, req *http.Request) result {
+	pipe, err := connect.ParsePipe(req.Header.Get(connect.HeaderPipe))
+	if err != nil {
+		return refuse(w, http.StatusBadRequest, result{err: err, text: err.Error() + "."})
+	}
+	if pipe {
+		return d.downloadPipe(w, req)
+	}
 	path, refused := transferPath(req, download)
 	if refused != nil {
 		return refuse(w, http.StatusBadRequest, *refused)

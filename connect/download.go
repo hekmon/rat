@@ -9,14 +9,28 @@ import (
 	"strconv"
 )
 
-// Download is a download under way, from [StartDownload]: the file as ratd opened it, whose
-// bytes are still to be read ([Download.WriteTo]). It must be closed.
+// Download is a download under way, from [StartDownload]: the file as ratd opened it, or the
+// pipe of a portal ratd made, whose bytes are still to be read ([Download.WriteTo]). It must be
+// closed.
 type Download struct {
-	// Mode is the permission bits of the file, for the caller to create the file it writes with.
+	// Pipe tells the remote end is the pipe of a portal ([DownloadOptions]): what a command writes
+	// into it, of no size known.
+	Pipe bool
+	// Mode is the permission bits of the file, for the caller to create the file it writes with;
+	// for a pipe, 0666, which the umask of the caller then takes, as a shell redirection creates a
+	// file: the bits of the pipe, made for ratd's user alone, mean nothing for what comes through.
 	Mode fs.FileMode
-	// Size is the size of the file when ratd opened it: what a complete download writes.
+	// Size is the size of the file when ratd opened it: what a complete download writes; -1 for a
+	// pipe, which has no size.
 	Size int64
 	resp *http.Response
+}
+
+// DownloadOptions are what a download reads: the zero value reads a file.
+type DownloadOptions struct {
+	// Pipe opens a portal ([HeaderPipe]): ratd makes a named pipe at the path, where nothing may
+	// be, and the download is what a command writes into it, until that command closes it.
+	Pipe bool
 }
 
 // StartDownload asks the ratd at server, HOST:PORT, through client (see [HTTPClient]), for the
@@ -25,19 +39,41 @@ type Download struct {
 // A refusal or failure of ratd is a [Refusal], with the sentence ratd wrote for the agent;
 // [ErrNoTransfers] tells a ratd older than the transfers. Cancelling ctx cuts the download, until
 // the download is closed.
-func StartDownload(ctx context.Context, client *http.Client, server, path string) (*Download, error) {
+//
+// With options.Pipe, it opens a portal instead: ratd makes a named pipe at path, and its answer,
+// returned here, tells the portal ready, the pipe existing and nothing having flowed yet; the body
+// then carries what a command writes into the pipe, as it comes, until that command closes it.
+// The answer must echo [HeaderPipe]: one without it, from a ratd older than the portals which took
+// the request for a file transfer, fails with [ErrNoPortals], whatever it answered, a file sent
+// from that path or a refusal. Closing the download, or cancelling ctx, cuts the link, which ratd
+// takes as the end of the portal, deleting its pipe.
+func StartDownload(ctx context.Context, client *http.Client, server, path string, options DownloadOptions) (
+	*Download, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, transferURL(server, DownloadPath), nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set(HeaderPath, EncodePath(path))
+	if options.Pipe {
+		req.Header.Set(HeaderPipe, "true")
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
+	// Before the status: a refusal of an older ratd (no such file at the path of the pipe to make)
+	// would read as the refusal of a portal. Without the version, the answer comes from a ratd
+	// older than the transfers, or from its checks of the client, told as they are by refusal.
+	if options.Pipe && resp.Header.Get(HeaderVersion) != "" && resp.Header.Get(HeaderPipe) != "true" {
+		_ = resp.Body.Close()
+		return nil, ErrNoPortals
+	}
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		return nil, refusal(resp)
+	}
+	if options.Pipe {
+		return &Download{Pipe: true, Mode: 0o666, Size: -1, resp: resp}, nil
 	}
 	mode, err := ParseMode(resp.Header.Get(HeaderMode))
 	if err != nil {
@@ -57,6 +93,11 @@ func StartDownload(ctx context.Context, client *http.Client, server, path string
 // why; a file ratd found changed while reading it, could not read, or whose size was not that of
 // its content, with a [Refusal] (status 200) telling why, from the trailer of the body; a write
 // failing with the error of w. What was written is then partial, for the caller to drop.
+//
+// From a pipe, it writes what comes as it comes, and succeeds once the command writing into the
+// pipe closed it, ratd then ending the body cleanly: there is no size to check. Any other end
+// fails as above: a portal closed (a cancel) or ratd stopping is told in the trailer, a
+// [Refusal], unless the connection is cut first, a [TransferError] of kind [ErrCut].
 func (d *Download) WriteTo(w io.Writer) (int64, error) {
 	body := &readErrors{r: d.resp.Body}
 	n, err := io.Copy(w, body)
@@ -70,7 +111,7 @@ func (d *Download) WriteTo(w io.Writer) (int64, error) {
 	if text := d.resp.Trailer.Get(HeaderError); text != "" {
 		return n, &Refusal{Status: d.resp.StatusCode, Text: DecodeError(text)}
 	}
-	if n != d.Size {
+	if !d.Pipe && n != d.Size {
 		return n, &TransferError{Kind: ErrCut, Reason: fmt.Errorf("%d bytes received of %d", n, d.Size)}
 	}
 	return n, nil

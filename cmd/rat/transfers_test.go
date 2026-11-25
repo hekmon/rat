@@ -303,6 +303,8 @@ type transferTest struct {
 	// local is the transfers directory of rat, remote a directory of the machine of the fake ratd
 	local, remote string
 	addr          string
+	// bundle is the bundle of the ratd, for a test to be another client of it
+	bundle string
 }
 
 // startTransfers starts a fake ratd serving MCP and the transfers, and rat offering them with a
@@ -331,7 +333,8 @@ func startTransfersAt(t *testing.T, local string) *transferTest {
 		t.Fatal(err)
 	}
 	p := startRatTransfers(t, bundle, addr, slog.LevelInfo, local)
-	return &transferTest{rat: p, session: connectHarness(t, p, ""), fake: fake, local: local, remote: remote, addr: addr}
+	return &transferTest{rat: p, session: connectHarness(t, p, ""), fake: fake, local: local, remote: remote, addr: addr,
+		bundle: bundle}
 }
 
 // call calls tool with args, and returns the text of its result and whether it is an error.
@@ -436,7 +439,8 @@ func shortWait(t *testing.T, wait time.Duration) {
 // cancel leaves (a file written in place partly written, upload_file alone
 // writing in place), in_place telling what each choice costs (room for a second copy, or a file
 // partly written) and warning against writing into the file uploaded itself, their paths
-// required; and a transfers directory that is not one fails the start.
+// required; both telling their portals (remote_pipe), upload_file how to stop one midway (the
+// command reading first, then cancel); and a transfers directory that is not one fails the start.
 func TestTransferTools(t *testing.T) {
 	bundle := newBundle(t)
 	addr := fakeRatd(t, bundle, newMCPServer().handler, nil)
@@ -498,6 +502,15 @@ func TestTransferTools(t *testing.T) {
 		if !strings.Contains(tool.Description, left) {
 			t.Errorf("%s: expected what a cancel leaves told, got %q", name, tool.Description)
 		}
+	}
+	if tool := tools[downloadTool]; tool != nil && !strings.Contains(tool.Description, "With remote_pipe, the source is "+
+		"a portal rather than a file") {
+		t.Errorf("expected download_file telling its portals, got %q", tool.Description)
+	}
+	if tool := tools[uploadTool]; tool != nil && (!strings.Contains(tool.Description, "With remote_pipe, the "+
+		"destination is a portal rather than a file") || !strings.Contains(tool.Description, "stop the command reading "+
+		"first, then cancel")) {
+		t.Errorf("expected upload_file telling its portals, and how to stop one midway, got %q", tool.Description)
 	}
 	if !strings.Contains(p.logs.String(), "transfers="+dir) {
 		t.Errorf("expected the transfers directory logged:\n%s", p.logs)

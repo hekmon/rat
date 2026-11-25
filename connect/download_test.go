@@ -26,7 +26,7 @@ func TestDownload(t *testing.T) {
 		w.Header().Set("Trailer", HeaderError)
 		_, _ = w.Write(content)
 	})
-	d, err := StartDownload(context.Background(), client, server, "~/my dir/app.bin")
+	d, err := StartDownload(context.Background(), client, server, "~/my dir/app.bin", DownloadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,12 +73,12 @@ func TestDownloadFailed(t *testing.T) {
 			_, _ = w.Write(bytes.Repeat([]byte("x"), 500))
 		}
 	})
-	if _, err := StartDownload(context.Background(), client, server, "/old"); !errors.Is(err, ErrNoTransfers) {
+	if _, err := StartDownload(context.Background(), client, server, "/old", DownloadOptions{}); !errors.Is(err, ErrNoTransfers) {
 		t.Errorf("a 404 without the version: expected ErrNoTransfers, got %v", err)
 	}
 	var refused *Refusal
 	var failed *TransferError
-	if _, err := StartDownload(context.Background(), client, server, "/refused"); !errors.As(err, &refused) ||
+	if _, err := StartDownload(context.Background(), client, server, "/refused", DownloadOptions{}); !errors.As(err, &refused) ||
 		refused.Status != http.StatusConflict || refused.Text != "/refused is a directory, not a file." {
 		t.Errorf("expected a refusal with the sentence of ratd, got %v", err)
 	}
@@ -93,7 +93,7 @@ func TestDownloadFailed(t *testing.T) {
 			return errors.Is(err, ErrCut) && errors.As(err, &failed) && failed.Reason.Error() == "500 bytes received of 1000"
 		},
 	} {
-		d, err := StartDownload(context.Background(), client, server, path)
+		d, err := StartDownload(context.Background(), client, server, path, DownloadOptions{})
 		if err != nil {
 			t.Fatalf("%s: %v", path, err)
 		}

@@ -157,7 +157,8 @@ func startRatdTransfers(t *testing.T, tenant string) *transferTest {
 	}
 	addr := startRealRatd(t, buildRatd(t), bundle, home)
 	p := startRatTransfers(t, bundle, addr, slog.LevelInfo, local)
-	return &transferTest{rat: p, session: connectHarness(t, p, ""), local: local, remote: remote, addr: addr}
+	return &transferTest{rat: p, session: connectHarness(t, p, ""), local: local, remote: remote, addr: addr,
+		bundle: bundle}
 }
 
 // TestRealRatdRoundTrip guards rat's transfers against ratd itself: a file uploaded, then

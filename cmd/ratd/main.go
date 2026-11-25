@@ -109,7 +109,8 @@ func command(logs io.Writer) *cli.Command {
 // deployment handing agents more than ratd's user (root, a bundle that user can replace),
 // starting the tmux server of its tenant, checking its terminals, listening. A second ratd for
 // the same tenant thus fails before listening.
-// Stopping closes the door first (no call gets in anymore), then stops the terminals.
+// Stopping closes the door first (no call gets in anymore), then stops the terminals, then closes
+// the pipes of the portals held for their commands (see portals.release).
 // It also returns an error when the tmux server died too often: ratd then shows as failed.
 func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int, listen func() (net.Listener, error)) error {
 	watcher, err := mtls.Watch(bundle)
@@ -143,6 +144,15 @@ func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int
 	// it. Their context only terminates a server ratd would leave running.
 	terminals, stopTerminals := context.WithCancel(context.WithoutCancel(ctx))
 	defer stopTerminals()
+	// The pipes of the portals held go after the terminals, released once they stopped (registered
+	// before, this runs after): a command reading one stops with its terminal, never handed the end of
+	// its input by the stop (see portals.release).
+	var d *daemon
+	defer func() {
+		if d != nil {
+			d.portals.release()
+		}
+	}()
 	if err = controller.StartServer(terminals); err != nil {
 		// tmux.ErrServerSocketInUse: another ratd serves the tenant on this machine
 		return fmt.Errorf("failed to start the tmux server of tenant %s: %w", side.Tenant, err)
@@ -155,7 +165,7 @@ func run(ctx context.Context, logger *slog.Logger, bundle string, readBudget int
 		logger.Info("terminals stopped")
 	}()
 	checked, degraded := checkTerminals(ctx, logger, controller)
-	d, err := newDaemon(logger, watcher, controller, checked, readBudget)
+	d, err = newDaemon(logger, watcher, controller, checked, readBudget)
 	if err != nil {
 		return err
 	}
