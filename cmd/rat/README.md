@@ -125,11 +125,17 @@ to the tool list of ratd, and answers their calls itself, over the transfer endp
 (package `connect`). Without it, rat relays alone: upgrading rat never widens what agents can do
 on the machine of the harness.
 
-**The transfers directory is the boundary.** The permissions and sandbox of a harness cover its
-own tools, not what an MCP server does by itself, and a text on a remote screen could otherwise
-mislead an agent into sending `~/.ssh/id_ed25519`, or overwriting `~/.bashrc`. Local paths are
-relative to the directory, which the descriptions name, and confined to it (`os.Root`): no
-absolute path, no `..`, no link leading out. Remote paths stay free: the agent has a shell there.
+**The transfers directory is the boundary, by its path.** The permissions and sandbox of a harness
+cover its own tools, not what an MCP server does by itself, and a text on a remote screen could
+otherwise mislead an agent into sending `~/.ssh/id_ed25519`, or overwriting `~/.bashrc`. A local
+path, relative, is joined to the directory, which the descriptions name; absolute, it must begin
+with it: checked on the path cleaned, by whole names, a path going up (`..`) or naming another
+directory refused. That prefix is the contract, not a sandbox: rat opens the path as the system
+opens any, a symbolic link among its directories followed wherever it leads. Only the user who
+chose the directory, or the agent rat works for, can put such a link there, and it is their call:
+there is nobody for rat to guard against. Rejected: confining the paths to the directory
+(`os.Root`), which refused such a link, a protection against nobody that broke a link put there on
+purpose. Remote paths stay free: the agent has a shell there.
 `overwrite` guards against mistakes, not against a misled agent, which can set it too: the
 directory must be one of its own, as a new `.git/hooks/pre-commit` in a project is code execution.
 
@@ -183,14 +189,16 @@ they are there, whoever created them, before any byte is written: under a direct
 look made before the request could not tell a name too long. A download failing once some were
 created, creating them included, names them too, leaving them; an upload cut or canceled can not
 name those ratd created, its answer never read. A symbolic link at the end of a local path is
-refused, telling where it leads; `os.Root` ignores `O_NOFOLLOW`, so rat looks at the file with
-`Root.Lstat`, then checks the file it opened is the one it looked at. An upload is stamped when
+refused, whatever it leads to, telling the path to use when it leads to a file under the
+directory: rat looks at the file (`Lstat`), opens it, then checks the file it opened is the one it
+looked at, a check `O_NOFOLLOW` would not replace (Windows lacks it, and a file renamed over the
+one looked at is no link). An upload is stamped when
 opened and once read (`connect.Upload`): a file changing meanwhile fails the transfer, ratd
 writing nothing, or part of it in place. A replaced file keeping permissions other than those of
 its source is told, as an agent setting overwrite may expect a chmod in the same call, but on
 Windows, whose files have no permission bits (Go shows 0666, or 0444 for a read-only file): almost
-every replace would tell it. A read-only file there is not replaced, `os.Root.Rename` refusing to,
-as Windows does: the agent is told so, rather than access denied.
+every replace would tell it. A read-only file there is not replaced, `os.Rename` (`MoveFileEx`)
+being denied it, as Windows does: the agent is told so, rather than access denied.
 
 **The texts of ratd name the tools.** The descriptions of `write_file` and `read_file`, and the
 instructions, point a file the agent only moves to "a tool copying files by path if you have

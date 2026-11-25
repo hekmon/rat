@@ -66,8 +66,9 @@ var transferWait = time.Duration(tools.MaxWaitSeconds) * time.Second
 var modesTold = runtime.GOOS != "windows"
 
 // readOnlyKept tells whether a rename leaves a read-only file in place rather than replace it: on
-// Windows, whose os.Root.Rename does not ignore the read-only attribute, as its removal does; on
-// Unix, the permissions of the directory decide. A variable for tests.
+// Windows, whose os.Rename (MoveFileEx, replacing an existing file) is denied a read-only
+// destination, where os.Remove clears the attribute first; on Unix, the permissions of the
+// directory decide. A variable for tests.
 var readOnlyKept = runtime.GOOS == "windows"
 
 const (
@@ -99,7 +100,7 @@ type downloadInput struct {
 // directory, other the side whose permissions a new file takes, and inPlace what a cancel leaves
 // of a file written in place, which upload_file alone writes.
 const transferDescription = "Its content never enters your context, whatever its size, binary included. local_path " +
-	"is within %s, relative to it or absolute, the only directory rat copies files from and to on your machine; " +
+	"is a path under %s, relative to it or absolute: rat copies files from and to no other path on your machine; " +
 	"remote_path is absolute or " +
 	"starts with ~/. Missing directories are created. An existing file is replaced only with overwrite, and keeps " +
 	"its permissions; a new one gets those of %s minus the umask. A symbolic link at the end of a path is refused, never followed, " +
@@ -185,10 +186,9 @@ type transfers struct {
 	server string
 	// reachText tells why ratd could not be reached, as the relay tells it
 	reachText func(error) string
-	// dir is the transfers directory, absolute and its links resolved, to which root confines the
-	// local paths
-	dir  string
-	root *os.Root
+	// dir is the transfers directory, absolute and its links resolved: the prefix of every local
+	// path rat opens (see withinDir and fullPath)
+	dir string
 	// ctx ends the jobs once rat stops (see close): an upload sent whole is cut too, canceled by
 	// the agent or not, rather than waited for, its answer read by nobody (see runUpload)
 	ctx  context.Context
@@ -215,11 +215,7 @@ func newTransfers(logger *slog.Logger, client *http.Client, server, dir string, 
 	if info, err := os.Stat(absolute); err != nil || !info.IsDir() {
 		return nil, fmt.Errorf("%s is not a directory", dir)
 	}
-	root, err := os.OpenRoot(absolute)
-	if err != nil {
-		return nil, err
-	}
-	t := &transfers{logger: logger, client: client, server: server, reachText: reachText, dir: absolute, root: root,
+	t := &transfers{logger: logger, client: client, server: server, reachText: reachText, dir: absolute,
 		jobs: map[string]*job{}}
 	t.ctx, t.stop = context.WithCancel(context.Background())
 	for _, tool := range []struct {
@@ -260,7 +256,6 @@ func (t *transfers) handles(tool string) bool {
 func (t *transfers) close() {
 	t.stop()
 	t.running.Wait()
-	_ = t.root.Close()
 }
 
 // addTools returns body, the answer of ratd to tools/list, with the transfer tools added to the
@@ -344,6 +339,10 @@ func (t *transfers) request(tool string, arguments json.RawMessage) (transferReq
 		err = json.Unmarshal(arguments, &in)
 		q.local, q.remote, q.overwrite, q.cancel = in.LocalPath, in.RemotePath, in.Overwrite, in.Cancel
 	}
+	within, underDir := "", false
+	if q.local != "" {
+		within, underDir = t.withinDir(q.local)
+	}
 	switch {
 	case err != nil:
 		return q, fmt.Sprintf("Invalid arguments: %v.", err)
@@ -353,7 +352,7 @@ func (t *transfers) request(tool string, arguments json.RawMessage) (transferReq
 		return q, fmt.Sprintf("local_path %q holds a NUL byte, which no file name can hold.", q.local)
 	case strings.ContainsRune(q.remote, 0):
 		return q, fmt.Sprintf("remote_path %q holds a NUL byte, which no file name can hold.", q.remote)
-	case !filepath.IsLocal(t.withinDir(q.local)):
+	case !underDir:
 		return q, fmt.Sprintf("local_path %q is not within %s: give a path within it, relative to it or absolute.",
 			q.local, t.dir)
 	// the destination naming a directory, which cleaning would turn into the name of a file
@@ -362,28 +361,40 @@ func (t *transfers) request(tool string, arguments json.RawMessage) (transferReq
 	case q.upload() && connect.NamesDirectory(q.remote):
 		return q, fmt.Sprintf("remote_path %q names a directory: give the name of the file to write in it.", q.remote)
 	}
-	q.local, q.remote = filepath.Clean(t.withinDir(q.local)), cleanRemote(q.remote)
+	q.local, q.remote = filepath.Clean(within), cleanRemote(q.remote)
 	return q, ""
 }
 
-// withinDir returns local as a path relative to the transfers directory: itself when relative, and
-// what follows the directory when absolute and under it, for an agent giving back a full path rat
-// told it. The contract of rat for a local path is its prefix, the transfers directory, checked on
-// the path cleaned, by whole names (x/../../etc and a sibling named as the directory with more
-// letters are not under it). An absolute path elsewhere is returned as it is, for the caller to
-// refuse, as one going up. A final separator is kept: it names a directory, refused as such.
-func (t *transfers) withinDir(local string) string {
-	if !filepath.IsAbs(local) {
-		return local
+// withinDir applies the contract of rat for a local path, its prefix: local, joined to the
+// transfers directory when relative, is cleaned, and must then begin with that directory, by whole
+// names (x/../../etc and a sibling named as the directory with more letters do not). One rule for
+// a relative path and an absolute one, as an agent gives back a full path rat told it. It returns
+// the path relative to the directory, as answers name it, and whether the path is under it. A
+// final separator is kept: it names a directory, refused as such.
+func (t *transfers) withinDir(local string) (within string, ok bool) {
+	full := local
+	if !filepath.IsAbs(full) {
+		full = filepath.Join(t.dir, full)
 	}
-	within, err := filepath.Rel(t.dir, local)
+	within, err := filepath.Rel(t.dir, filepath.Clean(full))
 	if err != nil || !filepath.IsLocal(within) {
-		return local
+		return local, false
 	}
 	if os.IsPathSeparator(local[len(local)-1]) {
 		within += string(filepath.Separator)
 	}
-	return within
+	return within, true
+}
+
+// fullPath returns local, a path relative to the transfers directory as request leaves it, as rat
+// opens it: joined to the directory, opened by the system as any path. The contract of rat is the
+// prefix of the path, not a confinement: a symbolic link among the directories of a path is
+// followed wherever it leads, put there by the agent or by the user who chose the directory, the
+// only ones who can, and their call. Rejected: opening the paths through an os.Root of the
+// directory, which refused such a link, guarding against nobody rat works for. A symbolic link at
+// the end of the path is still refused (see checkLocal): a transfer copies regular files.
+func (t *transfers) fullPath(local string) string {
+	return filepath.Join(t.dir, local)
 }
 
 // join returns the job of the destination of q, or a new one, which checks the local file first
@@ -438,7 +449,7 @@ var uploadLooked = func(string) {}
 // symbolic link at the end of the local path is refused, as ratd refuses one at the end of the
 // remote path.
 func (t *transfers) prepare(q transferRequest) (*os.File, string) {
-	info, err := t.root.Lstat(q.local)
+	info, err := os.Lstat(t.fullPath(q.local))
 	if q.upload() {
 		if err != nil {
 			return nil, t.localFailure(err, "Reading", q.local)
@@ -448,7 +459,7 @@ func (t *transfers) prepare(q transferRequest) (*os.File, string) {
 		}
 		uploadLooked(q.local)
 		// without blocking: a FIFO replacing the file looked at would block until written to
-		file, err := t.root.OpenFile(q.local, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+		file, err := os.OpenFile(t.fullPath(q.local), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 		if err != nil {
 			return nil, t.localFailure(err, "Reading", q.local)
 		}
@@ -486,18 +497,18 @@ func (t *transfers) checkLocal(local string, info fs.FileInfo, q transferRequest
 	return ""
 }
 
-// linkRefusal refuses local, a symbolic link, telling where it leads within the transfers
-// directory, or that it leads out of it.
+// linkRefusal refuses local, a symbolic link, whatever it leads to: telling the path to use
+// instead when it leads to a file under the transfers directory, as its links resolved show it.
+// Elsewhere, or nowhere, it is told a link alone: a path through a link among the directories may
+// reach the file all the same, which rat does not look for.
 func (t *transfers) linkRefusal(local string) string {
-	real, err := filepath.EvalSymlinks(filepath.Join(t.dir, local))
-	if err != nil {
-		return fmt.Sprintf("%s is a symbolic link leading nowhere, which transfers do not follow.", local)
+	if real, err := filepath.EvalSymlinks(t.fullPath(local)); err == nil {
+		if within, err := filepath.Rel(t.dir, real); err == nil && filepath.IsLocal(within) {
+			return fmt.Sprintf("%s is a symbolic link to %s, which transfers do not follow: use that path instead.",
+				local, within)
+		}
 	}
-	within, err := filepath.Rel(t.dir, real)
-	if err != nil || !filepath.IsLocal(within) {
-		return fmt.Sprintf("%s is a symbolic link leading out of %s, which transfers do not follow.", local, t.dir)
-	}
-	return fmt.Sprintf("%s is a symbolic link to %s, which transfers do not follow: use that path instead.", local, within)
+	return fmt.Sprintf("%s is a symbolic link, which transfers do not follow.", local)
 }
 
 // kindText tells what a file of mode is, when not a regular file nor a directory.
@@ -937,7 +948,7 @@ func (t *transfers) runDownload(ctx context.Context, j *job) (string, bool, bool
 	// look (a name too long, the temporary one cut to fit: see package tempname), which placing
 	// it would meet once all the bytes came. The download is cut, only the bytes already on their
 	// way lost.
-	if _, err := t.root.Lstat(local); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Lstat(t.fullPath(local)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return failed(t.localFailure(err, "Writing", local), true, false)
 	}
 	tmp, tmpName, err := t.createTemporary(local, download.Mode)
@@ -947,7 +958,7 @@ func (t *transfers) runDownload(ctx context.Context, j *job) (string, bool, bool
 	// Whatever happens next, the temporary file goes: put in place, it is already gone, or left as
 	// a second name of the file (see place).
 	defer func() {
-		if err := t.root.Remove(tmpName); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := os.Remove(tmpName); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			t.logger.Warn("failed to remove the temporary file of a download", "path", tmpName, "error", err)
 		}
 	}()
@@ -1005,7 +1016,7 @@ func (t *transfers) createdText(created []string) string {
 func (t *transfers) createDirectories(dir string) ([]string, error) {
 	var created []string
 	for parent := dir; parent != "."; parent = filepath.Dir(parent) {
-		if _, err := t.root.Stat(parent); err == nil {
+		if _, err := os.Stat(t.fullPath(parent)); err == nil {
 			break
 		}
 		created = append([]string{parent}, created...)
@@ -1013,10 +1024,10 @@ func (t *transfers) createDirectories(dir string) ([]string, error) {
 	if len(created) == 0 {
 		return nil, nil
 	}
-	if err := t.root.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(t.fullPath(dir), 0o755); err != nil {
 		// made from the top: those before the first missing one were made, and are left
 		for i, made := range created {
-			if _, statErr := t.root.Stat(made); statErr != nil {
+			if _, statErr := os.Stat(t.fullPath(made)); statErr != nil {
 				return created[:i], err
 			}
 		}
@@ -1027,27 +1038,25 @@ func (t *transfers) createDirectories(dir string) ([]string, error) {
 
 // createTemporary creates the temporary file of a download to local: next to it, hidden and named
 // after it (.NAME.rat-RANDOM, see package tempname), as ratd names its own, with the permission
-// bits of mode minus the umask, as any new file. It returns the file and its name within the
-// transfers directory: the name of a file opened through the root is its full path, which the root
-// refuses as escaping it.
+// bits of mode minus the umask, as any new file. It returns the file and its full path.
 func (t *transfers) createTemporary(local string, mode fs.FileMode) (*os.File, string, error) {
-	dir, name := filepath.Split(local)
+	dir, name := filepath.Split(t.fullPath(local))
 	for {
 		tmpName := filepath.Join(dir, tempname.For(name))
-		file, err := t.root.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode.Perm())
+		file, err := os.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode.Perm())
 		if !errors.Is(err, fs.ErrExist) {
 			return file, tmpName, err
 		}
 	}
 }
 
-// linkLocal is os.Root.Link, a variable for tests needing a file system without hard links.
-var linkLocal = (*os.Root).Link
+// linkLocal is os.Link, a variable for tests needing a file system without hard links.
+var linkLocal = os.Link
 
-// renameLocal is os.Root.Rename, a variable for tests needing a rename that fails once made.
-var renameLocal = (*os.Root).Rename
+// renameLocal is os.Rename, a variable for tests needing a rename that fails once made.
+var renameLocal = os.Rename
 
-// place puts tmp, a complete temporary file next to local, in its place, as ratd places an upload
+// place puts tmp, the full path of a complete temporary file next to local, in its place, as ratd places an upload
 // (see placeFile in cmd/ratd): a file found there is replaced with overwrite only, keeping its nine
 // permission bits, its mode as looked at then returned as found, special bits included, for the
 // caller to tell the setuid or setgid bit lost, never put back; otherwise tmp is linked under its
@@ -1056,12 +1065,13 @@ var renameLocal = (*os.Root).Rename
 // found in place, as on NFS, told done. refused tells what is found there and not replaced.
 func (t *transfers) place(tmp, local string, overwrite bool) (replaced bool, found fs.FileMode, refused string, err error) {
 	q := transferRequest{tool: downloadTool, local: local, overwrite: overwrite}
-	tmpInfo, err := t.root.Lstat(tmp)
+	target := t.fullPath(local)
+	tmpInfo, err := os.Lstat(tmp)
 	if err != nil {
 		return false, 0, "", err
 	}
 	for range 2 {
-		info, err := t.root.Lstat(local)
+		info, err := os.Lstat(target)
 		switch {
 		case err == nil && os.SameFile(info, tmpInfo):
 			// linked, the link failing all the same
@@ -1070,10 +1080,10 @@ func (t *transfers) place(tmp, local string, overwrite bool) (replaced bool, fou
 			if refused := t.checkLocal(local, info, q); refused != "" {
 				return false, 0, refused, nil
 			}
-			if err = t.root.Chmod(tmp, info.Mode().Perm()); err != nil {
+			if err = os.Chmod(tmp, info.Mode().Perm()); err != nil {
 				return false, 0, "", err
 			}
-			err = t.renameInPlace(tmp, local, tmpInfo)
+			err = renameInPlace(tmp, target, tmpInfo)
 			if err != nil && readOnlyKept && errors.Is(err, fs.ErrPermission) && info.Mode()&0o200 == 0 {
 				return false, 0, fmt.Sprintf("%s is read-only, which Windows keeps from being replaced: clear its "+
 					"read-only attribute, or download to another name.", local), nil
@@ -1082,14 +1092,14 @@ func (t *transfers) place(tmp, local string, overwrite bool) (replaced bool, fou
 		case !errors.Is(err, fs.ErrNotExist):
 			return false, 0, "", err
 		}
-		err = linkLocal(t.root, tmp, local)
+		err = linkLocal(tmp, target)
 		switch {
 		case err == nil:
 			return false, 0, "", nil
 		case errors.Is(err, fs.ErrExist):
 			continue
 		case linkUnsupported(err):
-			return false, 0, "", t.renameInPlace(tmp, local, tmpInfo)
+			return false, 0, "", renameInPlace(tmp, target, tmpInfo)
 		default:
 			return false, 0, "", err
 		}
@@ -1097,12 +1107,12 @@ func (t *transfers) place(tmp, local string, overwrite bool) (replaced bool, fou
 	return false, 0, fmt.Sprintf("%s exists: set overwrite to replace it.", local), nil
 }
 
-// renameInPlace renames tmp, looked at as tmpInfo, over local, a rename failing with tmp found in
-// place told done, as ratd's does.
-func (t *transfers) renameInPlace(tmp, local string, tmpInfo fs.FileInfo) error {
-	err := renameLocal(t.root, tmp, local)
+// renameInPlace renames tmp, looked at as tmpInfo, over target, both full paths, a rename failing
+// with tmp found in place told done, as ratd's does.
+func renameInPlace(tmp, target string, tmpInfo fs.FileInfo) error {
+	err := renameLocal(tmp, target)
 	if err != nil {
-		if info, lookErr := t.root.Lstat(local); lookErr == nil && os.SameFile(info, tmpInfo) {
+		if info, lookErr := os.Lstat(target); lookErr == nil && os.SameFile(info, tmpInfo) {
 			return nil
 		}
 	}

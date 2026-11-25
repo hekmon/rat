@@ -471,7 +471,7 @@ func TestTransferTools(t *testing.T) {
 		if tool == nil {
 			continue
 		}
-		if !strings.Contains(tool.Description, "local_path is within "+dir+", relative to it or absolute,") {
+		if !strings.Contains(tool.Description, "local_path is a path under "+dir+", relative to it or absolute:") {
 			t.Errorf("%s: expected the directory named, got %q", name, tool.Description)
 		}
 		if !strings.Contains(tool.Description, "the copy keeping the parameters it started with: to change them, "+
@@ -666,8 +666,9 @@ func TestTransferModesNotTold(t *testing.T) {
 
 // TestUploadFileRefused guards what rat refuses of an upload, from the local side alone and before
 // any request: paths missing, a local path out of the transfers directory, a file missing, a
-// directory, a symbolic link, telling where it leads within the directory, or that it leads out of
-// it, a NUL byte in either path, and a remote path naming a directory (a final slash).
+// directory, a symbolic link, telling the path to use when it leads to a file under the directory,
+// a link alone otherwise, a NUL byte in either path, and a remote path naming a directory (a final
+// slash).
 func TestUploadFileRefused(t *testing.T) {
 	tt := startTransfers(t)
 	randomFile(t, filepath.Join(tt.local, "sub", "app.bin"), 10, 0o644)
@@ -692,7 +693,7 @@ func TestUploadFileRefused(t *testing.T) {
 		{"nope.bin", "Reading nope.bin failed: no such file or directory."},
 		{"sub", "sub is a directory, not a file."},
 		{"link.bin", "link.bin is a symbolic link to sub/app.bin, which transfers do not follow: use that path instead."},
-		{"out.bin", "out.bin is a symbolic link leading out of " + tt.local + ", which transfers do not follow."},
+		{"out.bin", "out.bin is a symbolic link, which transfers do not follow."},
 		{"a\x00b.bin", `local_path "a\x00b.bin" holds a NUL byte, which no file name can hold.`},
 	} {
 		tt.expect(t, uploadTool, map[string]any{"local_path": tc.local, "remote_path": remote}, true, tc.text)
@@ -873,9 +874,73 @@ func TestTransferAbsoluteLocalPath(t *testing.T) {
 	tt.expect(t, downloadTool, down, false, "Downloaded "+remote+" to down.bin (1 KiB): created.")
 	down["local_path"] = filepath.Join(tt.local, "down.bin")
 	tt.expect(t, downloadTool, down, true, "down.bin exists: set overwrite to replace it.")
+	// one rule for both: joined when relative, cleaned, then under the directory or not
+	down["local_path"] = filepath.Join("..", filepath.Base(tt.local), "down.bin")
+	tt.expect(t, downloadTool, down, true, "down.bin exists: set overwrite to replace it.")
 	down["local_path"] = tt.local + "/logs/"
 	tt.expect(t, downloadTool, down, true, "local_path "+strconv.Quote(tt.local+"/logs/")+" names a directory: give the "+
 		"name of the file to write in it.")
+}
+
+// TestTransferThroughLinkedDirectory guards that the contract of a local path is its prefix, not a
+// confinement: a directory of the transfers directory that is a symbolic link to a directory
+// outside is followed, as the system follows it, for an upload from it and a download into it, the
+// file landing where the link leads, the missing directories under it created there; a symbolic
+// link at the end of a path is still refused, leading under the directory (the path to use told),
+// outside, nowhere, or reached through the linked directory; a path going up, or absolute
+// elsewhere, the very file the link reaches included, is still refused before any request.
+func TestTransferThroughLinkedDirectory(t *testing.T) {
+	tt := startTransfers(t)
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(tt.local, "ext")); err != nil {
+		t.Fatal(err)
+	}
+	content := randomFile(t, filepath.Join(outside, "up.bin"), 1<<10, 0o644)
+	remote := filepath.Join(tt.remote, "up.bin")
+	tt.expect(t, uploadTool, map[string]any{"local_path": "ext/up.bin", "remote_path": remote}, false,
+		"Uploaded ext/up.bin to "+remote+" (1 KiB): created.")
+	expectContent(t, remote, content, 0o644)
+	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": "ext/down.bin"}, false,
+		"Downloaded "+remote+" to ext/down.bin (1 KiB): created.")
+	expectContent(t, filepath.Join(outside, "down.bin"), content, 0o644&^umask())
+	tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": "ext/new/down.bin"}, false,
+		"Downloaded "+remote+" to ext/new/down.bin (1 KiB): created. Missing directories created in "+tt.local+
+			": ext/new. Check the path if you did not mean them.")
+	expectContent(t, filepath.Join(outside, "new", "down.bin"), content, 0o644&^umask())
+	expectNoTemporary(t, outside)
+
+	randomFile(t, filepath.Join(tt.local, "sub", "app.bin"), 10, 0o644)
+	for name, target := range map[string]string{"in.bin": "sub/app.bin", "out.bin": filepath.Join(outside, "up.bin"),
+		"gone.bin": "missing.bin", filepath.Join("ext", "link.bin"): "up.bin"} {
+		if err := os.Symlink(target, filepath.Join(tt.local, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	requests := tt.fake.count()
+	for _, tc := range []struct {
+		local, text string
+	}{
+		{"in.bin", "in.bin is a symbolic link to sub/app.bin, which transfers do not follow: use that path instead."},
+		{"out.bin", "out.bin is a symbolic link, which transfers do not follow."},
+		{"gone.bin", "gone.bin is a symbolic link, which transfers do not follow."},
+		{"ext/link.bin", "ext/link.bin is a symbolic link, which transfers do not follow."},
+		{"../up.bin", `local_path "../up.bin" is not within ` + tt.local},
+		{"ext/../../up.bin", `local_path "ext/../../up.bin" is not within ` + tt.local},
+		{filepath.Join(outside, "up.bin"), "local_path " + strconv.Quote(filepath.Join(outside, "up.bin")) +
+			" is not within " + tt.local},
+	} {
+		tt.expect(t, uploadTool, map[string]any{"local_path": tc.local, "remote_path": remote, "overwrite": true}, true,
+			tc.text)
+		tt.expect(t, downloadTool, map[string]any{"remote_path": remote, "local_path": tc.local, "overwrite": true}, true,
+			tc.text)
+	}
+	if n := tt.fake.count(); n != requests {
+		t.Errorf("expected the refusals made before any request, %d made", n-requests)
+	}
+	expectContent(t, filepath.Join(outside, "up.bin"), content, 0o644)
 }
 
 // TestUploadFileInPlace guards an upload with in_place and overwrite: sent with Rat-In-Place, ratd
@@ -1091,11 +1156,11 @@ func TestDownloadFileLongName(t *testing.T) {
 func TestDownloadFileAppearedAtLink(t *testing.T) {
 	// set before rat starts, and restored once it stopped (cleanups run in reverse order)
 	link := linkLocal
-	linkLocal = func(root *os.Root, oldname, newname string) error {
-		if err := root.WriteFile(newname, []byte("appeared"), 0o600); err != nil {
+	linkLocal = func(oldname, newname string) error {
+		if err := os.WriteFile(newname, []byte("appeared"), 0o600); err != nil {
 			t.Error(err)
 		}
-		return link(root, oldname, newname)
+		return link(oldname, newname)
 	}
 	t.Cleanup(func() { linkLocal = link })
 	tt := startTransfers(t)
@@ -1140,7 +1205,7 @@ func TestDownloadFileWithoutHardLinks(t *testing.T) {
 	}
 	var linkErr atomic.Value
 	link := linkLocal
-	linkLocal = func(root *os.Root, oldname, newname string) error {
+	linkLocal = func(oldname, newname string) error {
 		return &os.LinkError{Op: "linkat", Old: oldname, New: newname, Err: linkErr.Load().(error)}
 	}
 	t.Cleanup(func() { linkLocal = link })
@@ -1168,18 +1233,18 @@ func TestDownloadFilePlacedReplyLost(t *testing.T) {
 	}
 	// set before rat starts, and restored once it stopped (cleanups run in reverse order)
 	link, rename := linkLocal, renameLocal
-	linkLocal = func(root *os.Root, oldname, newname string) error {
+	linkLocal = func(oldname, newname string) error {
 		if filepath.Base(newname) == "unlinked.bin" {
 			// a file system without hard links: renamed instead
 			return &os.LinkError{Op: "linkat", Old: oldname, New: newname, Err: syscall.EPERM}
 		}
-		if err := link(root, oldname, newname); err != nil {
+		if err := link(oldname, newname); err != nil {
 			return err
 		}
 		return &os.LinkError{Op: "linkat", Old: oldname, New: newname, Err: syscall.EEXIST}
 	}
-	renameLocal = func(root *os.Root, oldname, newname string) error {
-		if err := rename(root, oldname, newname); err != nil {
+	renameLocal = func(oldname, newname string) error {
+		if err := rename(oldname, newname); err != nil {
 			return err
 		}
 		return &os.LinkError{Op: "renameat", Old: oldname, New: newname, Err: syscall.ENOENT}
@@ -1209,12 +1274,12 @@ func TestDownloadFileReadOnlyKept(t *testing.T) {
 	// set before rat starts, and restored once it stopped (cleanups run in reverse order)
 	kept, rename := readOnlyKept, renameLocal
 	readOnlyKept = true
-	renameLocal = func(root *os.Root, oldname, newname string) error {
-		if info, err := root.Lstat(newname); err == nil && (info.Mode().Perm()&0o200 == 0 ||
+	renameLocal = func(oldname, newname string) error {
+		if info, err := os.Lstat(newname); err == nil && (info.Mode().Perm()&0o200 == 0 ||
 			filepath.Base(newname) == "denied.bin") {
 			return &os.LinkError{Op: "rename", Old: oldname, New: newname, Err: fs.ErrPermission}
 		}
-		return rename(root, oldname, newname)
+		return rename(oldname, newname)
 	}
 	t.Cleanup(func() { readOnlyKept, renameLocal = kept, rename })
 	tt := startTransfers(t)
@@ -1239,7 +1304,7 @@ func TestDownloadFileReadOnlyDenied(t *testing.T) {
 	// set before rat starts, and restored once it stopped (cleanups run in reverse order)
 	kept, rename := readOnlyKept, renameLocal
 	readOnlyKept = false
-	renameLocal = func(root *os.Root, oldname, newname string) error {
+	renameLocal = func(oldname, newname string) error {
 		return &os.LinkError{Op: "rename", Old: oldname, New: newname, Err: fs.ErrPermission}
 	}
 	t.Cleanup(func() { readOnlyKept, renameLocal = kept, rename })

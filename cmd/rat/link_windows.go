@@ -6,7 +6,8 @@ import (
 )
 
 // errorInvalidFunction is ERROR_INVALID_FUNCTION, which a link gives on a file system without hard
-// links (FAT, exFAT): Go turns the status Windows answers (STATUS_INVALID_DEVICE_REQUEST) into it.
+// links (FAT, exFAT): CreateHardLinkW, behind os.Link, turns the status the file system answers
+// (STATUS_INVALID_DEVICE_REQUEST) into it.
 const errorInvalidFunction = syscall.Errno(1)
 
 // linkUnsupported tells whether err, of a link, is that of a file system without hard links, a

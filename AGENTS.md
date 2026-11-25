@@ -68,7 +68,7 @@ An agent closing all its windows simply finds a fresh `main` on its next call.
   Files are read and written on ratd's machine, as its user, never inside an ssh session or a
   container running in a terminal. Copied by path, with the file transfers of rat, their bytes
   never reach a model: ratd reads and writes them on its machine, rat on the machine of the
-  harness, within its transfers directory only.
+  harness, by paths beginning with its transfers directory only.
 - **What reaches a model is bounded.** Window captures and file reads are checked (text, a
   regular file) and bounded (the read budget) before being sent: what reaches a model's context
   can not be taken back.

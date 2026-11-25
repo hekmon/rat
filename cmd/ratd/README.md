@@ -686,9 +686,9 @@ mark with the change making it true.
 - **G4. Nothing replaced unasked.** Without `overwrite`, an existing file is never replaced, one
   appearing during the copy included.
 - **G5. Regular files, where asked.** A transfer reads and writes regular files only. It never
-  follows a symbolic link at the end of a path, and never blocks on a FIFO. rat opens no file
-  outside its transfers directory: of a symbolic link leading out of it, it tells that much, having
-  followed it to know.
+  follows a symbolic link at the end of a path, and never blocks on a FIFO. Every local path rat
+  opens begins with its transfers directory: a symbolic link among its directories is followed as
+  the system follows it, wherever it leads, the business of whoever put it there.
 - **G6. Nine bits of mode.** A new file takes the permission bits (rwx) of its source minus the
   umask; a replaced file keeps its own. Nothing else of the metadata of a file is promised (see L1
   and L2).
@@ -745,9 +745,9 @@ as it was.
 - **L7. Files without a true size** (`/proc`, `/sys`) are refused by ratd, as the source of a
   download. rat does not look for them in its transfers directory, not meant to hold any.
 - **L8. Other writers.** For a file another program writes or swaps during a transfer, G5 holds,
-  and nothing else. G7 covers the writes of one ratd only. On rat's side, which can not open a file
-  without following (`os.Root`), a link put at the path between the look and the open is followed
-  when it leads to the very file looked at.
+  and nothing else. G7 covers the writes of one ratd only. On rat's side, which looks at a file,
+  opens it, then checks it opened the file it looked at, a link put at the path between the look
+  and the open is followed when it leads to the very file looked at.
 - **L9. Early refusals.** An existing file without `overwrite`, a link, what is not a regular file
   and a path ratd can not read are refused before any byte is sent. Any other refusal comes when
   the system gives it.
@@ -780,7 +780,8 @@ once complete: an upload cut midway leaves the previous version whole. Its path,
 bytes longer than the target's for a name of 200 bytes or less: a target within 14 bytes of the
 longest path the system takes (`PATH_MAX`: 1024 bytes on macOS, 4096 on Linux) is refused as a name
 too long, though `write_file` writes it. Left as it is, for paths that long: working relative to
-the directory, as rat does with `os.Root`, would take the whole placing of the file with it.
+the directory (`openat`) would take the whole placing of the file with it. rat's local paths,
+joined to its transfers directory, take the same limit.
 `write_file` makes the opposite choice (see Files), for content it holds whole; a file arriving for
 minutes, half replaced, would be worse than none. Without overwrite, the temporary file is linked
 under the name of the target, which fails if a file appeared meanwhile (412), where a rename would

@@ -531,19 +531,21 @@ transfer. In the harness, with its client directory:
 ```
 
 - **A directory of their own.** Agents read and replace any file of that directory, through rat,
-  as the user running the harness, and nothing outside it: their paths are relative to it, and
-  `..` or a link leading out are refused. Choose one for that use alone, created beforehand (rat
-  refuses to start without it): never your home, a project (a new `.git/hooks/pre-commit` is code
-  execution), nor a directory a program runs or loads files from. Replacing a file takes the
-  `overwrite` parameter, which guards against mistakes, not against an agent misled by what it
-  read: the directory is the boundary.
+  as the user running the harness, and no other path: their paths are relative to it or begin
+  with it, and one going up (`..`) or naming another directory is refused. rat checks the path,
+  it is not a sandbox: a symbolic link among the directories of a path is followed wherever it
+  leads, so put none there you would not give agents. Choose one for that use alone, created
+  beforehand (rat refuses to start without it): never your home, a project (a new
+  `.git/hooks/pre-commit` is code execution), nor a directory a program runs or loads files from.
+  Replacing a file takes the `overwrite` parameter, which guards against mistakes, not against an
+  agent misled by what it read: the directory is the boundary.
 - **On the machine of ratd**, transfers read and write wherever its user can, as `write_file` and
   `read_file` do: the Unix user is the boundary there (see Deploying safely).
 - **All or nothing.** A transfer writes a temporary file next to its destination
   (`.NAME.rat-XXXXXXXX`), put in its place once complete: a transfer cut, refused or canceled
   leaves the previous version whole. A file still being written (a log, a build output) fails the
-  transfer rather than being copied torn. A symbolic link at the end of a path is refused, naming
-  where it leads. Neither side syncs to disk: after a power cut, a file just copied may be lost, as
+  transfer rather than being copied torn. A symbolic link at the end of a path is refused, never
+  followed. Neither side syncs to disk: after a power cut, a file just copied may be lost, as
   any file just written; run `sync` where it matters. A rat or a ratd killed during a transfer
   (`SIGKILL`, a crash) leaves its temporary file behind, which can be removed. One exception, asked
   for: `upload_file` with `in_place` and `overwrite` writes into the file it replaces, keeping its

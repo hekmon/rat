@@ -365,8 +365,8 @@ whatever the Unix user running ratd can:
 - **A kill switch.** Stopping the service stops every terminal and, with systemd, every process
   the agents started, detached ones included.
 - **A directory for the transfers.** With `--transfers-dir`, agents read and replace any file of
-  that directory of the machine of the harness, and nothing outside it: give them one of their
-  own, never your home nor a project.
+  that directory of the machine of the harness, by a path beginning with it, and no other path; a
+  symbolic link put in it is followed: give them one of their own, never your home nor a project.
 
 Running ratd as a service, and deploying it safely, are in the [manual](MANUAL.md):
 [Deployment](MANUAL.md#deployment), [Security](MANUAL.md#security), and
