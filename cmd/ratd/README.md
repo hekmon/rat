@@ -685,9 +685,11 @@ and only its body waits, for the command. On the wire, so far:
   opened the pipe holds the portal: its pipe deleted, its end kept open, the command seeing no
   end, until `DELETE`.
 - **`DELETE /download`** and **`DELETE /upload`** close the portal ratd holds at the path
-  `Rat-Path` names, for the session of the client certificate, and answer once it packed up: 200
-  with a sentence telling what the command at the pipe saw, or 404, with `Rat-Version`, when it
-  holds none there for that session (a portal of another session is none). A ratd older than the
+  `Rat-Path` names, either one whichever way the portal goes, the path alone naming it, for the
+  session of the client certificate, and answer once it packed up: 200 with a sentence telling
+  what the command at the pipe saw, or 404, with `Rat-Version`, when it holds none there for that
+  session (a portal of another session is none, and that session, opening one at its path, is
+  told another session holds it). A ratd older than the
   portals answers 405, its mux knowing no DELETE.
 
 **An answer before its body.** An upload answered before ratd reads its body is the one unusual

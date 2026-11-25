@@ -368,7 +368,8 @@ func TestPortalLinkLost(t *testing.T) {
 // or the bytes copied, and the broken pipe its next write gets), the body of the portal ending with
 // the Rat-Error trailer telling it closed, the pipe deleted, nothing left. A close with no portal
 // there, or one of another session, finds none: 404 with the version of ratd, the portal of the
-// other session kept.
+// other session kept; and that session, opening a portal there, is told the path is held by another
+// session, not to cancel.
 func TestPortalClose(t *testing.T) {
 	t.Run("waiting", func(t *testing.T) {
 		pt := startPortals(t)
@@ -378,6 +379,12 @@ func TestPortalClose(t *testing.T) {
 		closed, text := pt.closePortal(t, pt.bob, path)
 		expectRefused(t, "a close from another session", closed, text, nil, http.StatusNotFound,
 			"No portal is open at "+path+": nothing to close.")
+		// that session opening one there is not told to cancel, which it can not
+		req := newDownload(t, pt.r.addr, path)
+		req.Header.Set(connect.HeaderPipe, "true")
+		again, body, err := sendTransfer(pt.bob, req)
+		expectRefused(t, "a portal where another session holds one", again, body, err, http.StatusConflict,
+			path+" is held by a portal of another session, which alone can close it: use another path.")
 		expectPipe(t, path)
 		closed, text = pt.closePortal(t, pt.alice, path)
 		if closed.StatusCode != http.StatusOK ||

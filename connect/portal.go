@@ -28,9 +28,9 @@ import (
 // direct connection, which mutual TLS makes the usual one.
 //
 // A portal is closed by its path rather than by its request, which a client restarted no longer
-// has: DELETE on the endpoint of the transfer, naming the path in [HeaderPath] (see
-// [ClosePortal]). ratd closes the portal it holds at that path for the session of the client
-// certificate, a portal of another session being none, packs it up (its pipe deleted first, then
+// has: DELETE on either endpoint of the transfers, naming the path in [HeaderPath] (see
+// [ClosePortal]). ratd closes the portal it holds at that path, whichever way it goes, for the
+// session of the client certificate, a portal of another session being none, packs it up (its pipe deleted first, then
 // its end closed), and answers once done, telling what the command at the pipe saw.
 
 // ClosePortal asks the ratd at server, HOST:PORT, through client (see [HTTPClient]), to close the

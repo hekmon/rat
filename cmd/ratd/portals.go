@@ -84,18 +84,18 @@ type portals struct {
 	held sync.WaitGroup
 }
 
-// add registers p, unless a portal holds its path already.
-func (ps *portals) add(p *portal) bool {
+// add registers p, unless a portal holds its path already, which it returns.
+func (ps *portals) add(p *portal) (holder *portal) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	if ps.open == nil {
 		ps.open = map[string]*portal{}
 	}
-	if ps.open[p.path] != nil {
-		return false
+	if holder := ps.open[p.path]; holder != nil {
+		return holder
 	}
 	ps.open[p.path] = p
-	return true
+	return nil
 }
 
 // remove forgets p, once it packed up.
@@ -107,12 +107,13 @@ func (ps *portals) remove(p *portal) {
 	}
 }
 
-// find returns the portal of way open at path for session, nil without one: a portal of another
-// session is none, a client reaching its own session alone.
-func (ps *portals) find(way direction, path, session string) *portal {
+// find returns the portal open at path for session, nil without one. The path alone names it,
+// whichever way it goes (P8): one path holds one pipe, and an agent coming back to a portal closes
+// it with either tool. A portal of another session is none, a client reaching its own session alone.
+func (ps *portals) find(path, session string) *portal {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
-	if p := ps.open[path]; p != nil && p.way == way && p.session == session {
+	if p := ps.open[path]; p != nil && p.session == session {
 		return p
 	}
 	return nil
@@ -564,9 +565,14 @@ func (d *daemon) openPortal(w http.ResponseWriter, req *http.Request, way direct
 	p := newPortal(way, path, mtls.PeerName(*req.TLS))
 	// Registered before the pipe is made: a portal whose pipe someone else deleted still holds its
 	// path, until closed. A close finding it before its pipe is made waits for it to pack up.
-	if !d.portals.add(p) {
-		r := refuse(w, http.StatusConflict, result{err: fs.ErrExist, attrs: attrs, text: fmt.Sprintf(
-			"A portal is open at %s: close it with cancel before opening another there.", path)})
+	if holder := d.portals.add(p); holder != nil {
+		text := fmt.Sprintf("A portal is open at %s: close it with cancel before opening another there.", path)
+		if holder.session != p.session {
+			// its cancel would find none: a session closes its own portals alone
+			text = fmt.Sprintf("%s is held by a portal of another session, which alone can close it: use another "+
+				"path.", path)
+		}
+		r := refuse(w, http.StatusConflict, result{err: fs.ErrExist, attrs: attrs, text: text})
 		return nil, nil, &r
 	}
 	failed := func(status int, r result) (*portal, []any, *result) {
@@ -847,10 +853,11 @@ func (d *daemon) hold(p *portal, file *os.File) {
 	})
 }
 
-// closePortal closes the portal of way the request names by its path (connect.HeaderPath), for the
-// session of its client certificate, and answers once it packed up, telling what its command saw:
-// 200 when it closed one, 404 with none there for that session, nothing to close. The path is read
-// as the transfer's (see transferPath). Every answer carries the version of ratd, the 404 of none
+// closePortal closes the portal the request names by its path (connect.HeaderPath), for the session
+// of its client certificate, and answers once it packed up, telling what its command saw: 200 when
+// it closed one, 404 with none there for that session, nothing to close. It serves the endpoint of
+// way, and closes the portal at the path whichever way that one goes, the path alone naming it (see
+// find). The path is read as the transfer's (see transferPath). Every answer carries the version of ratd, the 404 of none
 // told apart from the one of a ratd older than the transfers; and each close is logged in one line.
 func (d *daemon) closePortal(way direction) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -872,7 +879,7 @@ func (d *daemon) closePortal(way direction) http.Handler {
 			return
 		}
 		attrs = append(attrs, "path", path)
-		p := d.portals.find(way, path, session)
+		p := d.portals.find(path, session)
 		if p == nil {
 			http.Error(w, fmt.Sprintf("No portal is open at %s: nothing to close.", path), http.StatusNotFound)
 			d.logger.Info("portal close", append(attrs, "outcome", "message", "closed", false)...)

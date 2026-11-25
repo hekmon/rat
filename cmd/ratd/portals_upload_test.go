@@ -530,21 +530,19 @@ func (pt *portalTest) closeUpload(t *testing.T, client *http.Client, path string
 // of its input: a beginning of the stream (P3), no hole in it, nothing taken out of the pipe by the
 // close (rejected: a close releasing a blocked write by reading the pipe, which took the bytes the
 // command was to read next). Either way the answer of the upload ends with the same sentence in
-// its trailer, the pipe is deleted, nothing left; a close of the download endpoint at that path,
-// or from another session, finds none.
+// its trailer, the pipe is deleted, nothing left. The path alone names the portal (P8): a close by
+// the endpoint of a download closes it as well; one from another session finds none.
 func TestPortalUploadClose(t *testing.T) {
 	t.Run("waiting", func(t *testing.T) {
 		pt := startPortals(t)
 		path := filepath.Join(pt.home, "in.pipe")
 		resp, _ := pt.openUpload(t, pt.alice, path)
 		made := expectPipe(t, path)
-		closed, text := pt.closePortal(t, pt.alice, path)
-		expectRefused(t, "a close of a download", closed, text, nil, http.StatusNotFound,
-			"No portal is open at "+path+": nothing to close.")
-		closed, text = pt.closeUpload(t, pt.bob, path)
+		closed, text := pt.closeUpload(t, pt.bob, path)
 		expectRefused(t, "a close from another session", closed, text, nil, http.StatusNotFound,
 			"No portal is open at "+path+": nothing to close.")
-		closed, text = pt.closeUpload(t, pt.alice, path)
+		// by the endpoint of a download: the path alone names the portal
+		closed, text = pt.closePortal(t, pt.alice, path)
 		expected := "Closed the portal at " + path + ": the pipe is deleted. No command had opened it."
 		if closed.StatusCode != http.StatusOK || text != expected {
 			t.Errorf("expected the portal closed, unused, got %s: %q", closed.Status, text)
