@@ -103,6 +103,15 @@ jobs:
         run: |
           brew install tmux bash
           echo "$(brew --prefix)/bin" >>"$GITHUB_PATH"
-      # -short: no Docker on these runners, TestMinimumTmux runs on Ubuntu
+      # -short: no Docker on these runners, TestMinimumTmux runs on Ubuntu. One package at a time
+      # and verbose, so that each test is printed as it starts, with limits of its own under the
+      # job's: this step hung on these runners (twice on 2026-11-24, where it had taken a minute),
+      # and a job killed at its limit keeps no log, where a step failing keeps what it printed, the
+      # test stuck and where it waits.
       - name: Test
-        run: go test -short -count=1 ./...
+        timeout-minutes: 12
+        run: go test -short -count=1 -p 1 -v -timeout 5m ./...
+      # What a test stuck, or killed, left running tells what it waited for
+      - name: Processes left
+        if: always()
+        run: ps -Ao pid,ppid,etime,command | awk '/tmux|ratd|\.test|go test|bash/ && !/awk/' | head -40
