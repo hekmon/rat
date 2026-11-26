@@ -79,7 +79,7 @@ func writeInto(path string, content []byte) <-chan error {
 
 // TestRealRatdPortal guards a download from a remote pipe: the first call answers ready at once,
 // with nothing written, the pipe made on ratd's side; a command writing into it, then the same call,
-// tells it done, the local file exact, of mode 0666 minus the umask, the pipe deleted, no temporary
+// tells it done, the local file exact, of mode 0600 minus the umask, the bits of the pipe, the pipe deleted, no temporary
 // file left.
 func TestRealRatdPortal(t *testing.T) {
 	tt := startRatdTransfers(t, "test-rat-portal")
@@ -95,7 +95,7 @@ func TestRealRatdPortal(t *testing.T) {
 	if err := <-written; err != nil {
 		t.Error(err)
 	}
-	expectContent(t, filepath.Join(tt.local, "out.tar"), content, 0o666&^umask())
+	expectContent(t, filepath.Join(tt.local, "out.tar"), content, 0o600&^umask())
 	expectNoPipe(t, pipe)
 	expectNoTemporary(t, tt.local)
 }

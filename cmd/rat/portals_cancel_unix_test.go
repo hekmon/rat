@@ -107,3 +107,50 @@ func TestPortalNotToldReadyOnceCancelAsked(t *testing.T) {
 		t.Fatal("rat stopping waited for the close ratd does not answer")
 	}
 }
+
+// TestPortalCancelGivesUpOpening checks a cancel asked while ratd does not answer the opening of a
+// portal: the job waits for the opening transferWait, then cuts its request and ends, telling the
+// opening was not answered, cut on this side, and to cancel again for what ratd may hold, rather
+// than "still ending" for as long as the connection lasts; that cancel, the job told and forgotten,
+// asks ratd. Without a cancel, the opening is not cut.
+func TestPortalCancelGivesUpOpening(t *testing.T) {
+	shortWait(t, 300*time.Millisecond)
+	open, answer, cut := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	close(answer)
+	tr := slowCloseFake(t, open, answer, cut)
+	args := map[string]any{"remote_path": "/remote/out.pipe", "local_path": "out.tar", "remote_pipe": true}
+	if text, _ := callTold(t, tr, context.Background(), downloadTool, args); !strings.HasPrefix(text, "Still opening the portal") {
+		t.Fatalf("expected the portal told opening still, got %q", text)
+	}
+	select {
+	case <-cut:
+		t.Fatal("the opening was cut without a cancel asked")
+	default:
+	}
+	cancelArgs := map[string]any{"remote_path": "/remote/out.pipe", "local_path": "out.tar", "remote_pipe": true,
+		"cancel": true}
+	var text string
+	var isError bool
+	// the cancel and the job wait the same time: the first cancel may tell it still ending
+	for range 3 {
+		text, isError = callTold(t, tr, context.Background(), downloadTool, cancelArgs)
+		if !strings.Contains(text, "still ending") {
+			break
+		}
+	}
+	if !isError || !strings.HasPrefix(text, "The opening of the portal from /remote/out.pipe to out.tar was not "+
+		"answered by ratd, and is cut on this side, as asked. Its side of the portal at /remote/out.pipe could not be "+
+		"told to close, and may still be open: call download_file again with cancel.") {
+		t.Errorf("expected the opening told given up, got %v: %q", isError, text)
+	}
+	select {
+	case <-cut:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the request of the opening was not cut")
+	}
+	// told, the job is forgotten: the cancel asks ratd
+	text, _ = callTold(t, tr, context.Background(), downloadTool, cancelArgs)
+	if !strings.HasPrefix(text, "Closed the portal at /remote/out.pipe") {
+		t.Errorf("expected the next cancel to ask ratd, got %q", text)
+	}
+}

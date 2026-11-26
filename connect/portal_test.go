@@ -11,7 +11,7 @@ import (
 )
 
 // TestPipeDownload guards a download from a pipe as ratd sends it: a GET asking Rat-Pipe, its
-// answer echoing it, with no size nor mode, the download a pipe of mode 0666 and no size; the body
+// answer echoing it, with no size nor mode, the download a pipe of mode 0600 and no size; the body
 // ending cleanly is the download done, whatever its length; the Rat-Error trailer fails it with
 // ratd's sentence, and a body cut short with a TransferError of kind ErrCut. An answer without the
 // echo, from a ratd older than the portals, fails with ErrNoPortals, a file it sends as a refusal
@@ -71,8 +71,8 @@ func TestPipeDownload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !d.Pipe || d.Mode != 0o666 || d.Size != -1 {
-		t.Errorf("expected a pipe of mode 0666 and no size, got %v, %v, %d", d.Pipe, d.Mode, d.Size)
+	if !d.Pipe || d.Mode != 0o600 || d.Size != -1 {
+		t.Errorf("expected a pipe of mode 0600 and no size, got %v, %v, %d", d.Pipe, d.Mode, d.Size)
 	}
 	if n, err := d.WriteTo(io.Discard); n != 500 || err != nil {
 		t.Errorf("expected the 500 bytes, done, got %d, %v", n, err)

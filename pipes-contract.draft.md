@@ -21,7 +21,8 @@ limit, a line below and no code, or nothing. A fix adds no promise.
 
 - **P1. The pipes are the portal's.** A portal makes its pipes, at the paths named: rat the local
   one, within its transfers directory, ratd the remote one. Where anything is, it refuses, and
-  touches nothing.
+  touches nothing. The directory of a pipe must exist, none being made for one, and the options of
+  a file (`overwrite`, `in_place`) are refused where they would apply to a pipe.
 - **P2. Ready is told from the fact.** "Ready" is answered once every pipe exists, every file end
   was checked as a transfer checks it before its first byte (L9), and ratd answered that its side
   is ready. Nothing has flowed, and the call returns then, without waiting for a command. An
@@ -38,7 +39,8 @@ limit, a line below and no code, or nothing. A fix adds no promise.
   pipe closes its end: the command gets a broken pipe.
 - **P7. A file end is a file.** A destination file is whole or untouched (G3), written in place
   when asked (G7), replaced only with `overwrite` (G4), with its nine bits (G6): the file end keeps
-  every option it has today.
+  every option it has today. A new file made from a pipe takes the bits of that source as from any
+  other, those of the pipe, 0600, minus the umask.
 - **P8. A close packs up.** `cancel` closes the portal of its paths: each side closes its end and
   deletes its pipe. The paths alone name it: it works after a cut, from a rat started again, from
   another rat of the session. A portal broken is known by its paths until closed, and opening
@@ -107,6 +109,14 @@ limit, a line below and no code, or nothing. A fix adds no promise.
   has not read. Until then the pipe stays, and a command arriving is given what ratd received: all
   of a file received whole, with its end; otherwise its beginning, then nothing, the portal
   broken. `cancel` closes it, and opening another there is refused meanwhile.
+- **Q16. A pipe someone else removed.** A portal waits in the open of its pipe, which only the
+  name of the pipe lets it leave. That name removed by someone else (`rm` in a terminal), `cancel`
+  frees the path and answers all the same, and ratd is left one thread waiting in that open until
+  it stops.
+- **Q17. An opening that is not answered.** `cancel` waits for a portal still opening, ratd knowing
+  it by its path only once it made it. Not answered within 50 seconds of the cancel, the opening
+  is cut on rat's side and told so: whether it reached ratd is not known, and the same `cancel`
+  again asks ratd.
 
 **For the descriptions of the tools**, not promises: a command at a local pipe runs in the
 background of the agent's shell, which otherwise waits on it; to stop a stream midway, stop the

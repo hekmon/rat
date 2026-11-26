@@ -17,8 +17,10 @@ type Download struct {
 	// into it, of no size known.
 	Pipe bool
 	// Mode is the permission bits of the file, for the caller to create the file it writes with;
-	// for a pipe, 0666, which the umask of the caller then takes, as a shell redirection creates a
-	// file: the bits of the pipe, made for ratd's user alone, mean nothing for what comes through.
+	// for a pipe, 0600, those ratd makes its pipe with: a new file takes the bits of its source, as
+	// from a file, what comes through a pipe made for ratd's user alone being for the caller alone
+	// until it says otherwise. Rejected: 0666, as a shell redirection creates a file, a rule of
+	// its own where the one of the files serves.
 	Mode fs.FileMode
 	// Size is the size of the file when ratd opened it: what a complete download writes; -1 for a
 	// pipe, which has no size.
@@ -73,7 +75,7 @@ func StartDownload(ctx context.Context, client *http.Client, server, path string
 		return nil, refusal(resp)
 	}
 	if options.Pipe {
-		return &Download{Pipe: true, Mode: 0o666, Size: -1, resp: resp}, nil
+		return &Download{Pipe: true, Mode: 0o600, Size: -1, resp: resp}, nil
 	}
 	mode, err := ParseMode(resp.Header.Get(HeaderMode))
 	if err != nil {

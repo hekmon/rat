@@ -465,7 +465,36 @@ func (t *transfers) join(q transferRequest) (j *job, refused string, ended *job)
 	t.jobs[q.key()] = j
 	t.running.Add(1)
 	go t.run(ctx, j)
+	if q.remotePipe {
+		go t.giveUpOpening(j)
+	}
 	return j, "", nil
+}
+
+// giveUpOpening cuts the opening of the portal of j, a cancel asked, if it is not answered within
+// transferWait of it: the agent asked to stop, and is told how it ended, rather than "still ending"
+// for as long as the system keeps a connection nobody answers (minutes), a cancel waiting for the
+// opening to settle before it asks ratd to close (see closeOnCancel). Not a time limit of a portal:
+// without a cancel asked, an opening waits as long as it takes. What ratd holds, if the opening
+// reached it, is closed by the cancel the outcome tells to make, which asks ratd whatever rat
+// remembers (see cancel).
+func (t *transfers) giveUpOpening(j *job) {
+	select {
+	case <-j.closeAsked:
+	case <-j.ready:
+		return
+	case <-j.done:
+		return
+	}
+	timer := time.NewTimer(transferWait)
+	defer timer.Stop()
+	select {
+	case <-j.ready:
+	case <-j.done:
+	case <-timer.C:
+		j.gaveUp.Store(true)
+		j.cancel()
+	}
 }
 
 // preparing is called with the request of a job as it checks its local side (see prepare): a hook
@@ -743,6 +772,9 @@ type job struct {
 	// cancelAsked tells a cancel was asked; placing that a download is being put in place, too
 	// late to cancel
 	cancelAsked, placing bool
+	// gaveUp tells the opening of a portal was cut, a cancel asked, ratd not answering it (see
+	// giveUpOpening)
+	gaveUp atomic.Bool
 	// closeAsked is closed once a cancel of a portal was marked (see markCancel), for its job to
 	// close it (see closeOnCancel)
 	closeAsked chan struct{}
@@ -954,6 +986,11 @@ func (t *transfers) failureText(j *job, err error) (string, bool, bool) {
 	var refused *connect.Refusal
 	var failed *connect.TransferError
 	switch {
+	case j.gaveUp.Load() && !isReady(j):
+		// the opening cut by rat, a cancel asked and ratd not answering: whether it reached ratd is
+		// not known
+		return fmt.Sprintf("The opening of the portal from %s to %s was not answered by ratd, and is cut on this "+
+			"side, as asked. %s", j.request.source(), j.request.destination(), notToldText(j.request)), true, false
 	case errors.Is(err, connect.ErrAnswerLost) && errors.As(err, &failed):
 		left, again := j.request.destination()+" may be written or not", "overwrite"
 		if j.request.writesInPlace() {
