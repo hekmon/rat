@@ -56,8 +56,9 @@ limit, a line below and no code, or nothing. A fix adds no promise.
   pipe, what its command saw: the end of its input once all of it came; the end of its input
   after N bytes of a stream that was not whole; a broken pipe; or that it still waits.
 - **P12. Nothing waits on a portal.** A tool call waits 50 seconds at most, the same paths again
-  following the portal, and stopping rat or ratd is never delayed by one (G8). An outcome is kept
-  until told. No byte reaches the model (G9).
+  following the portal, and stopping rat or ratd is never delayed by one (G8). The outcome of a
+  transfer rat runs is kept until told (Q18 for a close it runs none for). No byte reaches the
+  model (G9).
 
 **Outcomes.** Every answer about a portal conveys one of these states.
 
@@ -122,6 +123,10 @@ limit, a line below and no code, or nothing. A fix adds no promise.
   it by its path only once it made it. Not answered within 50 seconds of the cancel, the opening
   is cut on rat's side and told so: whether it reached ratd is not known, and the same `cancel`
   again asks ratd.
+- **Q18. A close rat has no transfer for.** A `cancel` finding no transfer in rat (rat restarted,
+  a cut already told) is one request to ratd, and its answer is its telling: rat has nothing to
+  keep it in. The answer lost, the harness giving up on the call, what the command at the pipe
+  saw is told to nobody, and the same `cancel` again tells nothing is open there, which is true.
 
 **For the descriptions of the tools**, not promises: a command at a local pipe runs in the
 background of the agent's shell, which otherwise waits on it; to stop a stream midway, stop the
