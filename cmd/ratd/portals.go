@@ -246,7 +246,9 @@ var pumpOpening = func(string) {}
 // openEnd opens the end of p for flag, blocking, as a command opening the pipe: it returns once a
 // command opens the other end. What it opened is then checked to be the pipe ratd made: a file or
 // a link someone else put at its path meanwhile is not the portal's, and is left untouched, opening
-// it changing nothing of it. It returns the end opened, or how the pump ends.
+// a file changing nothing of it. Another pipe put there is opened as any command would open it, the
+// one thing that reaches it: a command waiting at its other end is let in, and sees it closed at
+// once. It returns the end opened, or how the pump ends.
 func (p *portal) openEnd(flag int) (*os.File, *pumpEnd) {
 	pumpOpening(p.path)
 	file, err := os.OpenFile(p.path, flag, 0)
@@ -545,6 +547,11 @@ func (d *daemon) removePipe(p *portal) {
 	}
 }
 
+// stoppingText tells the portal at path ended by ratd stopping, in the trailer of its answer.
+func stoppingText(path string) string {
+	return fmt.Sprintf("ratd is stopping: the portal at %s is closed, its pipe deleted.", path)
+}
+
 // errPipeTaken is the error of pinPipe finding, at the path of a pipe just made, another file than
 // that pipe.
 var errPipeTaken = errors.New("not the pipe made")
@@ -680,8 +687,7 @@ func (d *daemon) downloadPipe(w http.ResponseWriter, req *http.Request) result {
 		failure = result{err: cause, text: fmt.Sprintf("The portal at %s was closed, as asked: its pipe is deleted.",
 			path)}
 	case cause == errStopping:
-		failure = result{err: cause, text: fmt.Sprintf("ratd is stopping: the portal at %s is closed, its pipe "+
-			"deleted.", path)}
+		failure = result{err: cause, text: stoppingText(path)}
 	case cause != nil:
 		return result{outcome: failed, err: d.cutError(cause), attrs: attrs}
 	case end.linkErr != nil:
@@ -795,6 +801,7 @@ func (d *daemon) uploadPipe(w http.ResponseWriter, req *http.Request) result {
 			// ended before, the end of the pump kept open
 			held = true
 			d.hold(p, end.file)
+			w.Header().Set(connect.HeaderError, connect.EncodeError(stoppingText(path)))
 			return result{outcome: failed, err: cause, attrs: append(attrs, "bytes", p.moved.Load(), "opened", true,
 				"held", true)}
 		}
@@ -820,8 +827,10 @@ func (d *daemon) uploadPipe(w http.ResponseWriter, req *http.Request) result {
 		p.ending = endedClosed
 		failure = result{err: cause, text: closeText(p)}
 	case cause == errStopping:
-		// cut by the stop (see cutOnStop): nobody reads a trailer
-		return result{outcome: failed, err: cause, attrs: attrs}
+		// The answer is cut by the stop (see cutOnStop), most often: told in the trailer all the
+		// same, an answer ending cleanly without one being a portal done, which a client reading it
+		// before the cut would take a stop for.
+		failure = result{err: cause, text: stoppingText(path)}
 	case end.notMade:
 		failure = result{err: errors.New("pipe replaced"), text: fmt.Sprintf("%s is no longer the pipe of the portal: "+
 			"something took its place before a command opened it. Nothing was written.", path)}

@@ -466,7 +466,7 @@ func (t *transfers) join(q transferRequest) (j *job, refused string, ended *job)
 	t.running.Add(1)
 	go t.run(ctx, j)
 	if q.remotePipe {
-		go t.giveUpOpening(j)
+		go t.giveUpOpening(j, transferWait)
 	}
 	return j, "", nil
 }
@@ -477,8 +477,8 @@ func (t *transfers) join(q transferRequest) (j *job, refused string, ended *job)
 // opening to settle before it asks ratd to close (see closeOnCancel). Not a time limit of a portal:
 // without a cancel asked, an opening waits as long as it takes. What ratd holds, if the opening
 // reached it, is closed by the cancel the outcome tells to make, which asks ratd whatever rat
-// remembers (see cancel).
-func (t *transfers) giveUpOpening(j *job) {
+// remembers (see cancel). wait is transferWait, read as the job starts.
+func (t *transfers) giveUpOpening(j *job, wait time.Duration) {
 	select {
 	case <-j.closeAsked:
 	case <-j.ready:
@@ -486,12 +486,17 @@ func (t *transfers) giveUpOpening(j *job) {
 	case <-j.done:
 		return
 	}
-	timer := time.NewTimer(transferWait)
+	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	select {
 	case <-j.ready:
 	case <-j.done:
 	case <-timer.C:
+		// ready at the same instant, which select may pass over: a portal ready is closed by asking
+		// ratd, never cut first
+		if isReady(j) {
+			return
+		}
 		j.gaveUp.Store(true)
 		j.cancel()
 	}
@@ -1092,8 +1097,9 @@ func noPortalsText(server string) string {
 }
 
 // closeUnknown asks ratd to close the portal it may hold at the remote path of q, a cancel finding
-// no job of rat there, and tells what it closed; holding none, or older than the portals, that
-// nothing is under way; not reached, or failing, that its side could not be asked.
+// no job of rat there, and tells what it closed; holding none, older than the portals, or refusing
+// the path itself (it then holds nothing there, and its sentence is told), that nothing is under
+// way; not reached, or failing otherwise, that its side could not be asked.
 func (t *transfers) closeUnknown(ctx context.Context, q transferRequest) (text string, isError, closed bool) {
 	endpoint := connect.DownloadPath
 	if q.upload() {
@@ -1107,6 +1113,10 @@ func (t *transfers) closeUnknown(ctx context.Context, q transferRequest) (text s
 		return text, false, true
 	case err == nil, errors.Is(err, connect.ErrNoPortals), errors.Is(err, connect.ErrNoTransfers):
 		return none, false, false
+	case errors.As(err, &refused) && refused.Status == http.StatusBadRequest:
+		// the path itself refused by ratd (a relative one): it holds no portal at a path it does not
+		// take, and its sentence tells why
+		return none + " " + refused.Text, false, false
 	case errors.As(err, &refused):
 		return fmt.Sprintf("No transfer to %s is under way on this side. %s %s", q.destination(), refused.Text,
 			notToldText(q)), true, false

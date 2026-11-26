@@ -407,3 +407,136 @@ func TestRealRatdCloseWithoutJobKept(t *testing.T) {
 		t.Errorf("expected the outcome forgotten once told, got %q", text)
 	}
 }
+
+// TestPortalReadyToldAgainOnceDropped guards ready marked told only as the answer telling it is
+// written (see await): the call telling a portal ready dropped by the harness, its told not called,
+// the next call with the same paths tells it ready again, rather than waiting and telling progress,
+// the agent never told to start its command; that answer written, the call after it waits, and tells
+// the portal open with nothing come through.
+func TestPortalReadyToldAgainOnceDropped(t *testing.T) {
+	shortWait(t, 300*time.Millisecond)
+	open, answer, cut := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	close(open)
+	tr := slowCloseFake(t, open, answer, cut)
+	args := map[string]any{"remote_path": "/remote/out.pipe", "local_path": "out.tar", "remote_pipe": true}
+	dropped(t, tr, downloadTool, args)
+	j := onlyJob(t, tr)
+	select {
+	case <-j.ready:
+	case <-j.done:
+		t.Fatalf("the portal ended without opening: %q", j.text)
+	case <-time.After(30 * time.Second):
+		t.Fatal("the portal never opened")
+	}
+	raw, err := json.Marshal(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// answered ready, then dropped: told is not called, as the relay does of a call canceled meanwhile
+	if text, _, _ := tr.call(context.Background(), downloadTool, raw); !strings.HasPrefix(text, "The portal is open: ") {
+		t.Fatalf("expected the portal told ready, got %q", text)
+	}
+	if text, _ := callTold(t, tr, context.Background(), downloadTool, args); !strings.HasPrefix(text, "The portal is open: ") {
+		t.Errorf("expected a ready answer dropped told again, got %q", text)
+	}
+	text, isError := callTold(t, tr, context.Background(), downloadTool, args)
+	if want := "The portal from /remote/out.pipe to out.tar is open, and nothing came through yet. "; isError ||
+		!strings.HasPrefix(text, want) {
+		t.Errorf("expected a ready told once written not told again, got %v: %q, expected %q", isError, text, want)
+	}
+}
+
+// TestPortalCancelOpeningAnswered guards a cancel asked of a portal still opening whose opening is
+// then answered within transferWait: the portal, ready, is closed by its job as any other (see
+// closeOnCancel), ratd asked first and its link cut only once ratd answered, however long ratd takes,
+// longer than transferWait here, never cut by rat as an opening not answered (see giveUpOpening); the
+// outcome is the portal closed, with ratd's words.
+func TestPortalCancelOpeningAnswered(t *testing.T) {
+	shortWait(t, 2*time.Second)
+	open, asked, answer, cutEarly := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var askedOnce, cutOnce sync.Once
+	var answered atomic.Bool
+	byRatd := "Closed the portal at /remote/out.pipe: the pipe is deleted. No command had opened it."
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET "+connect.DownloadPath, func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-open:
+		case <-r.Context().Done():
+			return
+		}
+		portalHeaders(w)
+		_ = http.NewResponseController(w).Flush()
+		<-r.Context().Done()
+		if !answered.Load() {
+			cutOnce.Do(func() { close(cutEarly) })
+		}
+	})
+	mux.HandleFunc("DELETE "+connect.DownloadPath, func(w http.ResponseWriter, r *http.Request) {
+		askedOnce.Do(func() { close(asked) })
+		select {
+		case <-answer:
+		case <-r.Context().Done():
+			return
+		}
+		answered.Store(true)
+		w.Header().Set(connect.HeaderVersion, "test")
+		http.Error(w, byRatd, http.StatusOK)
+	})
+	tr := eofFake(t, mux, func() {})
+	var openOnce, answerOnce sync.Once
+	t.Cleanup(func() {
+		answerOnce.Do(func() { close(answer) })
+		openOnce.Do(func() { close(open) })
+	})
+	args := map[string]any{"remote_path": "/remote/out.pipe", "local_path": "out.tar", "remote_pipe": true}
+	dropped(t, tr, downloadTool, args)
+	j := onlyJob(t, tr)
+	cancelArgs := map[string]any{"remote_path": "/remote/out.pipe", "local_path": "out.tar", "remote_pipe": true,
+		"cancel": true}
+	canceled := make(chan string, 1)
+	go func() {
+		text, _ := callTold(t, tr, context.Background(), downloadTool, cancelArgs)
+		canceled <- text
+	}()
+	select {
+	case <-j.closeAsked:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the cancel was never marked")
+	}
+	// the opening answered once the cancel was asked, well within transferWait of it
+	openOnce.Do(func() { close(open) })
+	select {
+	case <-j.ready:
+	case <-j.done:
+		t.Fatalf("the portal ended without opening: %q", j.text)
+	case <-time.After(30 * time.Second):
+		t.Fatal("the portal never opened")
+	}
+	select {
+	case <-asked:
+	case <-time.After(30 * time.Second):
+		t.Fatal("ratd was never asked to close the portal")
+	}
+	if text := <-canceled; !strings.Contains(text, "still ending") {
+		t.Errorf("expected the cancel told still ending while ratd does not answer the close, got %q", text)
+	}
+	// ratd slower than transferWait after the cancel was asked: the link must not be cut meanwhile.
+	// Waited as long again, a cut that would come at transferWait having had its time (the cancel
+	// call returned once transferWait passed): a load delaying it can only let the test pass.
+	select {
+	case <-cutEarly:
+		t.Fatal("the link of a ready portal was cut before ratd answered its close")
+	case <-time.After(transferWait):
+	}
+	answerOnce.Do(func() { close(answer) })
+	text, isError := callTold(t, tr, context.Background(), downloadTool, args)
+	if want := "Closed the portal from /remote/out.pipe to out.tar after 0 B: out.tar is as it was. " + byRatd; isError ||
+		text != want {
+		t.Errorf("expected the portal told closed with ratd's words, got %v: %q, expected %q", isError, text, want)
+	}
+	select {
+	case <-cutEarly:
+		t.Error("the link of a ready portal was cut before ratd answered its close")
+	default:
+	}
+}

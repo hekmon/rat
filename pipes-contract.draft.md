@@ -1,8 +1,10 @@
 # What a portal promises (draft)
 
-Draft of 2026-11-24, from the design settled that day, every line of it agreed. Nothing of it is
-implemented yet: it is written before the code, which will be checked against it. Its final place
-is `cmd/ratd/README.md`, next to "What a transfer promises", once the portals exist.
+Draft of 2026-11-24, from the design settled that day, every line of it agreed, written before
+the code, which is checked against it. The portals with a remote pipe exist since 2026-11-25
+(`remote_pipe`); those with a local pipe (`local_pipe`) do not yet, and what is said of a local
+pipe below is still ahead of the code. Its final place is `cmd/ratd/README.md`, next to "What a
+transfer promises", once they all exist.
 
 A portal is a transfer with a pipe at one end, or at both, where a file transfer has files. It is
 asked with `local_pipe` and `remote_pipe` on `upload_file` and `download_file`, each end being a
@@ -86,8 +88,8 @@ limit, a line below and no code, or nothing. A fix adds no promise.
 - **Q5. rat stopping closes its side.** A local command reading then takes what it got for the
   whole, and nobody tells it otherwise. ratd stops its terminals before its pipes, so its side
   has no such case.
-- **Q6. A portal nobody closes** stays: one ready and unused, or one broken, until rat or ratd
-  stops. No time limit.
+- **Q6. A portal nobody closes** stays: one ready and unused, or one broken, until ratd stops, or
+  rat for one ratd sees it leave (Q15: not an upload no command reads). No time limit.
 - **Q7. Other commands at a pipe.** Two commands opening one pipe share its stream between them,
   and a command that is not the agent's may open it. Not prevented.
 - **Q8. No size, no check.** A source pipe has no size: progress tells bytes, no total and no time
@@ -112,7 +114,9 @@ limit, a line below and no code, or nothing. A fix adds no promise.
 - **Q16. A pipe someone else removed.** A portal waits in the open of its pipe, which only the
   name of the pipe lets it leave. That name removed by someone else (`rm` in a terminal), `cancel`
   frees the path and answers all the same, and ratd is left one thread waiting in that open until
-  it stops.
+  it stops. Removed once a command opened the pipe, ratd is left waiting for that command instead:
+  one writing is told at its second write, not its next, and one that writes no more holds a
+  thread of ratd as long as it lives.
 - **Q17. An opening that is not answered.** `cancel` waits for a portal still opening, ratd knowing
   it by its path only once it made it. Not answered within 50 seconds of the cancel, the opening
   is cut on rat's side and told so: whether it reached ratd is not known, and the same `cancel`
@@ -156,13 +160,14 @@ and the reason it is written here at length. Rejected: an interim answer (`100 C
 go-ahead of a file upload today, or `102`) saying ready, the real answer coming at the end. It is
 the common path, but it gives an upload and a download two different ways to say ready, where
 "the headers say ready, the body waits" is one rule for both. It stays the way back if this one
-meets an obstacle: it is still to confirm over TLS, on the real pair.
+meets an obstacle. Confirmed on 2026-11-25 over mutual TLS, on the real pair: ready comes back
+before ratd read any byte of the body, and 8 MiB sent after it arrive whole.
 
-## To confirm when it is written
+## To confirm
 
-No design question is left open. Two facts are to check on the real pair, rat and ratd over TLS:
+No design question is left open. One fact is still to check on the real pair, rat and ratd over
+TLS (the other, an upload answered before its body is sent, is confirmed: see The link):
 
-- that an upload answered before its body is sent works there as it did without TLS;
 - that a side touching a connection whose other end is gone gets an error in a bounded time. No
   timeout and no heartbeat of ours: a portal waits to be used or closed, and a side needs to know
   the other is gone only when it has something to do with it, which is when the connection tells.

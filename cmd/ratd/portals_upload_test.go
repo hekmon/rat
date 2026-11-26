@@ -671,9 +671,9 @@ func TestPortalUploadRun(t *testing.T) {
 }
 
 // TestPortalNameFirst guards the order in which a portal packs up (P9): its name deleted before
-// any of its ends is closed, for a download closed while it copies, and for an upload closed while
-// its pump waits for room, and ended by its source: a command told by the end of its pipe never
-// finds the name to open again.
+// any of its ends is closed, for a download closed while it copies, and ended by its source (its
+// command closing the pipe), and for an upload closed while its pump waits for room, and ended by
+// its source: a command told by the end of its pipe never finds the name to open again.
 func TestPortalNameFirst(t *testing.T) {
 	var mu sync.Mutex
 	var looked, found []string
@@ -703,6 +703,20 @@ func TestPortalNameFirst(t *testing.T) {
 		t.Fatalf("expected the download closed, got %s: %q", closed.Status, text)
 	}
 	expectBrokenPipe(t, w)
+	ended := filepath.Join(pt.home, "ended.pipe")
+	resp, _ = pt.open(t, pt.alice, ended)
+	w = openWriter(t, ended)
+	if _, err := w.Write([]byte("all")); err != nil {
+		t.Fatal(err)
+	}
+	// the command writing closes its end: the end of the source
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadFull(resp.Body, make([]byte, 3)); err != nil {
+		t.Fatal(err)
+	}
+	expectTrailer(t, resp, "")
 	upload := filepath.Join(pt.home, "in.pipe")
 	_, send := pt.openUpload(t, pt.alice, upload)
 	r := openReader(t, upload)
@@ -723,7 +737,7 @@ func TestPortalNameFirst(t *testing.T) {
 	expectTrailer(t, resp, "")
 	mu.Lock()
 	defer mu.Unlock()
-	for _, path := range []string{download, upload, whole} {
+	for _, path := range []string{download, ended, upload, whole} {
 		if !slices.Contains(looked, path) {
 			t.Errorf("%s: expected its ends closed, never seen", path)
 		}
