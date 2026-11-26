@@ -572,7 +572,8 @@ func TestRealRatdPipeUploadCancelDropped(t *testing.T) {
 
 // TestRealRatdPipeCancelRacesRefusal guards a cancel asked while a portal opens, the opening then
 // refused by ratd, something being at the remote path: the outcome is the refusal, in ratd's
-// words, not a close, and the cancel tells it as it is; the file there kept.
+// words, not a close, and the cancel tells it as it is, not as a portal the cancel came too late
+// to stop, which never opened; the file there kept.
 func TestRealRatdPipeCancelRacesRefusal(t *testing.T) {
 	entered, hold := make(chan struct{}), make(chan struct{})
 	hook := preparing
@@ -605,7 +606,7 @@ func TestRealRatdPipeCancelRacesRefusal(t *testing.T) {
 	close(hold)
 	got := <-answer
 	if text := got[0].(string); !got[1].(bool) || !strings.HasPrefix(text, pipe+" exists: a portal makes its pipe "+
-		"itself") || strings.Contains(text, "Closed") {
+		"itself") || strings.Contains(text, "Closed") || strings.Contains(text, "too late") {
 		t.Errorf("expected the refusal told as it is, got %v: %q", got[1], text)
 	}
 	expectContent(t, pipe, kept, 0o644)
