@@ -746,9 +746,11 @@ func (t *transfers) cancel(ctx context.Context, q transferRequest, called time.T
 	told = t.forgetting(j)
 	ago := endedAgo(j, called)
 	switch {
-	case j.canceled, j.refused, j.request.remotePipe && !isReady(j):
-		// stopped; refused by its local side before any request; or a portal that never opened,
-		// refused or failing: nothing ran for the cancel to come too late for
+	case j.canceled, j.refused, j.request.remotePipe && (!isReady(j) || j.isError):
+		// stopped; refused by its local side before any request; a portal that never opened,
+		// refused or failing: nothing ran for the cancel to come too late for; or a portal that
+		// failed before the cancel, a cut not told yet among them, whose text tells to cancel again
+		// (Q20), which "too late" would contradict
 		return j.text + ago, j.isError, told
 	case j.isError:
 		// a failure, or an answer lost: told first, rather than behind "too late to cancel", which
@@ -1007,8 +1009,8 @@ func (t *transfers) failureText(j *job, err error) (string, bool, bool) {
 			"Check it before using it, or call %s again with %s.", j.request.source(), j.request.destination(),
 			sentence(failed.Reason), left, j.request.tool, again), true, false
 	case errors.As(err, &refused) && j.request.remotePipe && j.request.upload() && refused.Status == http.StatusOK:
-		// the trailer of a portal: the command reading left, closed by another rat, a write of its pipe
-		// failing
+		// the trailer of a portal: the command reading left, closed by another rat, ratd stopping, a
+		// write of its pipe failing
 		return fmt.Sprintf("The portal from %s to %s ended after %s sent: %s", j.request.local, j.request.remote,
 			sentText(j), refused.Text), true, false
 	case errors.As(err, &refused) && j.request.remotePipe && refused.Status == http.StatusOK:
@@ -1410,7 +1412,7 @@ func (t *transfers) runDownload(ctx context.Context, j *job) (string, bool, bool
 			"of the pipe: its exit status tells whether that was all.", j.request.remote, local,
 			sizeText(j.moved.Load()), how)
 	}
-	// the bits of a pipe are not those of what came through: a file replaced keeps its own unsaid
+	// a pipe gives no bits to compare with: a file replaced keeps its own, unsaid
 	if modesTold && replaced && !download.Pipe && found.Perm() != download.Mode {
 		text += fmt.Sprintf(" It kept its permissions (%s), not those of the remote file (%s).",
 			connect.FormatMode(found), connect.FormatMode(download.Mode))

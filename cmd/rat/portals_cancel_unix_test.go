@@ -81,8 +81,8 @@ func dropped(t *testing.T, tr *transfers, tool string, args map[string]any) {
 	_, _, _ = tr.call(ctx, tool, raw)
 }
 
-// TestPortalNotToldReadyOnceCancelAsked checks that a portal whose close was asked is never told
-// ready: its opening call dropped before the ready was told, then a cancel that ratd is slow to
+// TestPortalNotToldReadyOnceCancelAsked checks that a call made once the close of a portal was
+// asked is not told ready (a call already waiting then may be, Q19): its opening call dropped before the ready was told, then a cancel that ratd is slow to
 // answer, told still ending, a plain call with the same paths is told still ending too, not that the
 // portal is open and waits for a command, which the job is about to close. A second cancel meanwhile
 // is answered as the first, and rat stopping is not delayed by the close in flight.

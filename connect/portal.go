@@ -166,8 +166,8 @@ func StartPipeUpload(ctx context.Context, client *http.Client, server string, sr
 // it as done: the file sent whole, all of it written into the pipe, and its end closed, the command
 // reading it then seeing the end of its input. Otherwise: the file changing or failing to read, or
 // ctx cancelled, as [StartPipeUpload] tells; the outcome ratd told in the [HeaderError] trailer, a
-// [Refusal] of status 200 (the command reading left before the end, the portal closed, a write of
-// the pipe failing); the connection lost, a [TransferError] of kind [ErrCut].
+// [Refusal] of status 200 (the command reading left before the end, the portal closed, ratd
+// stopping, a write of the pipe failing); the connection lost, a [TransferError] of kind [ErrCut].
 func (u *PipeUpload) Wait() (int64, error) {
 	answer := &readErrors{r: u.resp.Body}
 	// the answer has no body: what comes is discarded, bounded, its end and its trailer awaited

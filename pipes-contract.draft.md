@@ -45,7 +45,7 @@ limit, a line below and no code, or nothing. A fix adds no promise.
   other, those of the pipe, 0600, minus the umask.
 - **P8. A close packs up.** `cancel` closes the portal of its paths: each side closes its end and
   deletes its pipe. The paths alone name it: it works after a cut, from a rat started again, from
-  another rat of the session. A portal broken is known by its paths until closed, and opening
+  another rat of the session (a cut rat has not told yet: Q20). A portal broken is known by its paths until closed, and opening
   another there is refused meanwhile.
 - **P9. The names go first.** At a close, and at a cut as it sees it (Q15), each side deletes its
   pipe at once, whatever becomes of a command still at it: a command arriving later is told there is no such
@@ -60,7 +60,8 @@ limit, a line below and no code, or nothing. A fix adds no promise.
   transfer rat runs is kept until told (Q18 for a close it runs none for). No byte reaches the
   model (G9).
 
-**Outcomes.** Every answer about a portal conveys one of these states.
+**Outcomes.** Every answer about a portal conveys one of these states, the opening cut of Q17
+aside, which tells that ratd's side is not known.
 
 | State | When | What the agent does |
 |---|---|---|
@@ -127,6 +128,13 @@ limit, a line below and no code, or nothing. A fix adds no promise.
   a cut already told) is one request to ratd, and its answer is its telling: rat has nothing to
   keep it in. The answer lost, the harness giving up on the call, what the command at the pipe
   saw is told to nobody, and the same `cancel` again tells nothing is open there, which is true.
+- **Q19. Ready and a cancel crossing.** A call made once a `cancel` was asked is not told ready.
+  A call already waiting for the opening when the `cancel` comes may be: the portal did open,
+  and the `cancel` then tells it closed. Both answers are true, in that order; the agent, which
+  asked the `cancel`, knows which stands.
+- **Q20. A cancel finding a cut not told yet.** rat tells an outcome before anything else: a
+  `cancel` coming after a cut no call has told yet tells the cut, and that the portal is not
+  closed on ratd's side; the same `cancel` again closes it (Q18).
 
 **For the descriptions of the tools**, not promises: a command at a local pipe runs in the
 background of the agent's shell, which otherwise waits on it; to stop a stream midway, stop the

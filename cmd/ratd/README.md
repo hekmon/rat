@@ -665,7 +665,7 @@ and only its body waits, for the command. On the wire, so far:
   `Rat-Path` names, where nothing may be (409 otherwise, touching nothing; a missing directory is
   refused as the system tells it, none created), and answers 200 at once, flushed, before any
   command: the headers say ready, the pipe existing and nothing having flowed. The answer carries
-  no `Rat-Size` nor `Rat-Mode`, a pipe having neither, and every answer to such a request, a
+  no `Rat-Size` nor `Rat-Mode` (a pipe has no size, and a file made from one takes 0600), and every answer to such a request, a
   refusal included, echoes `Rat-Pipe: true`: one without it comes from a ratd older than the
   portals, which took the request for a file download. The body is then what the command writes,
   flushed as it comes. It ends cleanly, without `Rat-Error`, once the command closed its end, all
@@ -679,7 +679,7 @@ and only its body waits, for the command. On the wire, so far:
   stream, in the trailer, the status being sent by then: a clean end without `Rat-Error` is done,
   the body ended and all of it written into the pipe, whose end ratd then closes, the command
   seeing the end of its input; `Rat-Error` tells the command reading left before the end (a write
-  of the pipe failing with a broken pipe), a close asked, or a write failing. `Rat-Overwrite`,
+  of the pipe failing with a broken pipe), a close asked, ratd stopping, or a write failing. `Rat-Overwrite`,
   `Rat-In-Place` and `Rat-Mode` mean nothing for a pipe made where nothing is, and are not read.
   A body cut (the link lost, or the client failing it, its file having changed) once a command
   opened the pipe holds the portal: its pipe deleted, its end kept open, the command seeing no

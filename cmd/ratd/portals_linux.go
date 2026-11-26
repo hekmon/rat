@@ -17,8 +17,8 @@ import (
 // holds it: its numbers are given to no other file meanwhile, and it is no end of the pipe, the
 // opens waiting at it not seeing it. Once the pump waits in its open, or opened its end, that holds
 // the pipe as well: the pin is for the instant before. It is let go once the portal packed up,
-// a pump left behind then (see abandon) touching nothing more. One gap is left, which nothing closes, no system call making a pipe and returning a
-// descriptor of it: the path taken between the pipe being made and this call, which fails then
+// a pump left behind then (see abandon) touching nothing more. One gap is left, which nothing
+// closes, no system call making a pipe and returning a descriptor of it: the path taken between the pipe being made and this call, which fails then
 // with errPipeTaken, what was opened not being the pipe looked at. Any other failure is the pin's
 // own (no descriptor left), the pipe still the one made, for the caller to remove.
 func pinPipe(path string, made fs.FileInfo) (unpin func(), err error) {

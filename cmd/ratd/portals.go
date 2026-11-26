@@ -632,8 +632,8 @@ func (d *daemon) openPortal(w http.ResponseWriter, req *http.Request, way direct
 // pipe is deleted, then its end closed. A close asked, ratd stopping, or the link lost end it
 // otherwise, packing up alike, the first two telling why in the Rat-Error trailer, as a read of
 // the pipe failing is told (see the doc of the portals). HEAD is refused, a portal opening by GET
-// alone. The answer carries no Rat-Size nor Rat-Mode: a pipe has no size, and its bits are not
-// those of what comes through.
+// alone. The answer carries no Rat-Size nor Rat-Mode: a pipe has no size, and a file made
+// from one takes 0600 on the side of the client (P7), whatever the bits of the pipe.
 func (d *daemon) downloadPipe(w http.ResponseWriter, req *http.Request) result {
 	w.Header().Set(connect.HeaderPipe, "true")
 	if req.Method == http.MethodHead {
@@ -715,8 +715,8 @@ func (d *daemon) downloadPipe(w http.ResponseWriter, req *http.Request) result {
 // comes. Its outcome is told after, in the Rat-Error trailer, the status being sent by then: none
 // once the body ended cleanly and all of it was written into the pipe, the end of the source, the
 // pipe then deleted and its end closed, the command seeing the end of its input; the command
-// leaving before the end (a write failing with a broken pipe), a close asked, a write of the pipe
-// failing, otherwise. A body cut (the client gone, or failing its body on purpose, its file having
+// leaving before the end (a write failing with a broken pipe), a close asked, ratd stopping, a
+// write of the pipe failing, otherwise. A body cut (the client gone, or failing its body on purpose, its file having
 // changed) once a command opened the pipe, and ratd stopping then, hold the portal (see hold): the
 // command sees no end. Rat-Overwrite, Rat-In-Place and Rat-Mode mean nothing for a pipe, made where
 // nothing is with its own bits: they are not read.
