@@ -357,3 +357,53 @@ func TestPortalCloseAskedAsRequestEnds(t *testing.T) {
 	}
 	expectNoTemporary(t, tr.dir)
 }
+
+// TestRealRatdCloseWithoutJobKept guards the outcome of a close rat asked of ratd while holding no
+// job of the portal (rat started again): its answer dropped, the harness having given up on the
+// call, the same cancel again tells it, what the command at the pipe saw with it, ratd holding
+// nothing any more and answering nothing of it; told, it is forgotten, and the next cancel finds
+// nothing under way.
+func TestRealRatdCloseWithoutJobKept(t *testing.T) {
+	tt := startRatdTransfers(t, "test-rat-closekept")
+	tr := inProcess(t, tt, tt.local)
+	pipe := filepath.Join(tt.remote, "in.pipe")
+	path := filepath.Join(tt.local, "in.bin")
+	randomFile(t, path, 64<<20, 0o644)
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// a portal of the session rat holds no job of, as a rat gone left it
+	up, err := connect.StartPipeUpload(ctx, aliceClient(t, tt), tt.addr, file, pipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer up.Close()
+	more := make(chan struct{})
+	read, firstRead := readPipe(t, pipe, 64<<10, more)
+	<-firstRead
+	cancelArgs := map[string]any{"local_path": "in.bin", "remote_path": pipe, "cancel": true}
+	raw, err := json.Marshal(cancelArgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the answer dropped: told is not called, as the relay does of a call canceled meanwhile
+	if _, _, _ = tr.call(context.Background(), uploadTool, raw); len(onlyJob(t, tr).text) == 0 {
+		t.Fatal("expected the outcome of the close kept")
+	}
+	close(more)
+	data := received(t, read)
+	text, isError := callTold(t, tr, context.Background(), uploadTool, cancelArgs)
+	if isError || !strings.HasPrefix(text, "Closed the portal at "+pipe+": the pipe is deleted. A command still reading "+
+		"it saw the end of its input after "+sizeText(int64(len(data)))+", which is not the whole stream") {
+		t.Errorf("expected the close told again, with the %d bytes the command saw, got %v: %q", len(data), isError,
+			text)
+	}
+	text, _ = callTold(t, tr, context.Background(), uploadTool, cancelArgs)
+	if text != "No transfer to "+pipe+" is under way: nothing to cancel." {
+		t.Errorf("expected the outcome forgotten once told, got %q", text)
+	}
+}

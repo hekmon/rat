@@ -711,8 +711,15 @@ func (t *transfers) cancel(ctx context.Context, q transferRequest, called time.T
 		// it. One request, made by the call, which waits transferWait at most (P12).
 		closing, stop := context.WithTimeout(ctx, transferWait)
 		defer stop()
-		text, isError := t.closeUnknown(closing, q)
-		return text, isError, func() {}
+		text, isError, closed := t.closeUnknown(closing, q)
+		if !closed {
+			return text, isError, func() {}
+		}
+		// ratd closed a portal: an outcome, kept until told as any other (P12). This call's answer
+		// dropped, the harness having given up on it, the same call again tells it, where ratd,
+		// holding nothing any more, would answer that nothing is under way, and what the command at
+		// the pipe saw would be told to nobody.
+		return text, false, t.forgetting(t.keepClosed(q, text, called))
 	case j.request.source() != q.source() && j.hasEnded():
 		// ended, its outcome not told yet: told now, and forgotten once told, as join does
 		return endedText(j) + " Nothing to cancel.", false, t.forgetting(j)
@@ -1087,7 +1094,7 @@ func noPortalsText(server string) string {
 // closeUnknown asks ratd to close the portal it may hold at the remote path of q, a cancel finding
 // no job of rat there, and tells what it closed; holding none, or older than the portals, that
 // nothing is under way; not reached, or failing, that its side could not be asked.
-func (t *transfers) closeUnknown(ctx context.Context, q transferRequest) (string, bool) {
+func (t *transfers) closeUnknown(ctx context.Context, q transferRequest) (text string, isError, closed bool) {
 	endpoint := connect.DownloadPath
 	if q.upload() {
 		endpoint = connect.UploadPath
@@ -1097,16 +1104,31 @@ func (t *transfers) closeUnknown(ctx context.Context, q transferRequest) (string
 	var refused *connect.Refusal
 	switch {
 	case closed:
-		return text, false
+		return text, false, true
 	case err == nil, errors.Is(err, connect.ErrNoPortals), errors.Is(err, connect.ErrNoTransfers):
-		return none, false
+		return none, false, false
 	case errors.As(err, &refused):
 		return fmt.Sprintf("No transfer to %s is under way on this side. %s %s", q.destination(), refused.Text,
-			notToldText(q)), true
+			notToldText(q)), true, false
 	default:
 		return fmt.Sprintf("No transfer to %s is under way on this side. %s %s", q.destination(), t.reachText(err),
-			notToldText(q)), true
+			notToldText(q)), true, false
 	}
+}
+
+// keepClosed keeps text, what ratd answered a cancel of q that closed a portal rat held no job of,
+// as a job ended at called, and returns it: found by the paths of q until told, then forgotten (see
+// call). Another job having taken its place meanwhile, it is told by this call alone.
+func (t *transfers) keepClosed(q transferRequest, text string, called time.Time) *job {
+	j := &job{request: q, started: called, cancel: func() {}, ready: make(chan struct{}), done: make(chan struct{}),
+		closeAsked: make(chan struct{}), text: text, canceled: true, ended: time.Now()}
+	close(j.done)
+	t.jobsMu.Lock()
+	defer t.jobsMu.Unlock()
+	if t.jobs[q.key()] == nil {
+		t.jobs[q.key()] = j
+	}
+	return j
 }
 
 // closeRemote asks ratd to close the portal of q it holds at its remote path, and tells its answer,

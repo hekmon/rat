@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"io/fs"
 	"syscall"
 
@@ -19,8 +18,9 @@ import (
 // opens waiting at it not seeing it. Once the pump waits in its open, or opened its end, that holds
 // the pipe as well: the pin is for the instant before, and for a pump the portal no longer waits
 // for. One gap is left, which nothing closes, no system call making a pipe and returning a
-// descriptor of it: the path taken between the pipe being made and this call, which fails then,
-// what was opened not being the pipe looked at.
+// descriptor of it: the path taken between the pipe being made and this call, which fails then
+// with errPipeTaken, what was opened not being the pipe looked at. Any other failure is the pin's
+// own (no descriptor left), the pipe still the one made, for the caller to remove.
 func pinPipe(path string, made fs.FileInfo) (unpin func(), err error) {
 	fd, err := unix.Open(path, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
@@ -28,9 +28,13 @@ func pinPipe(path string, made fs.FileInfo) (unpin func(), err error) {
 	}
 	var pinned unix.Stat_t
 	want, ok := made.Sys().(*syscall.Stat_t)
-	if err := unix.Fstat(fd, &pinned); err != nil || !ok || pinned.Dev != want.Dev || pinned.Ino != want.Ino {
+	if err := unix.Fstat(fd, &pinned); err != nil {
 		_ = unix.Close(fd)
-		return nil, &fs.PathError{Op: "open", Path: path, Err: errors.New("not the pipe made")}
+		return nil, &fs.PathError{Op: "stat", Path: path, Err: err}
+	}
+	if !ok || pinned.Dev != want.Dev || pinned.Ino != want.Ino {
+		_ = unix.Close(fd)
+		return nil, &fs.PathError{Op: "open", Path: path, Err: errPipeTaken}
 	}
 	return func() { _ = unix.Close(fd) }, nil
 }

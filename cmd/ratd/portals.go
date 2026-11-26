@@ -545,6 +545,10 @@ func (d *daemon) removePipe(p *portal) {
 	}
 }
 
+// errPipeTaken is the error of pinPipe finding, at the path of a pipe just made, another file than
+// that pipe.
+var errPipeTaken = errors.New("not the pipe made")
+
 // errPortalClosed is the error of a portal closed as asked.
 var errPortalClosed = errors.New("portal closed as asked")
 
@@ -597,10 +601,16 @@ func (d *daemon) openPortal(w http.ResponseWriter, req *http.Request, way direct
 	}
 	p.made = made
 	unpin, err := pinPipe(path, made)
-	if err != nil {
+	switch {
+	case errors.Is(err, errPipeTaken):
 		// not removed: what is there now is not the pipe made
 		return failed(http.StatusConflict, result{err: err, attrs: attrs, text: fmt.Sprintf("%s was taken by "+
 			"something else as the portal made its pipe there: nothing was opened.", path)})
+	case err != nil:
+		// the pin itself failing (no descriptor left): the pipe made is removed, an opening that
+		// fails leaving nothing, and the reason of the system told
+		d.removePipe(p)
+		return failed(transferStatus(err), withAttrs(d.fileFailure(err, "Making the pipe "+path, written, false), attrs))
 	}
 	p.unpin = unpin
 	return p, attrs, nil
