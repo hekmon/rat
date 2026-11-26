@@ -224,7 +224,8 @@ type transfers struct {
 	// jobsMu guards jobs, the transfers under way or ended and not told yet, by key
 	jobsMu sync.Mutex
 	jobs   map[string]*job
-	// running counts the jobs running, waited for when rat stops: each removes its temporary file
+	// running counts the jobs running, waited for when rat stops: each removes its temporary file;
+	// and the closes a cancel finding no job asks (see cancelUnknown), which rat stopping cuts
 	running sync.WaitGroup
 	// definitions are the definitions of the two tools, added to the tool list of ratd
 	definitions []json.RawMessage
@@ -492,11 +493,9 @@ func (t *transfers) giveUpOpening(j *job, wait time.Duration) {
 	case <-j.ready:
 	case <-j.done:
 	case <-timer.C:
-		// ready at the same instant, which select may pass over: a portal ready is closed by asking
-		// ratd, never cut first
-		if isReady(j) {
-			return
-		}
+		// A portal ready as the timer fires is cut too: its job closes it all the same, asking ratd
+		// (see closeOnCancel), and is told so, failureText telling an opening cut only of a portal
+		// never ready. Its link may then be cut before ratd sees the close.
 		j.gaveUp.Store(true)
 		j.cancel()
 	}
@@ -713,18 +712,8 @@ func (t *transfers) cancel(ctx context.Context, q transferRequest, called time.T
 		// rat holds no job at these paths, which it would not after a restart, or once a cut was told:
 		// ratd may still hold a portal there, known by its path alone (P8), so it is asked whatever the
 		// call says of a pipe, an agent coming back to a portal not having to remember how it opened
-		// it. One request, made by the call, which waits transferWait at most (P12).
-		closing, stop := context.WithTimeout(ctx, transferWait)
-		defer stop()
-		text, isError, closed := t.closeUnknown(closing, q)
-		if !closed {
-			return text, isError, func() {}
-		}
-		// ratd closed a portal: an outcome, kept until told as any other (P12). This call's answer
-		// dropped, the harness having given up on it, the same call again tells it, where ratd,
-		// holding nothing any more, would answer that nothing is under way, and what the command at
-		// the pipe saw would be told to nobody.
-		return text, false, t.forgetting(t.keepClosed(q, text, called))
+		// it.
+		return t.cancelUnknown(ctx, q, called)
 	case j.request.source() != q.source() && j.hasEnded():
 		// ended, its outcome not told yet: told now, and forgotten once told, as join does
 		return endedText(j) + " Nothing to cancel.", false, t.forgetting(j)
@@ -1126,9 +1115,49 @@ func (t *transfers) closeUnknown(ctx context.Context, q transferRequest) (text s
 	}
 }
 
+// cancelUnknown asks ratd to close the portal it may hold at the remote path of q, a cancel made at
+// called finding no job of rat there (see closeUnknown), and tells what the close did, with told
+// (see call). The request is rat's, not the call's: made under the context of rat, bounded by
+// transferWait (P12), and counted with the jobs running, which rat stopping cuts and waits for.
+// The call only waits for it: given up by the harness while the request is in flight, ratd closes
+// the portal all the same, and its outcome, kept (see keepClosed), is told by the same cancel
+// again, rather than by nobody, ratd then holding nothing any more and answering that nothing is
+// under way. Its context done first, the call tells the close still going on, as an error.
+func (t *transfers) cancelUnknown(ctx context.Context, q transferRequest, called time.Time) (text string,
+	isError bool, told func()) {
+	type closeOutcome struct {
+		text    string
+		isError bool
+		kept    *job
+	}
+	outcome := make(chan closeOutcome, 1)
+	t.running.Add(1)
+	go func() {
+		defer t.running.Done()
+		closing, stop := context.WithTimeout(t.ctx, transferWait)
+		defer stop()
+		text, isError, closed := t.closeUnknown(closing, q)
+		var kept *job
+		if closed {
+			// an outcome, kept until told as any other (P12), whether the call is still there or not
+			kept = t.keepClosed(q, text, called)
+		}
+		outcome <- closeOutcome{text: text, isError: isError, kept: kept}
+	}()
+	select {
+	case o := <-outcome:
+		// its call canceled as the close ended, the caller drops the text and the outcome stays kept
+		return o.text, o.isError, t.forgetting(o.kept)
+	case <-ctx.Done():
+		return fmt.Sprintf("The close of the portal at %s was asked of ratd and is still going on: call %s again with "+
+			"cancel to learn its outcome.", q.remote, q.tool), true, func() {}
+	}
+}
+
 // keepClosed keeps text, what ratd answered a cancel of q that closed a portal rat held no job of,
-// as a job ended at called, and returns it: found by the paths of q until told, then forgotten (see
-// call). Another job having taken its place meanwhile, it is told by this call alone.
+// as a job started at called, the cancel, and ended now, as ratd answered, and returns it: found
+// by the paths of q until told, then forgotten (see call). Another job having taken its place
+// meanwhile, only the call that asked the close tells it, lost if that call was given up.
 func (t *transfers) keepClosed(q transferRequest, text string, called time.Time) *job {
 	j := &job{request: q, started: called, cancel: func() {}, ready: make(chan struct{}), done: make(chan struct{}),
 		closeAsked: make(chan struct{}), text: text, canceled: true, ended: time.Now()}

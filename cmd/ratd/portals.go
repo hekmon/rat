@@ -547,9 +547,11 @@ func (d *daemon) removePipe(p *portal) {
 	}
 }
 
-// stoppingText tells the portal at path ended by ratd stopping, in the trailer of its answer.
+// stoppingText tells the portal at path ended by ratd stopping, in the trailer of its answer. It
+// tells no portal closed: one a command reads is held until the terminals stopped (Q5), after
+// this answer.
 func stoppingText(path string) string {
-	return fmt.Sprintf("ratd is stopping: the portal at %s is closed, its pipe deleted.", path)
+	return fmt.Sprintf("ratd is stopping: the portal at %s ends with it, its pipe deleted.", path)
 }
 
 // errPipeTaken is the error of pinPipe finding, at the path of a pipe just made, another file than

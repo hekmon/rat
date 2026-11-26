@@ -408,6 +408,99 @@ func TestRealRatdCloseWithoutJobKept(t *testing.T) {
 	}
 }
 
+// givenUpAtAnswer is the transport of a rat under test whose first DELETE, once ratd answered it,
+// cancels the call that asked it, as a harness giving up on the call while the close is in flight:
+// a request made under the context of that call then fails, as the client of rat fails it, the
+// answer of ratd lost.
+type givenUpAtAnswer struct {
+	next   http.RoundTripper
+	cancel context.CancelFunc
+	once   *sync.Once
+}
+
+func (g givenUpAtAnswer) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := g.next.RoundTrip(r)
+	if err != nil || r.Method != http.MethodDelete {
+		return resp, err
+	}
+	g.once.Do(g.cancel)
+	if err := r.Context().Err(); err != nil {
+		_ = resp.Body.Close()
+		return nil, err
+	}
+	return resp, nil
+}
+
+// TestRealRatdCloseWithoutJobCallGivenUp guards the outcome of a close rat asks of ratd while
+// holding no job of the portal, the harness giving up on the call once ratd closed it, before rat
+// read the answer: the close is rat's, not the call's, its outcome kept all the same (P12). The same
+// cancel again tells what ratd closed, what the command at the pipe saw with it, rather than that
+// nothing is under way, ratd holding nothing any more; told, it is forgotten, and the next cancel
+// finds nothing under way.
+func TestRealRatdCloseWithoutJobCallGivenUp(t *testing.T) {
+	tt := startRatdTransfers(t, "test-rat-closegivenup")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := aliceClient(t, tt)
+	client.Transport = givenUpAtAnswer{next: client.Transport, cancel: cancel, once: new(sync.Once)}
+	tr, err := newTransfers(slog.New(slog.NewTextHandler(io.Discard, nil)), client, tt.addr, tt.local,
+		func(err error) string { return "ratd not reached: " + err.Error() + "." })
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(tr.close)
+	pipe := filepath.Join(tt.remote, "in.pipe")
+	path := filepath.Join(tt.local, "in.bin")
+	randomFile(t, path, 64<<20, 0o644)
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	upCtx, upCancel := context.WithCancel(context.Background())
+	defer upCancel()
+	// a portal of the session rat holds no job of, as a rat gone left it
+	up, err := connect.StartPipeUpload(upCtx, aliceClient(t, tt), tt.addr, file, pipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer up.Close()
+	more := make(chan struct{})
+	read, firstRead := readPipe(t, pipe, 64<<10, more)
+	<-firstRead
+	cancelArgs := map[string]any{"local_path": "in.bin", "remote_path": pipe, "cancel": true}
+	raw, err := json.Marshal(cancelArgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// given up: its answer dropped, told not called, as the relay does of a call canceled meanwhile
+	_, _, _ = tr.call(ctx, uploadTool, raw)
+	close(more)
+	data := received(t, read)
+	// the close goes on after the call: its outcome is kept once ratd's answer is read
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		tr.jobsMu.Lock()
+		kept := len(tr.jobs)
+		tr.jobsMu.Unlock()
+		if kept > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("expected the outcome of the close kept, the call that asked it given up")
+		}
+	}
+	text, isError := callTold(t, tr, context.Background(), uploadTool, cancelArgs)
+	if isError || !strings.HasPrefix(text, "Closed the portal at "+pipe+": the pipe is deleted. A command still reading "+
+		"it saw the end of its input after "+sizeText(int64(len(data)))+", which is not the whole stream") {
+		t.Errorf("expected the close told by the same cancel again, with the %d bytes the command saw, got %v: %q",
+			len(data), isError, text)
+	}
+	text, _ = callTold(t, tr, context.Background(), uploadTool, cancelArgs)
+	if text != "No transfer to "+pipe+" is under way: nothing to cancel." {
+		t.Errorf("expected the outcome forgotten once told, got %q", text)
+	}
+}
+
 // TestPortalReadyToldAgainOnceDropped guards ready marked told only as the answer telling it is
 // written (see await): the call telling a portal ready dropped by the harness, its told not called,
 // the next call with the same paths tells it ready again, rather than waiting and telling progress,

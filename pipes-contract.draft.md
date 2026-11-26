@@ -88,8 +88,9 @@ limit, a line below and no code, or nothing. A fix adds no promise.
 - **Q5. rat stopping closes its side.** A local command reading then takes what it got for the
   whole, and nobody tells it otherwise. ratd stops its terminals before its pipes, so its side
   has no such case.
-- **Q6. A portal nobody closes** stays: one ready and unused, or one broken, until ratd stops, or
-  rat for one ratd sees it leave (Q15: not an upload no command reads). No time limit.
+- **Q6. A portal nobody closes** stays: one ready and unused, or one broken, until ratd stops. rat
+  stopping ends one case only, a download ready and unused, which ratd sees leave: an upload no
+  command reads is not seen (Q15), and a broken portal stays whoever leaves. No time limit.
 - **Q7. Other commands at a pipe.** Two commands opening one pipe share its stream between them,
   and a command that is not the agent's may open it. Not prevented.
 - **Q8. No size, no check.** A source pipe has no size: progress tells bytes, no total and no time
